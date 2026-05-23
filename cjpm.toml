@@ -1,15 +1,8 @@
 [package]
   cjc-version = "1.1.0"
   name = "refine"
-  organization = "ystyle"
-  description = "nothing here"
-  version = "1.0.0"
-  target-dir = ""
-  script-dir = ""
-  output-type = "executable"
-  compile-option = ""
-  override-compile-option = ""
-  link-option = ""
-  package-configuration = {}
+  description = "A compile-time type-safe ORM for Cangjie"
+  version = "0.1.0"
+  output-type = "static"
 
 [dependencies]

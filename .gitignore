@@ -1,6 +1,7 @@
-build/
-.cache/
-*.o
-*.out
-*.so
-*.a
+target/
+*.cjo
+*.cjo.flag
+cjpm.lock
+.cjpm/
+/librefine.a
+/tests/*.cj
