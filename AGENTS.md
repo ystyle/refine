@@ -22,7 +22,7 @@ src/
 
 - 源文件直接在 `src/` 下，不使用子目录
 - 测试文件放在 `src/` 下与源码同包（`package refine`），不使用 `tests/` 目录
-- `output-type = "static"`（作为库编译），需执行 `cjpm test` 运行测试
+- `output-type = "staticlib"`（作为库编译），执行 `cjc --test` 运行测试
 
 ## 环境配置
 
@@ -37,14 +37,14 @@ cjpm test
 ## 常用命令
 
 ```shell
-# 构建
+# 构建（作为静态库）
+cjc --output-type=staticlib -o librefine.a src/*.cj
+
+# 运行测试（直接编译含测试的版本）
+cjc --output-type=staticlib --test -o refine_test.a src/*.cj
+
+# 构建 + 测试（使用 cjpm，但注意同包测试可能有循环依赖问题）
 cjpm build
-
-# 运行测试
-cjpm test --show-all-output
-
-# 清理缓存
-cjpm clean
 ```
 
 ## 已知仓颉约束
