@@ -17,35 +17,39 @@ src/
 ├── query.cj            Query<T> 构建器
 ├── dialect.cj          Dialect 接口
 ├── sqlite.cj           SQLiteDialect 实现
+├── db.cj               DB / Session / Tx
+├── storage.cj          StorageType / TypeAdapter
+├── hook.cj             Hook 系统
+├── mapper.cj           结果映射器
+├── migrator.cj         Schema 迁移
+├── error.cj            异常层次
+├── refinemac/
+│   └── refine_macro.cj 宏定义文件（macro package refine.refinemac）
 ├── xxx_test.cj         测试文件（与源码同包）
+├── xxx.cj.macrocall    宏展开调试输出
 ```
 
-- 源文件直接在 `src/` 下，不使用子目录
+- 宏定义在 `src/refinemac/` 下，使用 `macro package` 声明（包名 `refine.refinemac`）
 - 测试文件放在 `src/` 下与源码同包（`package refine`），不使用 `tests/` 目录
-- `output-type = "staticlib"`（作为库编译），执行 `cjc --test` 运行测试
+- `output-type = "static"`，全程使用 `cjpm` 构建和测试
 
 ## 环境配置
 
-使用 `cjvs` 管理仓颉版本，在 zsh PTY 中先执行 `cjenv` 加载环境变量：
+使用 `cjvs` 管理仓颉版本。通过 `pty_spawn` 创建 zsh PTY 会话，先执行 `eval $(cjvs stdx env zsh)` 加载环境变量，再执行仓颉命令：
 
 ```shell
-cjenv       # 配置 LD_LIBRARY_PATH 等环境变量
+eval $(cjvs stdx env zsh)  # 配置 LD_LIBRARY_PATH 等环境变量（含 stdx）
 cjpm build
+
+# 运行测试（含代码和测试文件）
 cjpm test
+
+# 清理
+cjpm clean
 ```
 
-## 常用命令
-
-```shell
-# 构建（作为静态库）
-cjc --output-type=staticlib -o librefine.a src/*.cj
-
-# 运行测试（直接编译含测试的版本）
-cjc --output-type=staticlib --test -o refine_test.a src/*.cj
-
-# 构建 + 测试（使用 cjpm，但注意同包测试可能有循环依赖问题）
-cjpm build
-```
+- 日常开发只需 `cjpm build` 和 `cjpm test`
+- `cjpm` 会自动处理 `src/` 下所有源文件和测试文件，包括宏定义的编译
 
 ## 已知仓颉约束
 
@@ -57,3 +61,5 @@ cjpm build
 - `ArrayList` 没有 `join()` 方法，需要手写拼接
 - 完整枚举变体引用：当变体名与类名相同时，使用 `RelationKind.RefTo` 而非 `RefTo`
 - `&&`/`||` 不支持操作符重载，条件组合使用 `Expr.and()` / `Expr.or()` 方法
+- `Bool` 是关键字，枚举变体用 `` `Bool` `` 转义
+- `std.database.sql.Statement` 与本地 `Statement` 冲突，使用 `import ... as SqlStatement` 别名

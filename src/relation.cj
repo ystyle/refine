@@ -4,13 +4,21 @@ public enum RelationKind {
     | RefTo | RefMany | HasOne | HasMany
 }
 
-extend RelationKind <: Equatable<RelationKind> {
+extend RelationKind <: Equatable<RelationKind> & ToString {
     public operator func ==(other: RelationKind): Bool {
         match (this) {
             case RefTo => match (other) { case RefTo => true; case _ => false }
             case RefMany => match (other) { case RefMany => true; case _ => false }
             case HasOne => match (other) { case HasOne => true; case _ => false }
             case HasMany => match (other) { case HasMany => true; case _ => false }
+        }
+    }
+    public func toString(): String {
+        match (this) {
+            case RefTo => "RefTo"
+            case RefMany => "RefMany"
+            case HasOne => "HasOne"
+            case HasMany => "HasMany"
         }
     }
 }

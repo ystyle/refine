@@ -1,0 +1,98 @@
+package refine
+
+import std.collection.HashMap
+import std.collection.ArrayList
+import std.database.sql.QueryResult
+
+public enum HookKind {
+    | BeforeCreate
+    | AfterCreate
+    | BeforeUpdate
+    | AfterUpdate
+    | BeforeSave
+    | AfterSave
+    | BeforeDelete
+    | AfterDelete
+    | AfterFind
+}
+
+extend HookKind <: ToString {
+    public func toString(): String {
+        match (this) {
+            case BeforeCreate => "BeforeCreate"
+            case AfterCreate => "AfterCreate"
+            case BeforeUpdate => "BeforeUpdate"
+            case AfterUpdate => "AfterUpdate"
+            case BeforeSave => "BeforeSave"
+            case AfterSave => "AfterSave"
+            case BeforeDelete => "BeforeDelete"
+            case AfterDelete => "AfterDelete"
+            case AfterFind => "AfterFind"
+        }
+    }
+}
+
+public class Scope<T> {
+    var entity: T
+    var db: ?Tx
+    var entityBefore: ?T
+    var fields: Array<Col<Any>>
+    var error: ?Exception
+    var aborted: Bool = false
+    var result: ?QueryResult
+
+    public init(entity: T) {
+        this.entity = entity
+        this.db = None
+        this.entityBefore = None
+        this.fields = []
+        this.error = None
+        this.aborted = false
+        this.result = None
+    }
+
+    public func abort(err: Exception) {
+        this.error = err
+        this.aborted = true
+    }
+}
+
+public type HookFn<T> = (Scope<T>) -> Unit
+
+// Registry stores untyped wrappers to avoid Any-to-function-type cast issues
+private var hookRegistry = HashMap<String, ArrayList<Any>>()
+
+public func registerHook<T>(typeName: String, kind: HookKind, hook: HookFn<T>): Unit {
+    let key = typeName + ":" + kind.toString()
+    match (hookRegistry.get(key)) {
+        case Some(list) =>
+            list.add(hook)
+        case None =>
+            let list = ArrayList<Any>()
+            list.add(hook)
+            hookRegistry.add(key, list)
+    }
+}
+
+public func executeHooks<T>(typeName: String, kind: HookKind, scope: Scope<T>): ?Exception {
+    let key = typeName + ":" + kind.toString()
+    match (hookRegistry.get(key)) {
+        case Some(hooks) =>
+            for (h in hooks) {
+                if (scope.aborted) {
+                    return scope.error
+                }
+                let fn = (h as HookFn<T>).getOrThrow()
+                fn(scope)
+            }
+            if (scope.aborted) {
+                return scope.error
+            }
+        case None => ()
+    }
+    None
+}
+
+func clearHooks(): Unit {
+    hookRegistry.clear()
+}
