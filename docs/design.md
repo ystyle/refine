@@ -133,8 +133,8 @@ class Tag {
 enum Expr {
     | Column(String)              // 列引用
     | Value(Any)                  // 字面值
-    | BinOp(Expr, BinOp, Expr)    // 二元运算
-    | UnaryOp(UnaryOp, Expr)      // 一元运算
+    | Binary(Expr, BinOp, Expr)   // 二元运算（注：仓颉不允许变体名与类型同名，故用 Binary 而非 BinOp）
+    | Unary(UnaryOp, Expr)        // 一元运算
     | FuncCall(String, Array<Expr>) // 函数调用
     | SubQuery(Statement)         // 子查询
     | Raw(String)                 // 原生 SQL 逃生舱
@@ -156,9 +156,9 @@ enum UnaryOp {
 
 ```cangjie
 extend Expr {
-    public func and(other: Expr): Expr { BinOp(this, And, other) }
-    public func or(other: Expr): Expr  { BinOp(this, Or, other) }
-    public func not(): Expr            { UnaryOp(Not, this) }
+    public func and(other: Expr): Expr { Binary(this, And, other) }
+    public func or(other: Expr): Expr  { Binary(this, Or, other) }
+    public func not(): Expr            { Unary(Not, this) }
 }
 ```
 

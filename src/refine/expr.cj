@@ -1,7 +1,5 @@
 package refine
 
-public class Statement {}
-
 public enum BinOp {
     | Eq | Ne | Gt | Ge | Lt | Le
     | And | Or
