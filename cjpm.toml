@@ -3,6 +3,6 @@
   name = "refine"
   description = "A compile-time type-safe ORM for Cangjie"
   version = "0.1.0"
-  output-type = "staticlib"
+  output-type = "static"
 
 [dependencies]

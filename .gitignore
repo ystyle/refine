@@ -1,7 +1,8 @@
-target/
 *.cjo
 *.cjo.flag
-cjpm.lock
 .cjpm/
+cjpm.lock
 /librefine.a
+log.txt
+target/
 /tests/*.cj
