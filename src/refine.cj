@@ -83,6 +83,8 @@ public class Refine {
 
     public func all<T>(query: Query<T>): Array<T> {
         let s = session()
+        query.queryDialect = dialect
+        query.columnOffset = paramOffset
         let r = query.using(s).all()
         s.close()
         r
@@ -90,6 +92,8 @@ public class Refine {
 
     public func one<T>(query: Query<T>): Option<T> {
         let s = session()
+        query.queryDialect = dialect
+        query.columnOffset = paramOffset
         let r = query.using(s).one()
         s.close()
         r

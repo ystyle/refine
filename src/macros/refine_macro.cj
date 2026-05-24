@@ -207,15 +207,26 @@ func buildRelClass(className: String, rels: ArrayList<RelInfo>): Tokens {
         let fieldIdent = Token(TokenKind.IDENTIFIER, r.fieldName)
         let targetType = Token(TokenKind.IDENTIFIER, r.target)
         let nameLit = Token(TokenKind.STRING_LITERAL, r.fieldName)
-        if (r.kind == "ref_to" || r.kind == "has_one") {
+        let targetTableLit = Token(TokenKind.STRING_LITERAL, lowerTableName(r.target))
+        if (r.kind == "ref_to") {
             let fkLit = Token(TokenKind.STRING_LITERAL, r.by)
             body = body + quote(
-                static let $(fieldIdent) = RefTo<$(targetType)>($(nameLit), Col<Any>($(fkLit)), [Col<Any>("id")])
+                static let $(fieldIdent) = RefTo<$(targetType)>($(nameLit), Col<Any>($(fkLit)), [Col<Any>("id")], $(targetTableLit))
+            )
+        } else if (r.kind == "has_one") {
+            let fkLit = Token(TokenKind.STRING_LITERAL, r.by)
+            body = body + quote(
+                static let $(fieldIdent) = HasOne<$(targetType)>($(nameLit), $(fkLit), [Col<Any>("id")], $(targetTableLit))
+            )
+        } else if (r.kind == "has_many") {
+            let fkLit = Token(TokenKind.STRING_LITERAL, r.by)
+            body = body + quote(
+                static let $(fieldIdent) = HasMany<$(targetType)>($(nameLit), $(fkLit), [Col<Any>("id")], $(targetTableLit))
             )
         } else {
             let viaLit = Token(TokenKind.STRING_LITERAL, r.via)
             body = body + quote(
-                static let $(fieldIdent) = RefMany<$(targetType)>($(nameLit), $(viaLit), [Col<Any>("id")])
+                static let $(fieldIdent) = RefMany<$(targetType)>($(nameLit), $(viaLit), [Col<Any>("id")], $(targetTableLit))
             )
         }
         first = false

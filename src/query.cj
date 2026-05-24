@@ -120,57 +120,47 @@ public class Query<T> {
         var sourceTable = ""
         for (clause in stmt.clauses) {
             match (clause) {
-                case FromClause(t) => sourceTable = t
+                case Clause.FromClause(t) => sourceTable = t
                 case _ => ()
             }
         }
         if (sourceTable == "") { return }
-        var selectIdx: Int64 = -1
-        for (i in 0..stmt.clauses.size) {
-            match (stmt.clauses[i]) {
-                case SelectClause(_) => selectIdx = i
-                case _ => ()
-            }
-        }
+        var aliasFields = ArrayList<Expr>()
         for (i in 0..included.size) {
             let rel = included[i]
             let (kind, name, table, fk, via, fields) = rel.resolve()
             let prefix = name + "."
             let srcRef = Raw(dialect.quoteIdentifier(sourceTable) + "." + dialect.quoteIdentifier(fk))
-            let tgtRef = Raw(dialect.quoteIdentifier(table) + "." + dialect.quoteIdentifier("id"))
+            let tgtRef = Raw(dialect.quoteIdentifier(name) + "." + dialect.quoteIdentifier("id"))
             let srcId = Raw(dialect.quoteIdentifier(sourceTable) + "." + dialect.quoteIdentifier("id"))
-            let tgtFk = Raw(dialect.quoteIdentifier(table) + "." + dialect.quoteIdentifier(fk))
+            let tgtFk = Raw(dialect.quoteIdentifier(name) + "." + dialect.quoteIdentifier(fk))
             match (kind) {
                 case RelationKind.RefToRel =>
-                    let onExpr = Binary(srcRef, Eq, tgtRef)
-                    stmt.addClause(JoinClause(table, name, onExpr))
+                    stmt.addClause(JoinClause(table, name, Binary(srcRef, Eq, tgtRef)))
                 case RelationKind.HasOneRel =>
-                    let onExpr = Binary(srcId, Eq, tgtFk)
-                    stmt.addClause(JoinClause(table, name, onExpr))
+                    stmt.addClause(JoinClause(table, name, Binary(srcId, Eq, tgtFk)))
                 case RelationKind.HasManyRel =>
-                    let onExpr = Binary(srcId, Eq, tgtFk)
-                    stmt.addClause(JoinClause(table, name, onExpr))
+                    stmt.addClause(JoinClause(table, name, Binary(srcId, Eq, tgtFk)))
                 case RelationKind.RefManyRel => ()
             }
-            var aliasFields = ArrayList<Expr>()
             for (j in 0..fields.size) {
                 let col = fields[j]
-                let colRef = Raw(dialect.quoteIdentifier(table) + "." + dialect.quoteIdentifier(col.name))
+                let colRef = Raw(dialect.quoteIdentifier(name) + "." + dialect.quoteIdentifier(col.name))
                 aliasFields.add(Aliased(colRef, prefix + col.name))
             }
-            if (selectIdx >= 0) {
-                match (stmt.clauses[selectIdx]) {
-                    case SelectClause(existing) =>
-                        var combined = ArrayList<Expr>()
-                        for (e in existing) { combined.add(e) }
-                        for (a in aliasFields) { combined.add(a) }
-                        stmt.clauses[selectIdx] = SelectClause(combined.toArray())
-                    case _ => ()
-                }
-            } else {
-                stmt.addClause(SelectClause(aliasFields.toArray()))
-                selectIdx = stmt.clauses.size - 1
+        }
+        if (aliasFields.size > 0) {
+            var combined = ArrayList<Expr>()
+            combined.add(Raw("*"))
+            for (a in aliasFields) {
+                combined.add(a)
             }
+            var newClauses = ArrayList<Clause>()
+            newClauses.add(SelectClause(combined.toArray()))
+            for (c in stmt.clauses) {
+                newClauses.add(c)
+            }
+            stmt.clauses = newClauses
         }
     }
 
@@ -200,6 +190,7 @@ public class Query<T> {
         while (result.next()) {
             entities.add(mapper(result, columnMap))
         }
+        closeExecutor(exec)
         entities.toArray()
     }
 
@@ -226,11 +217,12 @@ public class Query<T> {
         let elapsed = MonoTime.now() - start
         Logger.logSlowQuery(sql, elapsed)
         let columnMap = buildColumnMap(result.columnInfos, columnOffset)
+        var res: Option<T> = None
         if (result.next()) {
-            Some(mapper(result, columnMap))
-        } else {
-            None
+            res = Some(mapper(result, columnMap))
         }
+        closeExecutor(exec)
+        res
     }
 
     public func count(): Int64 {
@@ -252,11 +244,12 @@ public class Query<T> {
         let result = exec.query(sql, params)
         let elapsed = MonoTime.now() - start
         Logger.logSlowQuery(sql, elapsed)
+        var cnt: Int64 = 0
         if (result.next()) {
-            result.get<Int64>(0 + columnOffset)
-        } else {
-            0
+            cnt = result.get<Int64>(0 + columnOffset)
         }
+        closeExecutor(exec)
+        cnt
     }
 
     public func exists(): Bool {
@@ -276,6 +269,13 @@ public class Query<T> {
         match (this.queryDialect) {
             case Some(d) => d
             case None => SQLiteDialect()
+        }
+    }
+
+    private func closeExecutor(exec: ExecutionContext): Unit {
+        match (exec) {
+            case s: Session => s.close()
+            case _ => ()
         }
     }
 }

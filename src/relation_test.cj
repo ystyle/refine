@@ -12,7 +12,7 @@ public class RelationTest {
     public func testRefToConstruction(): Unit {
         let fk = Col<Any>("user_id")
         let fields = [Col<Any>("id"), Col<Any>("name")]
-        let rel = RefTo<RelUser>("author", fk, fields)
+        let rel = RefTo<RelUser>("author", fk, fields, "reluser")
         @Expect(rel.name, "author")
         @Expect(rel.kind, RelationKind.RefToRel)
         @Expect(rel.foreignKey, "user_id")
@@ -25,7 +25,7 @@ public class RelationTest {
     @TestCase
     public func testRefManyConstruction(): Unit {
         let fields = [Col<Any>("id"), Col<Any>("name")]
-        let rel = RefMany<RelTag>("tags", "post_tags", fields)
+        let rel = RefMany<RelTag>("tags", "post_tags", fields, "reltag")
         @Expect(rel.name, "tags")
         @Expect(rel.kind, RelationKind.RefManyRel)
         match (rel.via) {
@@ -38,7 +38,7 @@ public class RelationTest {
     public func testIRelationResolveRefTo(): Unit {
         let fk = Col<Any>("user_id")
         let fields = [Col<Any>("id"), Col<Any>("name")]
-        let rel: IRelation = RefTo<RelUser>("author", fk, fields)
+        let rel: IRelation = RefTo<RelUser>("author", fk, fields, "reluser")
         let (kind, name, targetTable, foreignKey, via, resolvedFields) = rel.resolve()
         @Expect(kind, RelationKind.RefToRel)
         @Expect(name, "author")
@@ -52,7 +52,7 @@ public class RelationTest {
     @TestCase
     public func testIRelationResolveRefMany(): Unit {
         let fields = [Col<Any>("id"), Col<Any>("name")]
-        let rel: IRelation = RefMany<RelTag>("tags", "post_tags", fields)
+        let rel: IRelation = RefMany<RelTag>("tags", "post_tags", fields, "reltag")
         let (kind, name, targetTable, foreignKey, via, resolvedFields) = rel.resolve()
         @Expect(kind, RelationKind.RefManyRel)
         @Expect(name, "tags")
@@ -66,7 +66,7 @@ public class RelationTest {
     public func testRelationFieldsOverride(): Unit {
         let fk = Col<Any>("user_id")
         let fields = [Col<Any>("id"), Col<Any>("name")]
-        let rel = RefTo<RelUser>("author", fk, fields)
+        let rel = RefTo<RelUser>("author", fk, fields, "reluser")
         let extra = [Col<Any>("email")]
         rel.setFields(extra)
         @Expect(rel.fields[0].name, "email")

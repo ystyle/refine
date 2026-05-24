@@ -3,6 +3,8 @@ package refine
 import std.collection.ArrayList
 
 public class SQLiteDialect <: Dialect {
+    private var params = ArrayList<Any>()
+
     public func name(): String { "sqlite" }
 
     public func quoteIdentifier(name: String): String {
@@ -10,8 +12,8 @@ public class SQLiteDialect <: Dialect {
     }
 
     public func render(stmt: Statement): (String, Array<Any>) {
+        params = ArrayList<Any>()
         var sql = ArrayList<String>()
-        var params = ArrayList<Any>()
         var hasSelect = false
         for (i in 0..stmt.clauses.size) {
             match (stmt.clauses[i]) {
@@ -53,7 +55,9 @@ public class SQLiteDialect <: Dialect {
     private func renderExpr(expr: Expr): String {
         match (expr) {
             case Column(n) => quoteIdentifier(n)
-            case Value(v) => "?"
+            case Value(v) =>
+                params.add(v)
+                "?"
             case Binary(l, op, r) =>
                 renderExpr(l) + " " + renderOp(op) + " " + renderExpr(r)
             case Unary(op, e) =>
@@ -67,6 +71,7 @@ public class SQLiteDialect <: Dialect {
                 renderExpr(expr) + " AS " + quoteIdentifier(alias)
             case SubQuery(s) =>
                 let (subSql, subParams) = render(s)
+                for (p in subParams) { params.add(p) }
                 "(" + subSql + ")"
         }
     }

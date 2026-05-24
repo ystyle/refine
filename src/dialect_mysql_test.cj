@@ -39,7 +39,7 @@ public class MySQLDialectTest {
         stmt.addClause(WhereClause([Binary(Column("age"), Gt, Value(18))]))
         let (sql, params) = dialect.render(stmt)
         @Expect(sql, "SELECT `id`, `name` FROM `users` WHERE `age` > ?")
-        @Expect(params.size, 0)
+        @Expect(params.size, 1)
     }
 
     @TestCase
@@ -65,7 +65,7 @@ public class MySQLDialectTest {
         stmt.addClause(HavingClause([Binary(FuncCall("COUNT", [Column("id")]), Gt, Value(5))]))
         let (sql, params) = dialect.render(stmt)
         @Expect(sql, "SELECT `dept`, COUNT(`id`) FROM `employees` GROUP BY `dept` HAVING COUNT(`id`) > ?")
-        @Expect(params.size, 0)
+        @Expect(params.size, 1)
     }
 
     @TestCase
@@ -78,7 +78,7 @@ public class MySQLDialectTest {
         stmt.addClause(WhereClause([Binary(Column("u.age"), Gt, Value(18))]))
         let (sql, params) = dialect.render(stmt)
         @Expect(sql, "SELECT `u.id`, `u.name` FROM `users` LEFT JOIN `orders` `o` ON `u.id` = `o.user_id` WHERE `u.age` > ?")
-        @Expect(params.size, 0)
+        @Expect(params.size, 1)
     }
 
     @TestCase
@@ -95,7 +95,7 @@ public class MySQLDialectTest {
         stmt.addClause(OffsetClause(10))
         let (sql, params) = dialect.render(stmt)
         @Expect(sql, "SELECT `id` FROM `t` WHERE `a` = ? GROUP BY `b` HAVING COUNT(`c`) > ? ORDER BY `d` LIMIT 5 OFFSET 10")
-        @Expect(params.size, 0)
+        @Expect(params.size, 2)
     }
 
     @TestCase

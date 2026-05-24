@@ -54,8 +54,8 @@ public open class Relation<TTarget> {
 }
 
 public class RefTo<TTarget> <: Relation<TTarget> & IRelation {
-    public init(name: String, fk: Col<Any>, fields: Array<Col<Any>>) {
-        super(name, "", RelationKind.RefToRel, fk.name, None, fields)
+    public init(name: String, fk: Col<Any>, fields: Array<Col<Any>>, targetTable: String) {
+        super(name, targetTable, RelationKind.RefToRel, fk.name, None, fields)
     }
 
     public func resolve(): (RelationKind, String, String, String, Option<String>, Array<Col<Any>>) {
@@ -64,8 +64,28 @@ public class RefTo<TTarget> <: Relation<TTarget> & IRelation {
 }
 
 public class RefMany<TTarget> <: Relation<TTarget> & IRelation {
-    public init(name: String, via: String, fields: Array<Col<Any>>) {
-        super(name, "", RelationKind.RefManyRel, "", Some(via), fields)
+    public init(name: String, via: String, fields: Array<Col<Any>>, targetTable: String) {
+        super(name, targetTable, RelationKind.RefManyRel, "", Some(via), fields)
+    }
+
+    public func resolve(): (RelationKind, String, String, String, Option<String>, Array<Col<Any>>) {
+        (kind, name, targetTable, foreignKey, via, fields)
+    }
+}
+
+public class HasOne<TTarget> <: Relation<TTarget> & IRelation {
+    public init(name: String, fk: String, fields: Array<Col<Any>>, targetTable: String) {
+        super(name, targetTable, RelationKind.HasOneRel, fk, None, fields)
+    }
+
+    public func resolve(): (RelationKind, String, String, String, Option<String>, Array<Col<Any>>) {
+        (kind, name, targetTable, foreignKey, via, fields)
+    }
+}
+
+public class HasMany<TTarget> <: Relation<TTarget> & IRelation {
+    public init(name: String, fk: String, fields: Array<Col<Any>>, targetTable: String) {
+        super(name, targetTable, RelationKind.HasManyRel, fk, None, fields)
     }
 
     public func resolve(): (RelationKind, String, String, String, Option<String>, Array<Col<Any>>) {

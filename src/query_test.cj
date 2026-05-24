@@ -115,7 +115,7 @@ public class QueryTest {
     public func testInclude(): Unit {
         let fk = Col<Any>("user_id")
         let fields = [Col<Any>("id"), Col<Any>("name")]
-        let rel: IRelation = RefTo<RelUser>("author", fk, fields)
+        let rel: IRelation = RefTo<RelUser>("author", fk, fields, "reluser")
         let q = Query<Int64>()
         q.include(rel)
         @Expect(q.included.size, 1)
