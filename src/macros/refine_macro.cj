@@ -208,25 +208,49 @@ func buildRelClass(className: String, rels: ArrayList<RelInfo>): Tokens {
         let targetType = Token(TokenKind.IDENTIFIER, r.target)
         let nameLit = Token(TokenKind.STRING_LITERAL, r.fieldName)
         let targetTableLit = Token(TokenKind.STRING_LITERAL, lowerTableName(r.target))
+        let mapperIdent = Token(TokenKind.IDENTIFIER, r.fieldName + "Mapper")
+        let setterIdent = Token(TokenKind.IDENTIFIER, r.fieldName + "Setter")
+        let mapperFuncIdent = Token(TokenKind.IDENTIFIER, r.target + "RowMapper")
+        let cnIdent = Token(TokenKind.IDENTIFIER, className)
+        body = body + quote(
+            static let $(mapperIdent) = $(mapperFuncIdent)
+        )
+        body = body + Token(TokenKind.NL)
+        if (r.kind == "ref_to" || r.kind == "has_one") {
+            body = body + quote(
+                static let $(setterIdent) = { entity: Any, target: Any =>
+                    let e = (entity as $(cnIdent)).getOrThrow()
+                    e.$(fieldIdent) = target as $(targetType)
+                }
+            )
+        } else {
+            body = body + quote(
+                static let $(setterIdent) = { entity: Any, target: Any =>
+                    let e = (entity as $(cnIdent)).getOrThrow()
+                    e.$(fieldIdent).add((target as $(targetType)).getOrThrow())
+                }
+            )
+        }
+        body = body + Token(TokenKind.NL)
         if (r.kind == "ref_to") {
             let fkLit = Token(TokenKind.STRING_LITERAL, r.by)
             body = body + quote(
-                static let $(fieldIdent) = RefTo<$(targetType)>($(nameLit), Col<Any>($(fkLit)), [Col<Any>("id")], $(targetTableLit), dummyMapper, dummySetter)
+                static let $(fieldIdent) = RefTo<$(targetType)>($(nameLit), Col<Any>($(fkLit)), [Col<Any>("id")], $(targetTableLit), $(mapperIdent), $(setterIdent))
             )
         } else if (r.kind == "has_one") {
             let fkLit = Token(TokenKind.STRING_LITERAL, r.by)
             body = body + quote(
-                static let $(fieldIdent) = HasOne<$(targetType)>($(nameLit), $(fkLit), [Col<Any>("id")], $(targetTableLit), dummyMapper, dummySetter)
+                static let $(fieldIdent) = HasOne<$(targetType)>($(nameLit), $(fkLit), [Col<Any>("id")], $(targetTableLit), $(mapperIdent), $(setterIdent))
             )
         } else if (r.kind == "has_many") {
             let fkLit = Token(TokenKind.STRING_LITERAL, r.by)
             body = body + quote(
-                static let $(fieldIdent) = HasMany<$(targetType)>($(nameLit), $(fkLit), [Col<Any>("id")], $(targetTableLit), dummyMapper, dummySetter)
+                static let $(fieldIdent) = HasMany<$(targetType)>($(nameLit), $(fkLit), [Col<Any>("id")], $(targetTableLit), $(mapperIdent), $(setterIdent))
             )
         } else {
             let viaLit = Token(TokenKind.STRING_LITERAL, r.via)
             body = body + quote(
-                static let $(fieldIdent) = RefMany<$(targetType)>($(nameLit), $(viaLit), [Col<Any>("id")], $(targetTableLit), dummyMapper, dummySetter)
+                static let $(fieldIdent) = RefMany<$(targetType)>($(nameLit), $(viaLit), [Col<Any>("id")], $(targetTableLit), $(mapperIdent), $(setterIdent))
             )
         }
         first = false
