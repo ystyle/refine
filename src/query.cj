@@ -18,6 +18,14 @@ class FieldOverrideRelation <: IRelation {
         let (kind, name, table, fk, via, _) = inner.resolve()
         (kind, name, table, fk, via, overrides)
     }
+
+    public func getTargetMapper(): (QueryResult, HashMap<String, Int64>) -> Any {
+        inner.getTargetMapper()
+    }
+
+    public func getFieldSetter(): (Any, Any) -> Unit {
+        inner.getFieldSetter()
+    }
 }
 
 public class Query<T> {
