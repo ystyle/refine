@@ -97,6 +97,11 @@ public class Query<T> {
 
     public func include(rel: IRelation): Query<T> {
         included.add(rel)
+        match (this.mapper) {
+            case Some(m) =>
+                this.mapper = Some(wrapMapper(m, rel))
+            case None => ()
+        }
         this
     }
 
@@ -170,6 +175,27 @@ public class Query<T> {
                 }
             }
         }
+    }
+
+    private func wrapMapper(
+        baseMapper: (QueryResult, HashMap<String, Int64>) -> T,
+        rel: IRelation
+    ): (QueryResult, HashMap<String, Int64>) -> T {
+        let (kind, name, _, _, _, _) = rel.resolve()
+        let targetMapper = rel.getTargetMapper()
+        let setter = rel.getFieldSetter()
+
+        func wrapper(result: QueryResult, columnMap: HashMap<String, Int64>): T {
+            let entity = baseMapper(result, columnMap)
+            let prefix = name + "."
+            if (columnMap.contains(prefix + "id")) {
+                let stripped = stripPrefix(columnMap, prefix)
+                let target = targetMapper(result, stripped)
+                setter(entity, target)
+            }
+            entity
+        }
+        wrapper
     }
 
     public func setMapper(m: (QueryResult, HashMap<String, Int64>) -> T): Unit {
@@ -286,4 +312,18 @@ public class Query<T> {
             case _ => ()
         }
     }
+}
+
+func stripPrefix(
+    cm: HashMap<String, Int64>,
+    prefix: String
+): HashMap<String, Int64> {
+    var result = HashMap<String, Int64>()
+    for ((key, value) in cm.toArray()) {
+        if (key.startsWith(prefix)) {
+            let stripped = key[prefix.size..]
+            result[stripped] = value
+        }
+    }
+    result
 }
