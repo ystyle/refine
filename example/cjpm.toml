@@ -6,4 +6,4 @@
 
 [dependencies]
 refine = { path = ".." }
-mariadb = {git = "https://gitcode.com/Cangjie-SIG/mariadb-driver.git", branch="master"}
+mariadb = "2.1.0"
