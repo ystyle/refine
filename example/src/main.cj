@@ -1,246 +1,201 @@
 package demo
 
-import std.database.sql.{Connection, QueryResult, Transaction, DriverManager}
-import std.database.sql.Statement as SqlStatement
-import cangjie_tpc::opengauss.driver.*
+import std.database.sql.{Connection, QueryResult, DriverManager}
 import refine.*
+import cangjie_tpc::opengauss.driver.*
 
-// ── Result types ──
-
-struct GetResult {
-    var id: Int64 = 0
-    var name: String = ""
-    var price: Int64 = 0
-
-    public init(id: Int64, name: String, price: Int64) {
-        this.id = id
-        this.name = name
-        this.price = price
+struct UserRow {
+    var id: Int64 = 0; var name: String = ""; var email: String = ""
+    public init(id: Int64, name: String, email: String) {
+        this.id = id; this.name = name; this.email = email
     }
 }
 
-struct NamePrice {
-    var name: String = ""
-    var price: Int64 = 0
-
-    public init(name: String, price: Int64) {
-        this.name = name
-        this.price = price
-    }
+struct TitleTag {
+    var title: String = ""; var tag: String = ""
+    public init(title: String, tag: String) { this.title = title; this.tag = tag }
 }
 
-// ── Test helpers ──
+var passed = 0; var failed = 0
 
-var passed = 0
-var failed = 0
+func ok(c: Bool, msg: String): Unit {
+    if (c) { passed++; println("  OK " + msg) }
+    else { failed++; println("  FAIL " + msg) }
+}
+func section(n: String): Unit { println("\n== " + n + " ==") }
+func report(): Unit { println("\nResults: " + passed.toString() + " passed, " + failed.toString() + " failed") }
 
-func assert(condition: Bool, msg: String): Unit {
-    if (condition) {
-        passed++
-        println("  ✅ ${msg}")
-    } else {
-        failed++
-        println("  ❌ ${msg}")
-    }
+func getConn(): Connection {
+    let d = DriverManager.getDriver("postgres").getOrThrow()
+    d.open("postgres://refine_test:refine123@127.0.0.1:5432/refine_test").connect()
 }
 
-func assertEqString(got: String, expected: String, msg: String): Unit {
-    if (got == expected) {
-        passed++
-        println("  ✅ ${msg}")
-    } else {
-        failed++
-        println("  ❌ ${msg} — got \"${got}\", expected \"${expected}\"")
-    }
-}
-
-func assertEqInt(got: Int64, expected: Int64, msg: String): Unit {
-    if (got == expected) {
-        passed++
-        println("  ✅ ${msg}")
-    } else {
-        failed++
-        println("  ❌ ${msg} — got ${got}, expected ${expected}")
-    }
-}
-
-func section(name: String): Unit {
-    println("\n── ${name} ──")
-}
-
-func report(): Unit {
-    println("\n════════════════════════════════════════")
-    println("Results: ${passed} passed, ${failed} failed")
-}
-
-func getRawConn(): Connection {
-    let driver = DriverManager.getDriver("postgres").getOrThrow()
-    let url = "postgres://refine_test:refine123@127.0.0.1:5432/refine_test"
-    let ds = driver.open(url)
-    ds.connect()
-}
-
-func exec(conn: Connection, sql: String, params: Array<Any>): Unit {
-    let stmt = conn.prepareStatement(sql)
+func qr(conn: Connection, sql: String, params: Array<Any>): QueryResult {
+    let st = conn.prepareStatement(sql)
     for (i in 0..params.size) {
-        dispatchSetParam(stmt, i, params[i])
+        let v = params[i]
+        match (v) {
+            case sv: String => st.set<String>(i, sv)
+            case n: Int64 => st.set<Int64>(i, n)
+            case b: Bool => st.set<Bool>(i, b)
+            case _ => st.setNull(i)
+        }
     }
-    try {
-        stmt.update()
-    } catch (e: Exception) {
-        // Driver bug: NOTICE messages cause serialization errors, skip
-    } catch (e: Error) {
-        // Some driver errors are Errors, not Exceptions
-    }
+    st.query()
 }
-
-func query(conn: Connection, sql: String, params: Array<Any>): QueryResult {
-    let stmt = conn.prepareStatement(sql)
-    for (i in 0..params.size) {
-        dispatchSetParam(stmt, i, params[i])
-    }
-    stmt.query()
-}
-
-func dispatchSetParam(stmt: SqlStatement, index: Int, value: Any): Unit {
-    match (value) {
-        case v: Int64    => stmt.set<Int64>(index, v)
-        case v: String   => stmt.set<String>(index, v)
-        case v: Bool     => stmt.set<Bool>(index, v)
-        case v: Float64  => stmt.set<Float64>(index, v)
-        case _           => stmt.setNull(index)
-    }
-}
-
-// ── Main ──
 
 main(): Int64 {
-    println("Refine ORM — PostgreSQL Integration Tests\n")
-
-    testConnection()
-    testRawSQL()
-    testQueryBuilder()
-    testTransaction()
-    testCountAndExists()
-
+    println("Refine ORM Integration Tests (PostgreSQL)\n")
+    testConn()
+    testCRUD()
+    testWhere()
+    testOrderLimit()
+    testGroupHaving()
+    testJoin()
+    testAgg()
+    testTx()
     report()
     if (failed > 0) { return 1 }
     0
 }
 
-// ── Test cases ──
-
-func testConnection(): Unit {
+func testConn(): Unit {
     section("Connection")
-    try {
-        let conn = getRawConn()
-        let result = query(conn, "SELECT 1", [])
-        assert(true, "Connect to PostgreSQL")
-        conn.close()
-    } catch (e: Exception) {
-        assert(false, "Connect to PostgreSQL: ${e.message}")
-    }
+    let c = getConn()
+    ok(true, "Connect to PostgreSQL")
+    c.close()
 }
 
-func testRawSQL(): Unit {
-    section("Raw SQL — SELECT")
-    let conn = getRawConn()
+func testCRUD(): Unit {
+    section("CRUD")
+    let c = getConn()
+    let ins = c.prepareStatement("INSERT INTO users (name, email) VALUES (?, ?) RETURNING id")
+    ins.set<String>(0, "TestU"); ins.set<String>(1, "tu@t.com")
+    let ir = ins.query(); ir.next()
+    let uid = ir.get<Int64>(0)
+    ok(uid > 0, "INSERT returns id")
 
-    // SELECT
-    let result = query(conn, "SELECT id, name, price FROM test_items ORDER BY id", [])
-    var rows = 0
-    while (result.next()) {
-        let id = result.get<Int64>(0)
-        let name = result.get<String>(1)
-        let price = result.get<Int64>(2)
-        rows++
-    }
-    assert(rows >= 0, "SELECT returns rows (${rows})")
-    conn.close()
+    let sr = qr(c, "SELECT name FROM users WHERE id = ?", [uid]); sr.next()
+    ok(sr.get<String>(0) == "TestU", "SELECT name")
+
+    let up = c.prepareStatement("UPDATE users SET email = ? WHERE id = ?")
+    up.set<String>(0, "uu@t.com"); up.set<Int64>(1, uid); up.update()
+    let ur = qr(c, "SELECT email FROM users WHERE id = ?", [uid]); ur.next()
+    ok(ur.get<String>(0) == "uu@t.com", "UPDATE email")
+
+    let dl = c.prepareStatement("DELETE FROM users WHERE id = ?")
+    dl.set<Int64>(0, uid); dl.update()
+    let dr = qr(c, "SELECT COUNT(*) FROM users WHERE id = ?", [uid]); dr.next()
+    ok(dr.get<Int64>(0) == 0, "DELETE removes row")
+    c.close()
 }
 
-func testQueryBuilder(): Unit {
-    section("Query<T> Builder + PostgreSQLDialect")
-    let conn = getRawConn()
+func testWhere(): Unit {
+    section("WHERE")
+    let c = getConn(); let d = PostgreSQLDialect(); let s = Session(c)
 
-    let dialect = PostgreSQLDialect()
-    let session = Session(conn)
-
-    // Simple WHERE query using test_products (pre-created)
-    let results = Query<GetResult>()
-        .dialect(dialect)
-        .using(session)
-        .select([Column("id"), Column("name"), Column("price")])
-        .from("test_products")
-        .`where`(Binary(Column("category"), Eq, Value("Electronics")))
-        .all() { result, colMap =>
-            GetResult(result.get<Int64>(colMap["id"]),
-                      result.get<String>(colMap["name"]),
-                      result.get<Int64>(colMap["price"]))
+    let r1 = Query<UserRow>().dialect(d).using(s)
+        .select([Column("id"), Column("name"), Column("email")]).from("users")
+        .`where`(Binary(Column("name"), Eq, Value("Alice")))
+        .all() { res, m =>
+            UserRow(res.get<Int64>(m["id"]), res.get<String>(m["name"]), res.get<String>(m["email"]))
         }
-    assert(results.size == 2, "WHERE category=Electronics returns 2 rows")
+    ok(r1.size == 1, "WHERE name='Alice'")
 
-    // ORDER BY + LIMIT via Raw (DESC FuncCall rendering needs fixing)
-    let topResults = Query<NamePrice>()
-        .dialect(dialect)
-        .using(session)
-        .select([Column("name"), Column("price")])
-        .from("test_products")
-        .orderBy([Raw("\"price\" DESC")])
-        .limit(3)
-        .all() { result, colMap =>
-            NamePrice(result.get<String>(colMap["name"]),
-                      result.get<Int64>(colMap["price"]))
+    let r2 = Query<UserRow>().dialect(d).using(s)
+        .select([Column("id"), Column("name"), Column("email")]).from("users")
+        .`where`(Binary(Column("name"), In, Value(["Alice", "Bob"])))
+        .all() { res, m =>
+            UserRow(res.get<Int64>(m["id"]), res.get<String>(m["name"]), res.get<String>(m["email"]))
         }
-    // Note: ORDER BY with FuncCall("DESC", ...) renders incorrectly in SQL
-    // Use Raw for ASC/DESC until renderer is fixed
-    assert(topResults.size > 0, "ORDER BY + LIMIT returns results")
-
-    conn.close()
+    ok(r2.size == 2, "WHERE name IN")
+    c.close()
 }
 
-func testTransaction(): Unit {
-    section("Transaction — commit & rollback")
-    let conn = getRawConn()
-    let tx = conn.createTransaction()
+func testOrderLimit(): Unit {
+    section("ORDER BY + LIMIT + OFFSET")
+    let c = getConn(); let d = PostgreSQLDialect(); let s = Session(c)
+
+    let r1 = Query<UserRow>().dialect(d).using(s)
+        .select([Column("id")]).from("users")
+        .orderBy([Expr.Ordered(Column("id"), "ASC")])
+        .all() { res, m => UserRow(res.get<Int64>(m["id"]), "", "") }
+    ok(r1.size >= 2, "ORDER BY ASC")
+    if (r1.size >= 2) { ok(r1[0].id < r1[1].id, "  ascending") }
+
+    let r2 = Query<UserRow>().dialect(d).using(s)
+        .select([Column("id")]).from("users")
+        .orderBy([Expr.Ordered(Column("id"), "DESC")]).limit(2)
+        .all() { res, m => UserRow(res.get<Int64>(m["id"]), "", "") }
+    ok(r2.size == 2, "DESC LIMIT 2")
+
+    let r3 = Query<UserRow>().dialect(d).using(s)
+        .select([Column("id")]).from("users")
+        .orderBy([Expr.Ordered(Column("id"), "ASC")]).limit(1).offset(1)
+        .all() { res, m => UserRow(res.get<Int64>(m["id"]), "", "") }
+    ok(r3.size == 1, "LIMIT 1 OFFSET 1")
+    c.close()
+}
+
+func testGroupHaving(): Unit {
+    section("GROUP BY")
+    let c = getConn(); let d = PostgreSQLDialect(); let s = Session(c)
+    let r = Query<UserRow>().dialect(d).using(s)
+        .select([Column("user_id"), Raw("COUNT(*) AS cnt")]).from("posts")
+        .groupBy([Column("user_id")])
+        .all() { res, m => UserRow(res.get<Int64>(m["user_id"]), "", "") }
+    ok(r.size > 0, "GROUP BY returns rows")
+    c.close()
+}
+
+func testJoin(): Unit {
+    section("JOIN")
+    let c = getConn(); let d = PostgreSQLDialect(); let s = Session(c)
+    let r = Query<TitleTag>().dialect(d).using(s)
+        .select([Column("p.title"), Column("t.name")])
+        .from("posts p, post_tags pt, tags t")
+        .`where`(Binary(Column("p.id"), Eq, Column("pt.post_id")))
+        .`where`(Binary(Column("pt.tag_id"), Eq, Column("t.id")))
+        .all() { res, m => TitleTag(res.get<String>(m["title"]), res.get<String>(m["name"])) }
+    ok(r.size > 0, "JOIN returns rows")
+    c.close()
+}
+
+func testAgg(): Unit {
+    section("Aggregations")
+    let c = getConn(); let d = PostgreSQLDialect(); let s = Session(c)
+    let cnt = Query<Int64>().dialect(d).using(s).from("users").count()
+    ok(cnt >= 2, "COUNT(*) = " + cnt.toString())
+
+    let hit = Query<Int64>().dialect(d).using(s).from("users")
+        .`where`(Binary(Column("name"), Eq, Value("Alice"))).count()
+    ok(hit > 0, "WHERE existing > 0")
+
+    let miss = Query<Int64>().dialect(d).using(s).from("users")
+        .`where`(Binary(Column("name"), Eq, Value("Nox"))).count()
+    ok(miss == 0, "WHERE missing = 0")
+    c.close()
+}
+
+func testTx(): Unit {
+    section("Transaction")
+    let c1 = getConn(); let c2 = getConn()
+
+    let tx = c1.createTransaction()
     tx.begin()
-
-    let stmt = conn.prepareStatement("INSERT INTO test_tx (val) VALUES (?)")
-    stmt.set<String>(0, "tx_test")
-    stmt.update()
+    let s = c1.prepareStatement("INSERT INTO users (name, email) VALUES (?, ?)")
+    s.set<String>(0, "TxU"); s.set<String>(1, "txu@t.com"); s.update()
     tx.commit()
-    assert(true, "Transaction commit succeeded")
+    let r = qr(c2, "SELECT COUNT(*) FROM users WHERE email = ?", ["txu@t.com"]); r.next()
+    ok(r.get<Int64>(0) > 0, "Commit visible")
+    let cl = c2.prepareStatement("DELETE FROM users WHERE email = ?"); cl.set<String>(0, "txu@t.com"); cl.update()
 
-    // Verify from another connection
-    let conn2 = getRawConn()
-    let result = query(conn2, "SELECT val FROM test_tx WHERE val = ?", ["tx_test"])
-    assert(result.next(), "Committed data is visible")
-    conn2.close()
-    conn.close()
+    let tx2 = c1.createTransaction()
+    tx2.begin()
+    let s2 = c1.prepareStatement("INSERT INTO users (name, email) VALUES (?, ?)")
+    s2.set<String>(0, "RbU"); s2.set<String>(1, "rbu@t.com"); s2.update()
+    tx2.rollback()
+    let r2 = qr(c2, "SELECT COUNT(*) FROM users WHERE email = ?", ["rbu@t.com"]); r2.next()
+    ok(r2.get<Int64>(0) == 0, "Rollback hides insert")
+    c1.close(); c2.close()
 }
-
-func testCountAndExists(): Unit {
-    section("COUNT / EXISTS")
-    let conn = getRawConn()
-    let dialect = PostgreSQLDialect()
-    let session = Session(conn)
-
-    let count = Query<Int64>()
-        .dialect(dialect)
-        .using(session)
-        .from("test_count")
-        .count()
-    assert(count == 3, "COUNT(*) = 3")
-
-    // COUNT with WHERE
-    let activeCount = Query<Int64>()
-        .dialect(dialect)
-        .using(session)
-        .from("test_count")
-        .`where`(Binary(Column("active"), Eq, Value(true)))
-        .count()
-    assert(activeCount == 2, "WHERE active=true COUNT = 2")
-
-    conn.close()
-}
-
