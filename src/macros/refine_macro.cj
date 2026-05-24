@@ -315,6 +315,21 @@ func buildEntityArrayTokens(fields: ArrayList<FieldInfo>): Tokens {
     arr
 }
 
+func buildSelectColumnTokens(fields: ArrayList<FieldInfo>): Tokens {
+    var arr = Tokens()
+    arr = arr + Token(TokenKind.LSQUARE)
+    var first = true
+    for (f in fields) {
+        if (isRelationField(f.typeName)) { continue }
+        if (!first) { arr = arr + Token(TokenKind.COMMA) }
+        let colNameLit = Token(TokenKind.STRING_LITERAL, f.name)
+        arr = arr + quote(Expr.Column($(colNameLit)))
+        first = false
+    }
+    arr = arr + Token(TokenKind.RSQUARE)
+    arr
+}
+
 func buildInsertSQLFunc(className: String, fields: ArrayList<FieldInfo>, tableName: String): Tokens {
     let funcName = Token(TokenKind.IDENTIFIER, className + "InsertSQL")
     let cn = Token(TokenKind.IDENTIFIER, className)
@@ -726,9 +741,11 @@ public macro Refine(input: Tokens): Tokens {
     let mergedRels = mergeAnnotationRels(rels, refMessages, relMessages)
 
     let mapperFuncName = Token(TokenKind.IDENTIFIER, className + "RowMapper")
+    let selectCols = buildSelectColumnTokens(mergedFields)
     let queryTokens = quote(
         static func query(): Query<$(classNameToken)> {
             let q = Query<$(classNameToken)>()
+            q.select($(selectCols))
             q.from($(Token(TokenKind.STRING_LITERAL, tableName)))
             q.setMapper($(mapperFuncName))
             q
