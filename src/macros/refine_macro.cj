@@ -1,4 +1,4 @@
-macro package refine.refinemac
+macro package refine.macros
 
 import std.ast.*
 import std.collection.ArrayList

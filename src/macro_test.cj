@@ -1,6 +1,6 @@
 package refine
 
-import refinemac.*
+import refine.macros.*
 import std.collection.ArrayList
 
 @Refine

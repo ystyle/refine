@@ -23,13 +23,13 @@ src/
 ├── mapper.cj           结果映射器
 ├── migrator.cj         Schema 迁移
 ├── error.cj            异常层次
-├── refinemac/
-│   └── refine_macro.cj 宏定义文件（macro package refine.refinemac）
+├── macros/
+│   └── refine_macro.cj 宏定义文件（macro package refine.macros）
 ├── xxx_test.cj         测试文件（与源码同包）
 ├── xxx.cj.macrocall    宏展开调试输出
 ```
 
-- 宏定义在 `src/refinemac/` 下，使用 `macro package` 声明（包名 `refine.refinemac`）
+- 宏定义在 `src/macros/` 下，使用 `macro package` 声明（包名 `refine.macros`）
 - 测试文件放在 `src/` 下与源码同包（`package refine`），不使用 `tests/` 目录
 - `output-type = "static"`，全程使用 `cjpm` 构建和测试
 
