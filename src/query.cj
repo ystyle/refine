@@ -158,17 +158,17 @@ public class Query<T> {
             }
         }
         if (aliasFields.size > 0) {
-            var combined = ArrayList<Expr>()
-            combined.add(Raw("*"))
-            for (a in aliasFields) {
-                combined.add(a)
+            for (i in 0..stmt.clauses.size) {
+                match (stmt.clauses[i]) {
+                    case Clause.SelectClause(fields) =>
+                        var combined = ArrayList<Expr>()
+                        for (f in fields) { combined.add(f) }
+                        for (a in aliasFields) { combined.add(a) }
+                        stmt.clauses[i] = SelectClause(combined.toArray())
+                        return
+                    case _ => ()
+                }
             }
-            var newClauses = ArrayList<Clause>()
-            newClauses.add(SelectClause(combined.toArray()))
-            for (c in stmt.clauses) {
-                newClauses.add(c)
-            }
-            stmt.clauses = newClauses
         }
     }
 
