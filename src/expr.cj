@@ -51,6 +51,7 @@ public enum Expr {
     | Binary(Expr, BinOp, Expr)
     | Unary(UnaryOp, Expr)
     | FuncCall(String, Array<Expr>)
+    | Ordered(Expr, String)    // Column with sort direction: "ASC" / "DESC"
     | SubQuery(Statement)
     | Raw(String)
 }

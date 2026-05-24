@@ -17,8 +17,8 @@ public struct Col<T> {
     public operator func ==(rhs: Col<T>): Expr { Binary(Column(name), Eq, Column(rhs.name)) }
     public operator func !=(rhs: Col<T>): Expr { Binary(Column(name), Ne, Column(rhs.name)) }
 
-    public func asc(): Expr  { FuncCall("ASC", [Column(name)]) }
-    public func desc(): Expr { FuncCall("DESC", [Column(name)]) }
+    public func asc(): Expr  { Ordered(Column(name), "ASC") }
+    public func desc(): Expr { Ordered(Column(name), "DESC") }
 
     public func `in`(values: Array<T>): Expr {
         Binary(Column(name), In, Value(values))

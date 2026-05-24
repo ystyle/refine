@@ -4,7 +4,6 @@ import std.collection.ArrayList
 
 public class PostgreSQLDialect <: Dialect {
     private var params = ArrayList<Any>()
-    private var paramIndex: Int64 = 0
 
     public func name(): String { "postgresql" }
 
@@ -13,13 +12,7 @@ public class PostgreSQLDialect <: Dialect {
     }
 
     public func render(stmt: Statement): (String, Array<Any>) {
-        paramIndex = 0
         params = ArrayList<Any>()
-        let sql = renderStatement(stmt)
-        (sql, params.toArray())
-    }
-
-    private func renderStatement(stmt: Statement): String {
         var parts = ArrayList<String>()
         for (i in 0..stmt.clauses.size) {
             let clause = stmt.clauses[i]
@@ -48,16 +41,15 @@ public class PostgreSQLDialect <: Dialect {
                     parts.add("LEFT JOIN " + quoteIdentifier(table) + " " + quoteIdentifier(alias) + " ON " + renderExpr(on))
             }
         }
-        joinStrings(parts, " ")
+        (joinStrings(parts, " "), params.toArray())
     }
 
     private func renderExpr(expr: Expr): String {
         match (expr) {
             case Column(n) => quoteIdentifier(n)
             case Value(v) =>
-                paramIndex++
                 params.add(v)
-                "$" + paramIndex.toString()
+                "?"
             case Binary(l, op, r) =>
                 renderExpr(l) + " " + renderOp(op) + " " + renderExpr(r)
             case Unary(op, e) =>
@@ -65,8 +57,12 @@ public class PostgreSQLDialect <: Dialect {
             case FuncCall(n, args) =>
                 n + "(" + renderExprList(args) + ")"
             case Raw(s) => s
+            case Ordered(expr, dir) =>
+                renderExpr(expr) + " " + dir
             case SubQuery(s) =>
-                "(" + renderStatement(s) + ")"
+                let (subSql, subParams) = render(s)
+                for (p in subParams) { params.add(p) }
+                "(" + subSql + ")"
         }
     }
 

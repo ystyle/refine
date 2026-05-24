@@ -53,6 +53,8 @@ public class MySQLDialect <: Dialect {
             case FuncCall(n, args) =>
                 n + "(" + renderExprList(args) + ")"
             case Raw(s) => s
+            case Ordered(expr, dir) =>
+                renderExpr(expr) + " " + dir
             case SubQuery(s) =>
                 let (subSql, subParams) = render(s)
                 "(" + subSql + ")"
