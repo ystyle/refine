@@ -38,7 +38,7 @@ class MockQueryResult <: QueryResult {
     private var _columnInfos: Array<ColumnInfo> = []
 
     public func next(): Bool { false }
-    public func next(values: Array<SqlDbType>): Bool { false }
+    public func next(_values: Array<SqlDbType>): Bool { false }
     public func get<T>(index: Int): T { throw Exception("not implemented") }
     public func getOrNull<T>(index: Int): ?T { None }
 }
@@ -63,10 +63,10 @@ class MockTransaction <: Transaction {
 
     public func begin(): Unit {}
     public func commit(): Unit {}
-    public func release(savePointName: String): Unit {}
+    public func release(_: String): Unit {}
     public func rollback(): Unit {}
-    public func rollback(savePointName: String): Unit {}
-    public func save(savePointName: String): Unit {}
+    public func rollback(_: String): Unit {}
+    public func save(_: String): Unit {}
 }
 
 class MockStatement <: SqlStatement {
@@ -80,7 +80,7 @@ class MockStatement <: SqlStatement {
     private var _parameterColumnInfos: Array<ColumnInfo> = []
 
     public func query(): QueryResult { MockQueryResult() }
-    public func query(params: Array<SqlDbType>): QueryResult { MockQueryResult() }
+    public func query(_params: Array<SqlDbType>): QueryResult { MockQueryResult() }
     public func set<T>(index: Int, value: T): Unit {
         lastSetType = "set"
         lastSetIndex = index
@@ -89,9 +89,9 @@ class MockStatement <: SqlStatement {
         lastSetType = "setNull"
         lastSetIndex = index
     }
-    public func setOption(key: String, value: String): Unit {}
+    public func setOption(_key: String, value: String): Unit {}
     public func update(): UpdateResult { MockUpdateResult() }
-    public func update(params: Array<SqlDbType>): UpdateResult { MockUpdateResult() }
+    public func update(_params: Array<SqlDbType>): UpdateResult { MockUpdateResult() }
 }
 
 class MockConnection <: Connection {

@@ -102,7 +102,7 @@ public class MySQLDialect <: Dialect {
 
     public func hasUpsertSupport(): Bool { true }
 
-    public func upsertSQL(table: String, columns: Array<String>, conflictColumns: Array<String>): String {
+    public func upsertSQL(table: String, columns: Array<String>, _conflictColumns: Array<String>): String {
         var cols = ArrayList<String>()
         var placeholders = ArrayList<String>()
         var updates = ArrayList<String>()

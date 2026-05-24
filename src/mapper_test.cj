@@ -48,7 +48,7 @@ class MapperMockQueryResult <: QueryResult {
         }
         return false
     }
-    public func next(values: Array<SqlDbType>): Bool { false }
+    public func next(_values: Array<SqlDbType>): Bool { false }
     public func get<T>(index: Int): T {
         match (rows[currentRow][index]) {
             case v: T => v

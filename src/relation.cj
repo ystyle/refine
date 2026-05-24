@@ -1,7 +1,7 @@
 package refine
 
 public enum RelationKind {
-    | RefTo | RefMany | HasOne | HasMany
+    | RefToRel | RefManyRel | HasOneRel | HasManyRel
 }
 
 extend RelationKind <: Equatable<RelationKind> & ToString {
@@ -55,7 +55,7 @@ public open class Relation<TTarget> {
 
 public class RefTo<TTarget> <: Relation<TTarget> & IRelation {
     public init(name: String, fk: Col<Any>, fields: Array<Col<Any>>) {
-        super(name, "", RelationKind.RefTo, fk.name, None, fields)
+        super(name, "", RelationKind.RefToRel, fk.name, None, fields)
     }
 
     public func resolve(): (RelationKind, String, String, String, Option<String>, Array<Col<Any>>) {
@@ -65,7 +65,7 @@ public class RefTo<TTarget> <: Relation<TTarget> & IRelation {
 
 public class RefMany<TTarget> <: Relation<TTarget> & IRelation {
     public init(name: String, via: String, fields: Array<Col<Any>>) {
-        super(name, "", RelationKind.RefMany, "", Some(via), fields)
+        super(name, "", RelationKind.RefManyRel, "", Some(via), fields)
     }
 
     public func resolve(): (RelationKind, String, String, String, Option<String>, Array<Col<Any>>) {

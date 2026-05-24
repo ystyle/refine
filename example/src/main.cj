@@ -143,7 +143,7 @@ func testCRUD(): Unit {
     let c = getConn()
     let ins = c.prepareStatement("INSERT INTO users (name, email) VALUES (?, ?) RETURNING id")
     ins.set<String>(1, "Tu");
-    ins.set<String>(2, "tu@t.com");
+    ins.set<String>(2, "tu@localhost");
     let ir = ins.query();
     ir.next()
     let uid = ir.get<Int64>(1);
@@ -152,12 +152,12 @@ func testCRUD(): Unit {
     sr.next()
     ok(sr.get<String>(1) == "Tu", "SELECT")
     let up = c.prepareStatement("UPDATE users SET email = ? WHERE id = ?")
-    up.set<String>(1, "uu@t.com");
+    up.set<String>(1, "uu@localhost");
     up.set<Int64>(1, uid);
     up.update()
     let ur = qr(c, "SELECT email FROM users WHERE id = ?", [uid]);
     ur.next()
-    ok(ur.get<String>(1) == "uu@t.com", "UPDATE")
+    ok(ur.get<String>(1) == "uu@localhost", "UPDATE")
     let dl = c.prepareStatement("DELETE FROM users WHERE id = ?");
     dl.set<Int64>(1, uid);
     dl.update()
@@ -290,24 +290,24 @@ func testTx(): Unit {
     tx.begin()
     let s = c1.prepareStatement("INSERT INTO users (name, email) VALUES (?, ?)")
     s.set<String>(1, "TxU");
-    s.set<String>(2, "txu@t.com");
+    s.set<String>(2, "txu@localhost");
     s.update();
     tx.commit()
-    let r = qr(c2, "SELECT COUNT(*) FROM users WHERE email = ?", ["txu@t.com"]);
+    let r = qr(c2, "SELECT COUNT(*) FROM users WHERE email = ?", ["txu@localhost"]);
     r.next()
     ok(r.get<Int64>(1) > 0, "Commit OK")
     let cl = c2.prepareStatement("DELETE FROM users WHERE email = ?");
-    cl.set<String>(1, "txu@t.com");
+    cl.set<String>(1, "txu@localhost");
     cl.update()
 
     let tx2 = c1.createTransaction();
     tx2.begin()
     let s2 = c1.prepareStatement("INSERT INTO users (name, email) VALUES (?, ?)")
     s2.set<String>(1, "RbU");
-    s2.set<String>(2, "rbu@t.com");
+    s2.set<String>(2, "rbu@localhost");
     s2.update();
     tx2.rollback()
-    let r2 = qr(c2, "SELECT COUNT(*) FROM users WHERE email = ?", ["rbu@t.com"]);
+    let r2 = qr(c2, "SELECT COUNT(*) FROM users WHERE email = ?", ["rbu@localhost"]);
     r2.next()
     ok(r2.get<Int64>(1) == 0, "Rollback OK");
     c1.close();

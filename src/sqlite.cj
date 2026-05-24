@@ -102,7 +102,7 @@ public class SQLiteDialect <: Dialect {
 
     public func hasUpsertSupport(): Bool { false }
 
-    public func upsertSQL(table: String, columns: Array<String>, conflictColumns: Array<String>): String { "" }
+    public func upsertSQL(_table: String, _columns: Array<String>, _conflictColumns: Array<String>): String { "" }
 
     private func joinStrings(strings: ArrayList<String>, separator: String): String {
         var result = ""

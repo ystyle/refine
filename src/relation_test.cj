@@ -14,7 +14,7 @@ public class RelationTest {
         let fields = [Col<Any>("id"), Col<Any>("name")]
         let rel = RefTo<RelUser>("author", fk, fields)
         @Expect(rel.name, "author")
-        @Expect(rel.kind, RelationKind.RefTo)
+        @Expect(rel.kind, RelationKind.RefToRel)
         @Expect(rel.foreignKey, "user_id")
         match (rel.via) {
             case None => ()
@@ -27,7 +27,7 @@ public class RelationTest {
         let fields = [Col<Any>("id"), Col<Any>("name")]
         let rel = RefMany<RelTag>("tags", "post_tags", fields)
         @Expect(rel.name, "tags")
-        @Expect(rel.kind, RelationKind.RefMany)
+        @Expect(rel.kind, RelationKind.RefManyRel)
         match (rel.via) {
             case Some(v) => @Expect(v, "post_tags")
             case _ => @Fail("expected Some")
@@ -40,7 +40,7 @@ public class RelationTest {
         let fields = [Col<Any>("id"), Col<Any>("name")]
         let rel: IRelation = RefTo<RelUser>("author", fk, fields)
         let (kind, name, targetTable, foreignKey, via, resolvedFields) = rel.resolve()
-        @Expect(kind, RelationKind.RefTo)
+        @Expect(kind, RelationKind.RefToRel)
         @Expect(name, "author")
         @Expect(foreignKey, "user_id")
         match (via) {
@@ -54,7 +54,7 @@ public class RelationTest {
         let fields = [Col<Any>("id"), Col<Any>("name")]
         let rel: IRelation = RefMany<RelTag>("tags", "post_tags", fields)
         let (kind, name, targetTable, foreignKey, via, resolvedFields) = rel.resolve()
-        @Expect(kind, RelationKind.RefMany)
+        @Expect(kind, RelationKind.RefManyRel)
         @Expect(name, "tags")
         match (via) {
             case Some(v) => @Expect(v, "post_tags")
@@ -74,9 +74,9 @@ public class RelationTest {
 
     @TestCase
     public func testRelationKindValues(): Unit {
-        @Expect(RelationKind.RefTo, RelationKind.RefTo)
-        @Expect(RelationKind.RefMany, RelationKind.RefMany)
-        @Expect(RelationKind.HasOne, RelationKind.HasOne)
-        @Expect(RelationKind.HasMany, RelationKind.HasMany)
+        @Expect(RelationKind.RefToRel, RelationKind.RefToRel)
+        @Expect(RelationKind.RefManyRel, RelationKind.RefManyRel)
+        @Expect(RelationKind.HasOneRel, RelationKind.HasOneRel)
+        @Expect(RelationKind.HasManyRel, RelationKind.HasManyRel)
     }
 }

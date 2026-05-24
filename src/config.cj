@@ -7,7 +7,7 @@ public class DatabaseConfig {
     var driver: String = "sqlite"
     var dsn: String = ""
     var user: String = ""
-    var password: String = ""
+    var passwd: String = ""
     var database: Option<String> = None
     var maxPoolSize: Int32 = 50
     var maxIdleSize: Int32 = 25
@@ -24,7 +24,7 @@ public class DatabaseConfig {
             case Some(drv) =>
                 var opts = ArrayList<(String, String)>()
                 if (user != "") { opts.add(("username", user)) }
-                if (password != "") { opts.add(("password", password)) }
+                if (passwd != "") { opts.add(("password", passwd)) }
                 if (let Some(db) <- database) { opts.add(("database", db)) }
                 let ds = drv.open(dsn, opts.toArray())
                 DB(ds)

@@ -162,7 +162,7 @@ public class SQLiteMigrator <: Migrator {
         session.close()
     }
 
-    public func alterColumn(table: String, old: ColumnDef, new: ColumnDef): Unit {
+    public func alterColumn(_table: String, _old: ColumnDef, _new: ColumnDef): Unit {
         throw Exception("SQLite does not support ALTER COLUMN. Use recreateTable() or manual migration.")
     }
 
