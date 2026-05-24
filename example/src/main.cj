@@ -1,8 +1,9 @@
 package demo
 
 import std.database.sql.{Connection, QueryResult, DriverManager}
+import std.collection.ArrayList
 import refine.*
-import cangjie_tpc::opengauss.driver.*
+import mariadb.cdbc.*
 
 struct UserRow {
     var id: Int64 = 0; var name: String = ""; var email: String = ""
@@ -25,9 +26,15 @@ func section(n: String): Unit { println("\n== " + n + " ==") }
 func report(): Unit { println("\nResults: " + passed.toString() + " passed, " + failed.toString() + " failed") }
 
 func getConn(): Connection {
-    let d = DriverManager.getDriver("postgres").getOrThrow()
-    d.open("postgres://refine_test:refine123@127.0.0.1:5432/refine_test").connect()
+    let d = DriverManager.getDriver("mariadb").getOrThrow()
+    var opts = ArrayList<(String, String)>()
+    opts.add(("username", "refine_test"))
+    opts.add(("password", "refine123"))
+    opts.add(("database", "refine_test"))
+    d.open("mariadb://127.0.0.1:3306", opts.toArray()).connect()
 }
+
+func getDialect(): Dialect { MySQLDialect() }
 
 func qr(conn: Connection, sql: String, params: Array<Any>): QueryResult {
     let st = conn.prepareStatement(sql)
@@ -71,7 +78,7 @@ func testCRUD(): Unit {
 }
 
 func testWhere(): Unit {
-    section("WHERE"); let c = getConn(); let d = PostgreSQLDialect(); let s = Session(c)
+    section("WHERE"); let c = getConn(); let d = getDialect(); let s = Session(c)
     let r1 = Query<UserRow>().dialect(d).using(s).select([Column("id"), Column("name"), Column("email")]).from("users")
         .`where`(Binary(Column("name"), Eq, Value("Alice")))
         .all() { res, m => UserRow(res.get<Int64>(m["id"]), res.get<String>(m["name"]), res.get<String>(m["email"])) }
@@ -83,7 +90,7 @@ func testWhere(): Unit {
 }
 
 func testOrderLimit(): Unit {
-    section("ORDER BY + LIMIT + OFFSET"); let c = getConn(); let d = PostgreSQLDialect(); let s = Session(c)
+    section("ORDER BY + LIMIT + OFFSET"); let c = getConn(); let d = getDialect(); let s = Session(c)
     let r1 = Query<UserRow>().dialect(d).using(s).select([Column("id")]).from("users")
         .orderBy([Expr.Ordered(Column("id"), "ASC")])
         .all() { res, m => UserRow(res.get<Int64>(m["id"]), "", "") }
@@ -99,14 +106,14 @@ func testOrderLimit(): Unit {
 }
 
 func testGroupHaving(): Unit {
-    section("GROUP BY"); let c = getConn(); let d = PostgreSQLDialect(); let s = Session(c)
+    section("GROUP BY"); let c = getConn(); let d = getDialect(); let s = Session(c)
     let r = Query<UserRow>().dialect(d).using(s).select([Column("user_id"), Raw("COUNT(*)")]).from("posts")
         .groupBy([Column("user_id")]).all() { res, m => UserRow(res.get<Int64>(m["user_id"]), "", "") }
     ok(r.size > 0, "GROUP BY"); c.close()
 }
 
 func testJoin(): Unit {
-    section("JOIN"); let c = getConn(); let d = PostgreSQLDialect(); let s = Session(c)
+    section("JOIN"); let c = getConn(); let d = getDialect(); let s = Session(c)
     let r = Query<TitleTag>().dialect(d).using(s).select([Column("p.title"), Column("t.name")])
         .from("posts p, post_tags pt, tags t")
         .`where`(Binary(Column("p.id"), Eq, Column("pt.post_id")))
@@ -116,7 +123,7 @@ func testJoin(): Unit {
 }
 
 func testAgg(): Unit {
-    section("Aggregations"); let c = getConn(); let d = PostgreSQLDialect(); let s = Session(c)
+    section("Aggregations"); let c = getConn(); let d = getDialect(); let s = Session(c)
     let cnt = Query<Int64>().dialect(d).using(s).from("users").count()
     ok(cnt >= 2, "COUNT=" + cnt.toString())
     let hit = Query<Int64>().dialect(d).using(s).from("users")

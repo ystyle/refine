@@ -6,4 +6,4 @@
 
 [dependencies]
 refine = { path = ".." }
-"cangjie_tpc::opengauss" = {git = "https://gitcode.com/Cangjie-TPC/opengauss-driver.git", branch="master"}
+mariadb = {git = "https://gitcode.com/Cangjie-SIG/mariadb-driver.git", branch="master"}
