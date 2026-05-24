@@ -33,13 +33,13 @@ extend HookKind <: ToString {
 }
 
 public class Scope<T> {
-    var entity: T
-    var db: ?Tx
-    var entityBefore: ?T
-    var fields: Array<Col<Any>>
-    var error: ?Exception
-    var aborted: Bool = false
-    var result: ?QueryResult
+    public var entity: T
+    public var db: ?Tx
+    public var entityBefore: ?T
+    public var fields: Array<Col<Any>>
+    public var error: ?Exception
+    public var aborted: Bool = false
+    public var result: ?QueryResult
 
     public init(entity: T) {
         this.entity = entity
@@ -93,6 +93,6 @@ public func executeHooks<T>(typeName: String, kind: HookKind, scope: Scope<T>): 
     None
 }
 
-func clearHooks(): Unit {
+public func clearHooks(): Unit {
     hookRegistry.clear()
 }

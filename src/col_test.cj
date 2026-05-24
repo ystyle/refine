@@ -122,13 +122,13 @@ public class ColTest {
         let col = Col<Int64>("id")
         let expr = col.asc()
         match (expr) {
-            case Expr.FuncCall(fn, args) =>
-                @Expect(fn, "ASC")
-                match (args[0]) {
+            case Expr.Ordered(colExpr, dir) =>
+                @Expect(dir, "ASC")
+                match (colExpr) {
                     case Expr.Column(n) => @Expect(n, "id")
                     case _ => @Fail("expected Column")
                 }
-            case _ => @Fail("expected FuncCall")
+            case _ => @Fail("expected Ordered")
         }
     }
 
@@ -137,13 +137,13 @@ public class ColTest {
         let col = Col<Int64>("id")
         let expr = col.desc()
         match (expr) {
-            case Expr.FuncCall(fn, args) =>
-                @Expect(fn, "DESC")
-                match (args[0]) {
+            case Expr.Ordered(colExpr, dir) =>
+                @Expect(dir, "DESC")
+                match (colExpr) {
                     case Expr.Column(n) => @Expect(n, "id")
                     case _ => @Fail("expected Column")
                 }
-            case _ => @Fail("expected FuncCall")
+            case _ => @Fail("expected Ordered")
         }
     }
 

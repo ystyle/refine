@@ -52,6 +52,7 @@ public enum Expr {
     | Unary(UnaryOp, Expr)
     | FuncCall(String, Array<Expr>)
     | Ordered(Expr, String)    // Column with sort direction: "ASC" / "DESC"
+    | Aliased(Expr, String)    // Column with SQL alias: expr AS alias
     | SubQuery(Statement)
     | Raw(String)
 }

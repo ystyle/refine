@@ -3,7 +3,7 @@ package refine
 import std.unittest.*
 import std.unittest.testmacro.*
 
-class UserSchema <: TableSchema {
+class UserMigratorTestSchema <: TableSchema {
     public func tableName(): String { "user" }
     public func columns(): Array<ColumnDef> {
         [
@@ -171,7 +171,7 @@ public class MigratorTest {
 
     @TestCase
     public func testCreateTableSQL(): Unit {
-        let schema = UserSchema()
+        let schema = UserMigratorTestSchema()
         let sql = SQLiteMigrator.createTableSQL(schema)
         let expected = "CREATE TABLE IF NOT EXISTS \"user\" (" +
             "\"id\" INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
@@ -249,7 +249,7 @@ public class MigratorTest {
 
     @TestCase
     public func testDropTableSQL(): Unit {
-        let schema = UserSchema()
+        let schema = UserMigratorTestSchema()
         let sql = SQLiteMigrator.dropTableSQL(schema)
         @Expect(sql, "DROP TABLE IF EXISTS \"user\"")
     }

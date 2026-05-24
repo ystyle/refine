@@ -4,6 +4,7 @@ import std.collection.ArrayList
 
 public class PostgreSQLDialect <: Dialect {
     private var params = ArrayList<Any>()
+    private var paramIdx: Int64 = 1
 
     public func name(): String { "postgresql" }
 
@@ -13,7 +14,16 @@ public class PostgreSQLDialect <: Dialect {
 
     public func render(stmt: Statement): (String, Array<Any>) {
         params = ArrayList<Any>()
+        paramIdx = 1
         var parts = ArrayList<String>()
+        var hasSelect = false
+        for (i in 0..stmt.clauses.size) {
+            match (stmt.clauses[i]) {
+                case SelectClause(_) => hasSelect = true
+                case _ => ()
+            }
+        }
+        if (!hasSelect) { parts.add("SELECT *") }
         for (i in 0..stmt.clauses.size) {
             let clause = stmt.clauses[i]
             match (clause) {
@@ -49,7 +59,9 @@ public class PostgreSQLDialect <: Dialect {
             case Column(n) => quoteIdentifier(n)
             case Value(v) =>
                 params.add(v)
-                "?"
+                let ph = "$" + paramIdx.toString()
+                paramIdx++
+                ph
             case Binary(l, op, r) =>
                 renderExpr(l) + " " + renderOp(op) + " " + renderExpr(r)
             case Unary(op, e) =>
@@ -59,6 +71,8 @@ public class PostgreSQLDialect <: Dialect {
             case Raw(s) => s
             case Ordered(expr, dir) =>
                 renderExpr(expr) + " " + dir
+            case Aliased(expr, alias) =>
+                renderExpr(expr) + " AS " + quoteIdentifier(alias)
             case SubQuery(s) =>
                 let (subSql, subParams) = render(s)
                 for (p in subParams) { params.add(p) }
@@ -133,6 +147,30 @@ public class PostgreSQLDialect <: Dialect {
         }
         "INSERT INTO " + quoteIdentifier(table) + " (" + joinStrings(cols, ", ") + ") VALUES (" + joinStrings(placeholders, ", ") + ") ON CONFLICT (" + joinStrings(conflictCols, ", ") + ") DO UPDATE SET " + joinStrings(updates, ", ")
     }
+
+    public func dataTypeOf(st: StorageType): String {
+        match (st) {
+            case Integer => "BIGINT"
+            case Float => "DOUBLE PRECISION"
+            case Decimal => "DECIMAL"
+            case `Bool` => "BOOLEAN"
+            case String => "VARCHAR(255)"
+            case Text => "TEXT"
+            case Json => "JSONB"
+            case Bytes => "BYTEA"
+            case Timestamp => "TIMESTAMP"
+        }
+    }
+
+    public func hasReturningSupport(): Bool { true }
+
+    public func hasJSONSupport(): Bool { true }
+
+    public func migrator(db: DB): Migrator { throw Exception("PostgreSQL migration not yet implemented") }
+
+    public func initialize(db: DB): Unit {}
+
+    public func defaultValueOf(st: StorageType): String { "" }
 
     private func joinStrings(strings: ArrayList<String>, separator: String): String {
         var result = ""

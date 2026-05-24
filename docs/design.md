@@ -684,24 +684,31 @@ interface SavepointDialect {
 
 ## 8. 连接与 Session 管理
 
-Refine 在 `std.database.sql` 之上构建连接管理层，封装连接池、事务传播和 Session 生命周期。
+Refine 在 `std.database.sql` 之上构建连接管理层，封装连接池、事务传播和 Session 生命周期。所有资源由 `Refine` 实例统一管理，多实例互相隔离。
 
 ### 8.1 整体架构
 
 ```
 ┌─────────────────────────────────────────────────┐
-│  DB                                              │
+│  Refine                                          │
 │  ┌─────────────────────────────────────────┐     │
 │  │  PooledDatasource (std.database.sql)    │     │
 │  │  ┌──────────────────────────────────┐   │     │
 │  │  │  connection pool                 │   │     │
 │  │  └──────────────────────────────────┘   │     │
+│  │  ┌──────────────────────────────────┐   │     │
+│  │  │  Dialect (自动检测)               │   │     │
+│  │  └──────────────────────────────────┘   │     │
+│  │  ┌──────────────────────────────────┐   │     │
+│  │  │  HookRegistry (实例级)           │   │     │
+│  │  └──────────────────────────────────┘   │     │
 │  └─────────────────────────────────────────┘     │
 │          │ connect()                             │
 │          ▼                                       │
 │  Session ───→ Connection (std.database.sql)      │
-│       │                                           │
+│       │        + ref: Refine                     │
 │       ├── Tx ───→ Transaction + Connection        │
+│       │      + ref: Refine                       │
 │       │      .commit() / .rollback()              │
 │       │                                           │
 │       └── Query<T>.all() / .one()                 │
@@ -714,19 +721,36 @@ Refine 在 `std.database.sql` 之上构建连接管理层，封装连接池、�
 └─────────────────────────────────────────────────┘
 ```
 
-### 8.2 `DB` — 数据源入口
+### 8.2 `Refine` — 统一入口
 
 ```cangjie
-class DB {
-    // === 创建 ===
-    static func open(url: String): DB
-    static func open(url: String, opts: Array<(String, String)>): DB
-    static func open(datasource: Datasource): DB
+class Refine {
+    // === 内部状态 ===
+    private var datasource: PooledDatasource  // 连接池
+    private var dialect: Dialect              // 方言（从 URL 自动检测）
+    private var paramOffset: Int64            // 0=标准, 1=MariaDB
+    private var hookRegistry                  // 实例级钩子注册表
 
-    // === Session 管理 ===
+    // === 创建 ===
+    static func open(url: String): Refine
+    static func open(url: String, opts: Array<(String, String)>): Refine
+
+    // === Session / 事务 ===
     func session(): Session                          // 获取一个新的 Session
     func transaction<T>(action: (Tx) -> T): T        // 事务内执行，自动 commit/rollback
-    func close(): Unit                               // 关闭数据源
+
+    // === 钩子（实例级）===
+    func hook<T>(typeName: String, kind: HookKind, hook: HookFn<T>): Unit
+    func executeHooks<T>(typeName, kind, scope): ?Exception
+
+    // === 查询快捷入口 ===
+    func all<T>(query: Query<T>): Array<T>
+    func one<T>(query: Query<T>): Option<T>
+
+    // === 元数据 ===
+    func getDialect(): Dialect
+    func migrator(): Migrator
+    func close(): Unit
 
     // === 连接池配置 ===
     mut prop maxPoolSize: Int32
@@ -736,15 +760,17 @@ class DB {
 }
 ```
 
-`DB.open(url)` 内部流程：
+`Refine.open(url)` 内部流程：
 
 ```cangjie
-static func open(url: String, opts: Array<(String, String)>): DB {
+static func open(url: String, opts: Array<(String, String)>): Refine {
     // 1. 从 URL 提取驱动名（如 "postgres://..." 提取 "postgres"）
     // 2. DriverManager.getDriver(driverName) ?? throw
     // 3. driver.open(url, opts) → Datasource
     // 4. PooledDatasource(datasource) → 带连接池的数据源
-    // 5. 返回 DB 实例
+    // 5. detectDialect(driverName) → 根据驱动自动选择方言
+    // 6. 检测 MariaDB 的 1-based 参数偏移
+    // 7. 返回 Refine 实例
 }
 ```
 
@@ -752,7 +778,8 @@ static func open(url: String, opts: Array<(String, String)>): DB {
 
 ```cangjie
 class Session {
-    // 内部持有 Connection，由 DB 管理生命周期
+    // 内部持有 Connection + ref: Refine
+    var ref: Option<Refine>              // 所属 Refine 实例
 
     // === SQL 执行 ===
     func prepareStatement(sql: String): Statement
@@ -760,20 +787,17 @@ class Session {
     func query(sql: String, params: Array<Any>): QueryResult
 
     // === 元数据 ===
-    func getMetaData(): Map<String, String>
     func getDialect(): Dialect                     // 方言检测（自动推断）
 }
-
-// Session 实现 Resource 接口，支持 try-with-resource
-// try (session = db.session()) {
-//     session.query(...)
-// }
 ```
 
 ### 8.4 `Tx` — 事务
 
 ```cangjie
 class Tx {
+    // 内部持有 Connection + Transaction + ref: Refine
+    var ref: Option<Refine>              // 所属 Refine 实例（hook 调用走此路径）
+
     // === 继承 Session 的全部执行能力 ===
 
     // === 事务控制 ===
@@ -810,29 +834,30 @@ db.transaction { tx: Tx =>
 | `db.transaction { tx => ... }` | 新开事务，lambda 结束时 commit，异常时 rollback |
 | `tx.transaction { nested => ... }` | 创建保存点，嵌套执行，回滚到保存点 |
 
-### 8.6 `Query<T>` 与 DB 连接
+### 8.6 `Query<T>` 与连接绑定
 
-`Query<T>` 的执行需要绑定 `Session` 或 `Tx`：
+`Query<T>` 支持三种绑定方式：
 
 ```cangjie
-// 方式一：Session 执行
-let session = db.session()
+// 方式一：Refine 实例（推荐，自动设置方言 + session）
+let posts = Post.query().using(rf).all()
+
+// 方式二：Session 执行
+let session = rf.session()
 let posts = Post.query().using(session).all()
 
-// 方式二：事务内执行（推荐）
-let posts = db.transaction { tx: Tx =>
+// 方式三：事务内执行
+let posts = rf.transaction { tx: Tx =>
     Post.query().using(tx).all()
 }
-
-// 方式三：快捷查询
-let posts = Post.query().using(db.session()).all()
 ```
 
 `Query<T>` 的 `using()` 方法：
 
 ```cangjie
 class Query<T> {
-    func using(exec: ExecutionContext): Query<T>
+    func using(exec: ExecutionContext): Query<T>   // Session | Tx
+    func using(rf: Refine): Query<T>               // 自动创建 session + 设置方言
     // ExecutionContext = Session | Tx
 
     func all(): Array<T> {
@@ -849,10 +874,10 @@ class Query<T> {
 
 ```cangjie
 // 初始化
-let db = DB.open("sqlite://refine.db")
+let rf = Refine.open("sqlite://refine.db")
 
 // 查询
-let posts = db.transaction { tx =>
+let posts = rf.transaction { tx =>
     Post.query()
         .using(tx)
         .where(Post.col.published == true)
@@ -863,12 +888,12 @@ let posts = db.transaction { tx =>
 }
 
 // 插入
-db.transaction { tx =>
+rf.transaction { tx =>
     let post = Post {
         title: "Hello Refine",
         content: "..."
     }
-    tx.save(post)   // 宏生成的实体持久化方法
+    tx.save(post)   // 宏生成的实体持久化方法，hook 走 rf 实例
 }
 ```
 
@@ -994,26 +1019,33 @@ func dispatchSet(ps: Statement, index: Int, value: Any): Unit {
 
 ### 10.1 注册与执行
 
+钩子注册在 `Refine` 实例上，多实例互相隔离：
+
 ```cangjie
-// 模块 A：注册钩子（不依赖实体所在包）
-Refine.hook<Post>(BeforeCreate) { scope =>
+// 实例 A：注册钩子
+let rf = Refine.open("sqlite://test.db")
+rf.hook<Post>("Post", BeforeCreate) { scope =>
     if (scope.entity.title == "") {
         scope.error = Exception("title required")
         scope.aborted = true
     }
 }
 
-// 模块 B：审计（独立注册，不互相 import）
-Refine.hook<Post>(AfterCreate) { scope =>
+// 模块 B：审计（独立注册）
+rf.hook<Post>("Post", AfterCreate) { scope =>
     AuditLog.log("created: ${scope.entity.id}")
 }
 
-// 模块 C：验证
-Refine.hook<Post>(BeforeCreate) { scope =>
+// 模块 C：验证（与模块 A 串行执行，任一 abort 终止后续）
+rf.hook<Post>("Post", BeforeCreate) { scope =>
     if (scope.entity.content.size > 10000) {
         scope.error = Exception("content too long")
     }
 }
+
+// 实例 B：完全独立的钩子
+let rf2 = Refine.open("mysql://...")
+rf2.hook<Post>("Post", BeforeCreate) { scope => ... }  // 不影响 rf
 ```
 
 - 多个钩子按**注册顺序**串行执行
@@ -1057,39 +1089,42 @@ class Scope<T> {
 
 ### 10.4 宏生成的内联钩子调用
 
-`@Refine` 宏在生成的 CRUD 方法中插入钩子调用：
+`@Refine` 宏在生成的 `extend Tx` 方法中通过 `this.ref` 调用实例级钩子：
 
 ```cangjie
-// @Refine 宏生成
+// @Refine 宏生成（extend Tx）
 func save(entity: User): Unit {
-    // Before
-    let scope = Scope<User>(entity, tx)
-    for (hook in Refine.getHooks<User>(BeforeSave)) {
-        hook(scope)
-        if (scope.aborted) { throw scope.error }
+    let scope = Scope<User>(entity)
+
+    // Before — 通过 Tx 持有的 Refine 实例调用
+    if (this.ref.isSome()) {
+        this.ref.getOrThrow().executeHooks("User", BeforeSave, scope)
     }
+    if (scope.aborted) { throw scope.error }
 
     // INSERT INTO ...
-    let result = tx.execute("INSERT INTO user ...")
+    let result = this.execute("INSERT INTO user ...")
 
     // After
-    let afterScope = Scope<User>(entity, tx, result: result)
-    for (hook in Refine.getHooks<User>(AfterSave)) {
-        hook(afterScope)
+    let afterScope = Scope<User>(entity)
+    if (this.ref.isSome()) {
+        this.ref.getOrThrow().executeHooks("User", AfterSave, afterScope)
     }
 }
 ```
 
 ### 10.5 运行时注册入口
 
-钩子全局注册，应用启动时集中配置：
+钩子实例级注册，应用启动时通过 `Refine` 实例配置：
 
 ```cangjie
 func main() {
+    let rf = Refine.open("sqlite://test.db")
+
     // 注册钩子
-    Refine.hook<Post>(BeforeCreate, validatePost)
-    Refine.hook<Post>(AfterCreate, auditPost)
-    Refine.hook<Post>(AfterFind, cachePost)
+    rf.hook<Post>("Post", BeforeCreate, validatePost)
+    rf.hook<Post>("Post", AfterCreate, auditPost)
+    rf.hook<Post>("Post", AfterFind, cachePost)
 
     // 启动
     runServer()
@@ -1200,17 +1235,20 @@ func autoMigrate(schemas: Array<TableSchema>): Unit {
 
 ```cangjie
 func main() {
-    let db = DB.open("sqlite://test.db")
+    let rf = Refine.open("sqlite://test.db")
 
     // 自动迁移：对比模型和数据库，应用安全变更
-    db.migrator().autoMigrate([PostSchema(), UserSchema()])
+    rf.migrator().autoMigrate([PostSchema(), UserSchema()])
 
     // 显式迁移：示例如下
-    db.migrator().alterColumn("post",
+    rf.migrator().alterColumn("post",
         ColumnDef("content", StorageType.Text),
         ColumnDef("content", StorageType.String(1000)))
 }
 ```
+
+`Refine.migrator()` 委托给当前方言的 `Dialect.migrator()`。
+
 
 `DB.migrator()` 委托给当前方言的 `Dialect.migrator()`：
 

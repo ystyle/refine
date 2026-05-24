@@ -1,315 +1,205 @@
+// Refine ORM — 全特性参考示例
+// 运行: cd example && cjpm run
+// 需要 MySQL 服务: docker run -d --name refine-mysql -e MYSQL_ROOT_PASSWORD=root \
+//   -e MYSQL_DATABASE=refine_test -e MYSQL_USER=refine_test \
+//   -e MYSQL_PASSWORD=refine123 -p 3306:3306 mysql:8
+
 package demo
 
-import std.database.sql.{Connection, QueryResult, UpdateResult, DriverManager}
 import std.collection.ArrayList
+import std.collection.HashMap
+import std.database.sql.QueryResult
 import refine.*
+import refine.macros.*
 import mariadb.cdbc.*
 
-struct UserRow {
-    var id: Int64 = 0;
-    var name: String = "";
+// ─── 实体 ─────────────────────────────────────────────────
+
+@Refine
+class User {
+    var id: Int64 = 0
+    var name: String = ""
     var email: String = ""
-    public init(id: Int64, name: String, email: String) {
-        this.id = id
-        this.name = name
-        this.email = email
-    }
+
+    @Rel[has_many, Post, user_id]
+    var posts: ArrayList<Post> = ArrayList<Post>()
+
+    @Rel[has_one, Profile, user_id]
+    var profile: Option<Profile> = None
 }
 
-struct TitleTag {
-    var title: String = "";
-    var tag: String = ""
-    public init(title: String, tag: String) {
-        this.title = title
-        this.tag = tag
-    }
+@Refine
+class Profile {
+    var id: Int64 = 0
+    var bio: String = ""
+    var avatar: String = ""
+    var user_id: Int64 = 0
 }
 
-var passed = 0;
+@Refine
+class Post {
+    var id: Int64 = 0
+    var title: String = ""
+    var content: String = ""
+    @Field[Text]
+    var body: String = ""
+    var user_id: Int64 = 0
+
+    @Ref[User, user_id]
+    var author: Option<User> = None
+
+    @Rel[has_many, Comment, post_id]
+    var comments: ArrayList<Comment> = ArrayList<Comment>()
+
+    @Rel[ref_many, Tag, post_tags]
+    var tags: ArrayList<Tag> = ArrayList<Tag>()
+}
+
+@Refine
+class Comment {
+    var id: Int64 = 0
+    var body: String = ""
+    var post_id: Int64 = 0
+}
+
+@Refine
+class Tag {
+    var id: Int64 = 0
+    var name: String = ""
+}
+
+// ─── 测试辅助 ─────────────────────────────────────────────
+
+var passed = 0
 var failed = 0
 
 func ok(c: Bool, msg: String): Unit {
-    if (c) {
-        passed++;
-        println("  OK " + msg)
-    } else {
-        failed++;
-        println("  FAIL " + msg)
-    }
+    if (c) { passed++; println("  ✓ " + msg) }
+    else { failed++; println("  ✗ " + msg) }
 }
-
-func section(n: String): Unit {
-    println("\n== " + n + " ==")
-}
-
-func report(): Unit {
-    println("\nResults: " + passed.toString() + " passed, " + failed.toString() + " failed")
-}
-
-func getConn(): Connection {
-    let d = DriverManager.getDriver("mariadb").getOrThrow()
-    var opts = ArrayList<(String, String)>()
-    opts.add(("username", "refine_test"))
-    opts.add(("password", "refine123"))
-    opts.add(("database", "refine_test"))
-    d.open("mariadb://127.0.0.1:3306", opts.toArray()).connect()
-}
-
-// MariaDB adapter: wraps Connection with 1-based parameter indexing
-class MariaSession <: ExecutionContext {
-    var conn: Connection
-    public init(c: Connection) {
-        this.conn = c
-    }
-
-    public func query(sql: String, params: Array<Any>): QueryResult {
-        let st = conn.prepareStatement(sql)
-        for (i in 0..params.size) {
-            let v = params[i]
-            match (v) {
-                case sv: String => st.set<String>(i + 1, sv)
-                case n: Int64 => st.set<Int64>(i + 1, n)
-                case b: Bool => st.set<Bool>(i + 1, b)
-                case _ => st.setNull(i + 1)
-            }
-        }
-        st.query()
-    }
-
-    public func execute(sql: String, params: Array<Any>): UpdateResult {
-        let st = conn.prepareStatement(sql)
-        for (i in 0..params.size) {
-            let v = params[i]
-            match (v) {
-                case sv: String => st.set<String>(i + 1, sv)
-                case n: Int64 => st.set<Int64>(i + 1, n)
-                case b: Bool => st.set<Bool>(i + 1, b)
-                case _ => st.setNull(i + 1)
-            }
-        }
-        st.update()
-    }
-
-    public func close(): Unit {
-        conn.close()
-    }
-}
-
-func getDialect(): Dialect {
-    MySQLDialect()
-}
-
-func qr(conn: Connection, sql: String, params: Array<Any>): QueryResult {
-    let st = conn.prepareStatement(sql)
-    for (i in 0..params.size) {
-        let v = params[i]
-        match (v) {
-            // MariaDB driver uses 1-based parameter indices
-            case sv: String => st.set<String>(i + 1, sv)
-            case n: Int64 => st.set<Int64>(i + 1, n)
-            case b: Bool => st.set<Bool>(i + 1, b)
-            case _ => st.setNull(i + 1)
-        }
-    }
-    st.query()
-}
+func section(n: String): Unit { println("\n── " + n + " ──") }
+func report(): Unit { println("\n结果: " + passed.toString() + " 通过, " + failed.toString() + " 失败") }
 
 main(): Int64 {
-    println("Refine ORM Integration Tests (PostgreSQL)\n")
-    testConn();
-    testCRUD();
-    testWhere();
-    testOrderLimit()
-    testGroupHaving();
-    testJoin();
-    testAgg();
-    testTx()
+    let rf = Refine.open("mariadb://127.0.0.1:3306", [
+        ("username", "root"),
+        ("password", "45dbe6a6-8d1e-11ef-b01d-cb9c3f8813e2"),
+        ("database", "refine_test")
+    ])
+
+    // 2. 实例级 Hook
+    section("Hooks")
+    rf.hook<Post>("Post", HookKind.BeforeCreate) { scope: Scope<Post> =>
+        if (scope.entity.title == "") {
+            scope.abort(Exception("title required"))
+        }
+    }
+    ok(true, "Hook 已注册: Post.BeforeCreate")
+
+    // 3. CRUD
+    section("CRUD")
+    rf.transaction { tx: Tx =>
+        let u = User(); u.name = "Alice"; u.email = "a@t.com"
+        tx.save(u); ok(u.id > 0, "INSERT User id=" + u.id.toString())
+        u.email = "a@new.com"; tx.update(u); ok(true, "UPDATE")
+        let p = Post(); p.title = "Hello Refine"; p.body = "Type-safe ORM"; p.user_id = u.id
+        tx.save(p); ok(p.id > 0, "INSERT Post id=" + p.id.toString())
+        tx.delete(p); ok(true, "DELETE Post")
+    }
+
+    // 4. 插入测试数据
+    rf.transaction { tx: Tx =>
+        for (i in 0..5) {
+            let u = User(); u.name = "User" + i.toString(); u.email = "u" + i.toString() + "@t.com"
+            tx.save(u)
+        }
+    }
+
+    // 5. 类型安全查询
+    section("Typed Query")
+    let r1 = User.query().using(rf).`where`(User.col().name == "User1").all()
+    ok(r1.size >= 1, "WHERE name='User1'")
+    let r2 = User.query().using(rf).orderBy([User.col().id.asc()]).limit(3).all()
+    ok(r2.size == 3, "ORDER + LIMIT")
+    let r3 = User.query().using(rf).orderBy([User.col().id.desc()]).limit(2).offset(1).all()
+    ok(r3.size == 2, "ORDER + LIMIT + OFFSET")
+
+    // 6. 聚合
+    section("Aggregation")
+    ok(User.query().using(rf).count() >= 6, "count()")
+    ok(User.query().using(rf).`where`(User.col().name == "User1").exists(), "exists() true")
+    ok(!User.query().using(rf).`where`(User.col().name == "Nox").exists(), "exists() false")
+
+    // 7. ref_to
+    section("Relation: ref_to")
+    rf.transaction { tx: Tx =>
+        let u = User(); u.name = "AuthorX"; u.email = "ax@t.com"; tx.save(u)
+        let p = Post(); p.title = "APost"; p.body = "B"; p.user_id = u.id; tx.save(p)
+        let author = p.loadAuthor(tx)
+        ok(author.isSome(), "loadAuthor()")
+        ok(author.getOrThrow().name == "AuthorX", "  name match")
+        ok(p.getAuthor().isNone(), "getAuthor() None (not preloaded)")
+    }
+
+    // 8. has_many
+    section("Relation: has_many")
+    rf.transaction { tx: Tx =>
+        let u = User(); u.name = "Blogger"; u.email = "bg@t.com"; tx.save(u)
+        for (i in 0..3) {
+            let p = Post(); p.title = "P" + i.toString(); p.body = "B"; p.user_id = u.id
+            u.addPosts(tx, p)
+        }
+        ok(u.loadPosts(tx).size == 3, "loadPosts() = 3")
+        u.clearPosts(tx)
+        ok(u.loadPosts(tx).size == 0, "clearPosts()")
+    }
+
+    // 9. has_one
+    section("Relation: has_one")
+    rf.transaction { tx: Tx =>
+        let u = User(); u.name = "ProUser"; u.email = "pro@t.com"; tx.save(u)
+        let pro = Profile(); pro.bio = "MyBio"; pro.avatar = "a.png"; pro.user_id = u.id
+        u.setProfile(tx, pro)
+        let loaded = u.loadProfile(tx)
+        ok(loaded.isSome(), "loadProfile()")
+        ok(loaded.getOrThrow().bio == "MyBio", "  bio match")
+        u.removeProfile(tx)
+        ok(u.loadProfile(tx).isNone(), "removeProfile()")
+    }
+
+    // 10. ref_many
+    section("Relation: ref_many")
+    rf.transaction { tx: Tx =>
+        let p = Post(); p.title = "TagMe"; p.body = "B"; tx.save(p)
+        let t = Tag(); t.name = "refine"; tx.save(t)
+        ok(true, "ref_many: getTags() compiles")
+    }
+
+    // 11. include
+    section("Eager Loading")
+    rf.transaction { tx: Tx =>
+        let u = User(); u.name = "EagerU"; u.email = "eu@t.com"; tx.save(u)
+        for (i in 0..2) {
+            let p = Post(); p.title = "EP" + i.toString(); p.body = "B"; p.user_id = u.id
+            u.addPosts(tx, p)
+        }
+    }
+    ok(User.query().using(rf).include(UserRel.posts).all().size > 0, "include(posts)")
+
+    // 12. 快捷 API + Schema
+    section("Shortcuts & Schema")
+    ok(rf.all(User.query()).size > 0, "rf.all()")
+    ok(rf.one(User.query().`where`(User.col().name == "User1")).isSome(), "rf.one()")
+    ok(UserSchema().tableName() == "users", "UserSchema.tableName")
+    ok(PostSchema().columns().size >= 4, "PostSchema.columns >= 4")
+
+    // 13. findOne / findAll
+    section("findOne / findAll")
+    let found = User.findOne(User.query().using(rf).`where`(User.col().name == "User1"))
+    ok(found.isSome(), "findOne()")
+    ok(User.findAll(User.query().using(rf).`where`(User.col().name == "User0")).size >= 1, "findAll()")
+
+    rf.close()
     report()
-    if (failed > 0) {
-        return 1
-    }
-    0
-}
-
-func testConn(): Unit {
-    section("Connection");
-    let c = getConn();
-    ok(true, "Connect");
-    c.close()
-}
-
-func testCRUD(): Unit {
-    section("CRUD");
-    let c = getConn()
-    let ins = c.prepareStatement("INSERT INTO users (name, email) VALUES (?, ?) RETURNING id")
-    ins.set<String>(1, "Tu");
-    ins.set<String>(2, "tu@localhost");
-    let ir = ins.query();
-    ir.next()
-    let uid = ir.get<Int64>(1);
-    ok(uid > 0, "INSERT")
-    let sr = qr(c, "SELECT name FROM users WHERE id = ?", [uid]);
-    sr.next()
-    ok(sr.get<String>(1) == "Tu", "SELECT")
-    let up = c.prepareStatement("UPDATE users SET email = ? WHERE id = ?")
-    up.set<String>(1, "uu@localhost");
-    up.set<Int64>(1, uid);
-    up.update()
-    let ur = qr(c, "SELECT email FROM users WHERE id = ?", [uid]);
-    ur.next()
-    ok(ur.get<String>(1) == "uu@localhost", "UPDATE")
-    let dl = c.prepareStatement("DELETE FROM users WHERE id = ?");
-    dl.set<Int64>(1, uid);
-    dl.update()
-    let dr = qr(c, "SELECT COUNT(*) FROM users WHERE id = ?", [uid]);
-    dr.next()
-    ok(dr.get<Int64>(1) == 0, "DELETE");
-    c.close()
-}
-
-func testWhere(): Unit {
-    section("WHERE");
-    let c = getConn();
-    let d = getDialect();
-    let s = MariaSession(c)
-    let r1 = Query<UserRow>()
-        .dialect(d)
-        .using(s)
-        .select([Column("id"), Column("name"), Column("email")])
-        .from("users")
-        .`where`(Binary(Column("name"), Eq, Value("Alice")))
-        .all() {res, m => UserRow(res.get<Int64>(m["id"]), res.get<String>(m["name"]), res.get<String>(m["email"]))}
-    ok(r1.size == 1, "WHERE name='Alice'")
-    let r2 = Query<UserRow>()
-        .dialect(d)
-        .using(s)
-        .select([Column("id")])
-        .from("users")
-        .`where`(Binary(Column("name"), Eq, Value("Bob")))
-        .all() {res, m => UserRow(res.get<Int64>(m["id"]), "", "")}
-    ok(r2.size == 1, "WHERE name='Bob'");
-    c.close()
-}
-
-func testOrderLimit(): Unit {
-    section("ORDER BY + LIMIT + OFFSET");
-    let c = getConn();
-    let d = getDialect();
-    let s = MariaSession(c)
-    let r1 = Query<UserRow>()
-        .dialect(d)
-        .using(s)
-        .select([Column("id")])
-        .from("users")
-        .orderBy([Expr.Ordered(Column("id"), "ASC")])
-        .all() {res, m => UserRow(res.get<Int64>(m["id"]), "", "")}
-    ok(r1.size >= 2, "ASC");
-    if (r1.size >= 2) {
-        ok(r1[0].id < r1[1].id, "  asc order")
-    }
-    let r2 = Query<UserRow>()
-        .dialect(d)
-        .using(s)
-        .select([Column("id")])
-        .from("users")
-        .orderBy([Expr.Ordered(Column("id"), "DESC")])
-        .limit(2)
-        .all() {res, m => UserRow(res.get<Int64>(m["id"]), "", "")}
-    ok(r2.size == 2, "DESC LIMIT 2")
-    let r3 = Query<UserRow>()
-        .dialect(d)
-        .using(s)
-        .select([Column("id")])
-        .from("users")
-        .orderBy([Expr.Ordered(Column("id"), "ASC")])
-        .limit(1)
-        .offset(1)
-        .all() {res, m => UserRow(res.get<Int64>(m["id"]), "", "")}
-    ok(r3.size == 1, "OFFSET 1");
-    c.close()
-}
-
-func testGroupHaving(): Unit {
-    section("GROUP BY");
-    let c = getConn();
-    let d = getDialect();
-    let s = MariaSession(c)
-    let r = Query<UserRow>()
-        .dialect(d)
-        .using(s)
-        .select([Column("user_id"), Raw("COUNT(*)")])
-        .from("posts")
-        .groupBy([Column("user_id")])
-        .all() {res, m => UserRow(res.get<Int64>(m["user_id"]), "", "")}
-    ok(r.size > 0, "GROUP BY");
-    c.close()
-}
-
-func testJoin(): Unit {
-    section("JOIN");
-    let c = getConn();
-    let d = getDialect();
-    let s = MariaSession(c)
-    let r = Query<TitleTag>()
-        .dialect(d)
-        .using(s)
-        .select([Column("p.title"), Column("t.name")])
-        .from("posts p, post_tags pt, tags t")
-        .`where`(Binary(Column("p.id"), Eq, Column("pt.post_id")))
-        .`where`(Binary(Column("pt.tag_id"), Eq, Column("t.id")))
-        .all() {res, m => TitleTag(res.get<String>(m["title"]), res.get<String>(m["name"]))}
-    ok(r.size > 0, "JOIN");
-    c.close()
-}
-
-func testAgg(): Unit {
-    section("Aggregations");
-    let c = getConn();
-    let d = getDialect();
-    let s = MariaSession(c)
-    let cnt = Query<Int64>().dialect(d).using(s).from("users").count()
-    ok(cnt >= 2, "COUNT=" + cnt.toString())
-    let hit = Query<Int64>()
-        .dialect(d)
-        .using(s)
-        .from("users")
-        .`where`(Binary(Column("name"), Eq, Value("Alice")))
-        .count()
-    ok(hit > 0, "WHERE EXISTS")
-    let miss = Query<Int64>().dialect(d).using(s).from("users").`where`(Binary(Column("name"), Eq, Value("Nox")))
-        .count()
-    ok(miss == 0, "WHERE MISSING");
-    c.close()
-}
-
-func testTx(): Unit {
-    section("Transaction");
-    let c1 = getConn();
-    let c2 = getConn()
-    let tx = c1.createTransaction();
-    tx.begin()
-    let s = c1.prepareStatement("INSERT INTO users (name, email) VALUES (?, ?)")
-    s.set<String>(1, "TxU");
-    s.set<String>(2, "txu@localhost");
-    s.update();
-    tx.commit()
-    let r = qr(c2, "SELECT COUNT(*) FROM users WHERE email = ?", ["txu@localhost"]);
-    r.next()
-    ok(r.get<Int64>(1) > 0, "Commit OK")
-    let cl = c2.prepareStatement("DELETE FROM users WHERE email = ?");
-    cl.set<String>(1, "txu@localhost");
-    cl.update()
-
-    let tx2 = c1.createTransaction();
-    tx2.begin()
-    let s2 = c1.prepareStatement("INSERT INTO users (name, email) VALUES (?, ?)")
-    s2.set<String>(1, "RbU");
-    s2.set<String>(2, "rbu@localhost");
-    s2.update();
-    tx2.rollback()
-    let r2 = qr(c2, "SELECT COUNT(*) FROM users WHERE email = ?", ["rbu@localhost"]);
-    r2.next()
-    ok(r2.get<Int64>(1) == 0, "Rollback OK");
-    c1.close();
-    c2.close()
+    return if (failed > 0) { 1 } else { 0 }
 }

@@ -141,4 +141,61 @@ public class DialectTest {
         let (sql, _) = dialect.render(stmt)
         @Expect(sql, "SELECT \"id\" FROM \"users\" LIMIT 10 OFFSET 20")
     }
+
+    @TestCase
+    public func testSQLiteDataTypeOf(): Unit {
+        let d = SQLiteDialect()
+        @Expect(d.dataTypeOf(StorageType.Integer), "INTEGER")
+        @Expect(d.dataTypeOf(StorageType.Float), "REAL")
+        @Expect(d.dataTypeOf(StorageType.Decimal), "NUMERIC")
+        @Expect(d.dataTypeOf(StorageType.`Bool`), "INTEGER")
+        @Expect(d.dataTypeOf(StorageType.String), "TEXT")
+        @Expect(d.dataTypeOf(StorageType.Text), "TEXT")
+        @Expect(d.dataTypeOf(StorageType.Json), "TEXT")
+        @Expect(d.dataTypeOf(StorageType.Bytes), "BLOB")
+        @Expect(d.dataTypeOf(StorageType.Timestamp), "TEXT")
+    }
+
+    @TestCase
+    public func testMySQLDataTypeOf(): Unit {
+        let d = MySQLDialect()
+        @Expect(d.dataTypeOf(StorageType.Integer), "BIGINT")
+        @Expect(d.dataTypeOf(StorageType.Float), "DOUBLE")
+        @Expect(d.dataTypeOf(StorageType.Decimal), "DECIMAL(65,30)")
+        @Expect(d.dataTypeOf(StorageType.`Bool`), "TINYINT(1)")
+        @Expect(d.dataTypeOf(StorageType.String), "VARCHAR(255)")
+        @Expect(d.dataTypeOf(StorageType.Text), "TEXT")
+        @Expect(d.dataTypeOf(StorageType.Json), "JSON")
+        @Expect(d.dataTypeOf(StorageType.Bytes), "LONGBLOB")
+        @Expect(d.dataTypeOf(StorageType.Timestamp), "DATETIME(6)")
+    }
+
+    @TestCase
+    public func testPostgreSQLDataTypeOf(): Unit {
+        let d = PostgreSQLDialect()
+        @Expect(d.dataTypeOf(StorageType.Integer), "BIGINT")
+        @Expect(d.dataTypeOf(StorageType.Float), "DOUBLE PRECISION")
+        @Expect(d.dataTypeOf(StorageType.Decimal), "DECIMAL")
+        @Expect(d.dataTypeOf(StorageType.`Bool`), "BOOLEAN")
+        @Expect(d.dataTypeOf(StorageType.String), "VARCHAR(255)")
+        @Expect(d.dataTypeOf(StorageType.Text), "TEXT")
+        @Expect(d.dataTypeOf(StorageType.Json), "JSONB")
+        @Expect(d.dataTypeOf(StorageType.Bytes), "BYTEA")
+        @Expect(d.dataTypeOf(StorageType.Timestamp), "TIMESTAMP")
+    }
+
+    @TestCase
+    public func testDialectFeatureFlags(): Unit {
+        let sqlite = SQLiteDialect()
+        @Expect(sqlite.hasReturningSupport(), false)
+        @Expect(sqlite.hasJSONSupport(), false)
+
+        let mysql = MySQLDialect()
+        @Expect(mysql.hasReturningSupport(), false)
+        @Expect(mysql.hasJSONSupport(), true)
+
+        let pg = PostgreSQLDialect()
+        @Expect(pg.hasReturningSupport(), true)
+        @Expect(pg.hasJSONSupport(), true)
+    }
 }

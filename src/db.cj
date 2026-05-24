@@ -6,9 +6,23 @@ import std.time.DateTime
 
 public class DB {
     private var datasource: Datasource
+    private var paramOffset: Int64 = 0
+    public mut prop maxPoolSize: Int32 { get() { _maxPoolSize } set(v) { _maxPoolSize = v } }
+    public mut prop connectionTimeout: Int64 { get() { _connectionTimeout } set(v) { _connectionTimeout = v } }
+    public mut prop idleTimeout: Int64 { get() { _idleTimeout } set(v) { _idleTimeout = v } }
+    public mut prop maxLifeTime: Int64 { get() { _maxLifeTime } set(v) { _maxLifeTime = v } }
+    private var _maxPoolSize: Int32 = 10
+    private var _connectionTimeout: Int64 = 30000
+    private var _idleTimeout: Int64 = 60000
+    private var _maxLifeTime: Int64 = 3600000
 
     public init(datasource: Datasource) {
         this.datasource = datasource
+    }
+
+    public init(datasource: Datasource, paramOffset: Int64) {
+        this.datasource = datasource
+        this.paramOffset = paramOffset
     }
 
     public static func open(url: String): DB {
@@ -19,16 +33,24 @@ public class DB {
         let driverName = extractDriver(url)
         let drv = DriverManager.getDriver(driverName).getOrThrow()
         let ds = drv.open(url, opts)
-        DB(PooledDatasource(ds))
+        let db = DB(PooledDatasource(ds))
+        if (driverName == "mariadb") {
+            db.paramOffset = 1
+        }
+        db
     }
 
     public func session(): Session {
-        Session(datasource.connect())
+        Session(datasource.connect(), paramOffset)
+    }
+
+    public func getDialect(): Dialect {
+        SQLiteDialect()
     }
 
     public func transaction<T>(action: (Tx) -> T): T {
         let conn = datasource.connect()
-        let tx = Tx(conn)
+        let tx = Tx(conn, paramOffset)
         tx.begin()
         try {
             let result = action(tx)
@@ -54,9 +76,22 @@ public class DB {
 
 public class Session {
     private var connection: Connection
+    private var paramOffset: Int64 = 0
+    public var ref: Option<Refine> = None
 
     public init(connection: Connection) {
         this.connection = connection
+    }
+
+    public init(connection: Connection, paramOffset: Int64) {
+        this.connection = connection
+        this.paramOffset = paramOffset
+    }
+
+    public init(connection: Connection, ref: Refine, paramOffset: Int64) {
+        this.connection = connection
+        this.ref = Some(ref)
+        this.paramOffset = paramOffset
     }
 
     public func prepareStatement(sql: String): SqlStatement {
@@ -66,7 +101,7 @@ public class Session {
     public func execute(sql: String, params: Array<Any>): UpdateResult {
         let stmt = connection.prepareStatement(sql)
         for (i in 0..params.size) {
-            dispatchSet(stmt, i, params[i])
+            dispatchSet(stmt, i + paramOffset, params[i])
         }
         stmt.update()
     }
@@ -74,7 +109,7 @@ public class Session {
     public func query(sql: String, params: Array<Any>): QueryResult {
         let stmt = connection.prepareStatement(sql)
         for (i in 0..params.size) {
-            dispatchSet(stmt, i, params[i])
+            dispatchSet(stmt, i + paramOffset, params[i])
         }
         stmt.query()
     }
@@ -91,10 +126,25 @@ public class Session {
 public class Tx {
     private var connection: Connection
     private var transaction: Transaction
+    private var paramOffset: Int64 = 0
+    public var ref: Option<Refine> = None
 
     public init(connection: Connection) {
         this.connection = connection
         this.transaction = connection.createTransaction()
+    }
+
+    public init(connection: Connection, paramOffset: Int64) {
+        this.connection = connection
+        this.transaction = connection.createTransaction()
+        this.paramOffset = paramOffset
+    }
+
+    public init(connection: Connection, ref: Refine, paramOffset: Int64) {
+        this.connection = connection
+        this.transaction = connection.createTransaction()
+        this.ref = Some(ref)
+        this.paramOffset = paramOffset
     }
 
     public func begin(): Unit {
@@ -124,7 +174,7 @@ public class Tx {
     public func execute(sql: String, params: Array<Any>): UpdateResult {
         let stmt = connection.prepareStatement(sql)
         for (i in 0..params.size) {
-            dispatchSet(stmt, i, params[i])
+            dispatchSet(stmt, i + paramOffset, params[i])
         }
         stmt.update()
     }
@@ -132,7 +182,7 @@ public class Tx {
     public func query(sql: String, params: Array<Any>): QueryResult {
         let stmt = connection.prepareStatement(sql)
         for (i in 0..params.size) {
-            dispatchSet(stmt, i, params[i])
+            dispatchSet(stmt, i + paramOffset, params[i])
         }
         stmt.query()
     }
@@ -146,6 +196,12 @@ public interface ExecutionContext {
 extend Session <: ExecutionContext {}
 extend Tx <: ExecutionContext {}
 
+extend DB {
+    public func migrator(): Migrator {
+        SQLiteMigrator(this)
+    }
+}
+
 func dispatchSet(stmt: SqlStatement, index: Int, value: Any): Unit {
     match (value) {
         case v: Int64    => stmt.set<Int64>(index, v)
@@ -157,4 +213,9 @@ func dispatchSet(stmt: SqlStatement, index: Int, value: Any): Unit {
         case v: Array<UInt8> => stmt.set<Array<UInt8>>(index, v)
         case _           => stmt.setNull(index)
     }
+}
+
+// For drivers with 1-based parameter indices (e.g. MariaDB)
+public func dispatchSet1(stmt: SqlStatement, index: Int, value: Any): Unit {
+    dispatchSet(stmt, index + 1, value)
 }

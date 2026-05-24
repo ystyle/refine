@@ -1,7 +1,7 @@
 package refine
 
 public struct Col<T> {
-    var name: String
+    public var name: String
 
     public init(name: String) {
         this.name = name

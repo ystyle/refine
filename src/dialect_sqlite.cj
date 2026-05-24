@@ -2,16 +2,24 @@ package refine
 
 import std.collection.ArrayList
 
-public class MySQLDialect <: Dialect {
-    public func name(): String { "mysql" }
+public class SQLiteDialect <: Dialect {
+    public func name(): String { "sqlite" }
 
     public func quoteIdentifier(name: String): String {
-        "`" + name + "`"
+        "\"" + name + "\""
     }
 
     public func render(stmt: Statement): (String, Array<Any>) {
         var sql = ArrayList<String>()
         var params = ArrayList<Any>()
+        var hasSelect = false
+        for (i in 0..stmt.clauses.size) {
+            match (stmt.clauses[i]) {
+                case SelectClause(_) => hasSelect = true
+                case _ => ()
+            }
+        }
+        if (!hasSelect) { sql.add("SELECT *") }
         for (i in 0..stmt.clauses.size) {
             let clause = stmt.clauses[i]
             match (clause) {
@@ -55,6 +63,8 @@ public class MySQLDialect <: Dialect {
             case Raw(s) => s
             case Ordered(expr, dir) =>
                 renderExpr(expr) + " " + dir
+            case Aliased(expr, alias) =>
+                renderExpr(expr) + " AS " + quoteIdentifier(alias)
             case SubQuery(s) =>
                 let (subSql, subParams) = render(s)
                 "(" + subSql + ")"
@@ -100,19 +110,33 @@ public class MySQLDialect <: Dialect {
         }
     }
 
-    public func hasUpsertSupport(): Bool { true }
+    public func hasUpsertSupport(): Bool { false }
 
-    public func upsertSQL(table: String, columns: Array<String>, _conflictColumns: Array<String>): String {
-        var cols = ArrayList<String>()
-        var placeholders = ArrayList<String>()
-        var updates = ArrayList<String>()
-        for (c in columns) {
-            cols.add(quoteIdentifier(c))
-            placeholders.add("?")
-            updates.add(quoteIdentifier(c) + " = VALUES(" + quoteIdentifier(c) + ")")
+    public func upsertSQL(_table: String, _columns: Array<String>, _conflictColumns: Array<String>): String { "" }
+
+    public func dataTypeOf(st: StorageType): String {
+        match (st) {
+            case Integer => "INTEGER"
+            case Float => "REAL"
+            case Decimal => "NUMERIC"
+            case `Bool` => "INTEGER"
+            case String => "TEXT"
+            case Text => "TEXT"
+            case Json => "TEXT"
+            case Bytes => "BLOB"
+            case Timestamp => "TEXT"
         }
-        "INSERT INTO " + quoteIdentifier(table) + " (" + joinStrings(cols, ", ") + ") VALUES (" + joinStrings(placeholders, ", ") + ") ON DUPLICATE KEY UPDATE " + joinStrings(updates, ", ")
     }
+
+    public func hasReturningSupport(): Bool { false }
+
+    public func hasJSONSupport(): Bool { false }
+
+    public func migrator(db: DB): Migrator { SQLiteMigrator(db) }
+
+    public func initialize(db: DB): Unit {}
+
+    public func defaultValueOf(st: StorageType): String { "" }
 
     private func joinStrings(strings: ArrayList<String>, separator: String): String {
         var result = ""
