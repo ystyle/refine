@@ -1,5 +1,6 @@
 *.cjo
 *.cjo.flag
+*.cj.macrocall
 .cjpm/
 cjpm.lock
 /librefine.a

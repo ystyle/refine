@@ -138,6 +138,14 @@ public class Tx {
     }
 }
 
+public interface ExecutionContext {
+    func query(sql: String, params: Array<Any>): QueryResult
+    func execute(sql: String, params: Array<Any>): UpdateResult
+}
+
+extend Session <: ExecutionContext {}
+extend Tx <: ExecutionContext {}
+
 func dispatchSet(stmt: SqlStatement, index: Int, value: Any): Unit {
     match (value) {
         case v: Int64    => stmt.set<Int64>(index, v)

@@ -2,11 +2,11 @@ package refine
 
 import std.collection.ArrayList
 
-public class SQLiteDialect <: Dialect {
-    public func name(): String { "sqlite" }
+public class MySQLDialect <: Dialect {
+    public func name(): String { "mysql" }
 
     public func quoteIdentifier(name: String): String {
-        "\"" + name + "\""
+        "`" + name + "`"
     }
 
     public func render(stmt: Statement): (String, Array<Any>) {
@@ -98,9 +98,19 @@ public class SQLiteDialect <: Dialect {
         }
     }
 
-    public func hasUpsertSupport(): Bool { false }
+    public func hasUpsertSupport(): Bool { true }
 
-    public func upsertSQL(table: String, columns: Array<String>, conflictColumns: Array<String>): String { "" }
+    public func upsertSQL(table: String, columns: Array<String>, conflictColumns: Array<String>): String {
+        var cols = ArrayList<String>()
+        var placeholders = ArrayList<String>()
+        var updates = ArrayList<String>()
+        for (c in columns) {
+            cols.add(quoteIdentifier(c))
+            placeholders.add("?")
+            updates.add(quoteIdentifier(c) + " = VALUES(" + quoteIdentifier(c) + ")")
+        }
+        "INSERT INTO " + quoteIdentifier(table) + " (" + joinStrings(cols, ", ") + ") VALUES (" + joinStrings(placeholders, ", ") + ") ON DUPLICATE KEY UPDATE " + joinStrings(updates, ", ")
+    }
 
     private func joinStrings(strings: ArrayList<String>, separator: String): String {
         var result = ""
