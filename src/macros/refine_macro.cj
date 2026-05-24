@@ -232,25 +232,26 @@ func buildRelClass(className: String, rels: ArrayList<RelInfo>): Tokens {
             )
         }
         body = body + Token(TokenKind.NL)
+        let colNamesFunc = Token(TokenKind.IDENTIFIER, r.target + "ColumnNames")
         if (r.kind == "ref_to") {
             let fkLit = Token(TokenKind.STRING_LITERAL, r.by)
             body = body + quote(
-                static let $(fieldIdent) = RefTo<$(targetType)>($(nameLit), Col<Any>($(fkLit)), [Col<Any>("id")], $(targetTableLit), $(mapperIdent), $(setterIdent))
+                static let $(fieldIdent) = RefTo<$(targetType)>($(nameLit), Col<Any>($(fkLit)), $(colNamesFunc)(), $(targetTableLit), $(mapperIdent), $(setterIdent))
             )
         } else if (r.kind == "has_one") {
             let fkLit = Token(TokenKind.STRING_LITERAL, r.by)
             body = body + quote(
-                static let $(fieldIdent) = HasOne<$(targetType)>($(nameLit), $(fkLit), [Col<Any>("id")], $(targetTableLit), $(mapperIdent), $(setterIdent))
+                static let $(fieldIdent) = HasOne<$(targetType)>($(nameLit), $(fkLit), $(colNamesFunc)(), $(targetTableLit), $(mapperIdent), $(setterIdent))
             )
         } else if (r.kind == "has_many") {
             let fkLit = Token(TokenKind.STRING_LITERAL, r.by)
             body = body + quote(
-                static let $(fieldIdent) = HasMany<$(targetType)>($(nameLit), $(fkLit), [Col<Any>("id")], $(targetTableLit), $(mapperIdent), $(setterIdent))
+                static let $(fieldIdent) = HasMany<$(targetType)>($(nameLit), $(fkLit), $(colNamesFunc)(), $(targetTableLit), $(mapperIdent), $(setterIdent))
             )
         } else {
             let viaLit = Token(TokenKind.STRING_LITERAL, r.via)
             body = body + quote(
-                static let $(fieldIdent) = RefMany<$(targetType)>($(nameLit), $(viaLit), [Col<Any>("id")], $(targetTableLit), $(mapperIdent), $(setterIdent))
+                static let $(fieldIdent) = RefMany<$(targetType)>($(nameLit), $(viaLit), $(colNamesFunc)(), $(targetTableLit), $(mapperIdent), $(setterIdent))
             )
         }
         first = false
@@ -705,6 +706,29 @@ func mergeFieldOverrides(fields: ArrayList<FieldInfo>, fieldMessages: ArrayList<
     result
 }
 
+func buildColumnNamesFunc(className: String, cd: ClassDecl): Tokens {
+    let funcName = Token(TokenKind.IDENTIFIER, className + "ColumnNames")
+    var columns = Tokens()
+    columns = columns + Token(TokenKind.LSQUARE)
+    var first = true
+    for (i in 0..cd.body.decls.size) {
+        match (cd.body.decls[i] as VarDecl) {
+            case Some(vd) =>
+                let fieldTypeStr = vd.declType.toTokens().toString()
+                if (isRelationField(fieldTypeStr)) { continue }
+                if (!first) { columns = columns + Token(TokenKind.COMMA) }
+                let nameLit = Token(TokenKind.STRING_LITERAL, vd.identifier.value)
+                columns = columns + quote(Col<Any>($(nameLit)))
+                first = false
+            case _ => ()
+        }
+    }
+    columns = columns + Token(TokenKind.RSQUARE)
+    quote(
+        func $(funcName)(): Array<Col<Any>> { $(columns) }
+    )
+}
+
 func buildSchemaClass(className: String, fields: ArrayList<FieldInfo>): Tokens {
     let cn = Token(TokenKind.IDENTIFIER, className)
     let schemaName = Token(TokenKind.IDENTIFIER, className + "Schema")
@@ -806,6 +830,7 @@ public macro Refine(input: Tokens): Tokens {
     let rowMapper = buildRowMapper(className, classDecl, mergedRels)
     buildRelationMethods(className, mergedRels, classDecl)
     let schemaClass = buildSchemaClass(className, mergedFields)
+    let columnNamesFunc = buildColumnNamesFunc(className, classDecl)
 
     classDecl.toTokens() + Token(TokenKind.NL) + Token(TokenKind.NL) +
         colsStruct + Token(TokenKind.NL) + Token(TokenKind.NL) + relClass +
@@ -816,6 +841,7 @@ public macro Refine(input: Tokens): Tokens {
         Token(TokenKind.NL) + Token(TokenKind.NL) + deleteSQLFunc +
         Token(TokenKind.NL) + Token(TokenKind.NL) + txDeleteExtend +
         Token(TokenKind.NL) + Token(TokenKind.NL) + rowMapper +
+        Token(TokenKind.NL) + Token(TokenKind.NL) + columnNamesFunc +
         Token(TokenKind.NL) + Token(TokenKind.NL) + schemaClass
 }
 

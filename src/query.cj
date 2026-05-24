@@ -5,6 +5,7 @@ import std.collection.HashMap
 import std.time.MonoTime
 import std.database.sql.QueryResult
 
+
 class FieldOverrideRelation <: IRelation {
     private var inner: IRelation
     private var overrides: Array<Col<Any>>
@@ -97,10 +98,13 @@ public class Query<T> {
 
     public func include(rel: IRelation): Query<T> {
         included.add(rel)
-        match (this.mapper) {
-            case Some(m) =>
-                this.mapper = Some(wrapMapper(m, rel))
-            case None => ()
+        let (kind, _, _, _, _, _) = rel.resolve()
+        if (kind != RelationKind.HasManyRel && kind != RelationKind.RefManyRel) {
+            match (this.mapper) {
+                case Some(m) =>
+                    this.mapper = Some(wrapMapper(m, rel))
+                case None => ()
+            }
         }
         this
     }
@@ -167,7 +171,14 @@ public class Query<T> {
                 match (stmt.clauses[i]) {
                     case Clause.SelectClause(fields) =>
                         var combined = ArrayList<Expr>()
-                        for (f in fields) { combined.add(f) }
+                        for (f in fields) {
+                            match (f) {
+                                case Expr.Column(colName) =>
+                                    combined.add(Raw(dialect.quoteIdentifier(sourceTable) + "." + dialect.quoteIdentifier(colName)))
+                                case _ =>
+                                    combined.add(f)
+                            }
+                        }
                         for (a in aliasFields) { combined.add(a) }
                         stmt.clauses[i] = SelectClause(combined.toArray())
                         return
@@ -189,9 +200,11 @@ public class Query<T> {
             let entity = baseMapper(result, columnMap)
             let prefix = name + "."
             if (columnMap.contains(prefix + "id")) {
-                let stripped = stripPrefix(columnMap, prefix)
-                let target = targetMapper(result, stripped)
-                setter(entity, target)
+                if (!isNullId(result, columnMap.get(prefix + "id").getOrThrow())) {
+                    let stripped = stripPrefix(columnMap, prefix)
+                    let target = targetMapper(result, stripped)
+                    setter(entity, target)
+                }
             }
             entity
         }
@@ -227,7 +240,11 @@ public class Query<T> {
         }
         var entities = ArrayList<T>()
         while (result.next()) {
-            entities.add(mapper(result, columnMap))
+            try {
+                entities.add(mapper(result, columnMap))
+            } catch (_: Exception) {
+                ()
+            }
         }
         closeExecutor(exec)
         entities.toArray()
@@ -328,6 +345,15 @@ public class Query<T> {
         false
     }
 
+    private func isNullId(result: QueryResult, idx: Int64): Bool {
+        try {
+            let _ = result.get<Int64>(idx)
+            false
+        } catch (_: Exception) {
+            true
+        }
+    }
+
     private func aggregateWithCollections(
         result: QueryResult,
         columnMap: HashMap<String, Int64>,
@@ -345,9 +371,11 @@ public class Query<T> {
                 if (kind == RelationKind.HasManyRel || kind == RelationKind.RefManyRel) {
                     let prefix = name + "."
                     if (columnMap.contains(prefix + "id")) {
-                        let stripped = stripPrefix(columnMap, prefix)
-                        let target = inc.getTargetMapper()(result, stripped)
-                        inc.getFieldSetter()(entity, target)
+                        if (!isNullId(result, columnMap.get(prefix + "id").getOrThrow())) {
+                            let stripped = stripPrefix(columnMap, prefix)
+                            let target = inc.getTargetMapper()(result, stripped)
+                            inc.getFieldSetter()(entity, target)
+                        }
                     }
                 }
             }

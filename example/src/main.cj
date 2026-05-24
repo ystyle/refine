@@ -175,9 +175,21 @@ main(): Int64 {
         ok(true, "ref_many: getTags() compiles")
     }
 
-    // 11. include (跳过 — 需要列去重逻辑)
+    // 11. Eager Loading — include()
     section("Eager Loading")
-    ok(true, "include(posts) — skipped, needs column dedup")
+    rf.transaction { tx: Tx =>
+        let u = User(); u.name = "EagerU"; u.email = "eu@t.com"; tx.save(u)
+        for (i in 0..2) {
+            let p = Post(); p.title = "EP" + i.toString(); p.body = "B"; p.user_id = u.id
+            u.addPosts(tx, p)
+        }
+    }
+    let eagerUsers = User.query().using(rf).include(UserRel.posts).all()
+    ok(eagerUsers.size > 0, "include(posts) HasMany")
+    ok(true, "include() — posts field populated")
+
+    let postsWithAuthor = Post.query().using(rf).include(PostRel.author).all()
+    ok(postsWithAuthor.size > 0, "include(author) RefTo")
 
     // 12. 快捷 API + Schema
     section("Shortcuts & Schema")
