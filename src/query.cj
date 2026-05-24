@@ -220,6 +220,11 @@ public class Query<T> {
         let elapsed = MonoTime.now() - start
         Logger.logSlowQuery(sql, elapsed)
         let columnMap = buildColumnMap(result.columnInfos, columnOffset)
+        if (hasCollectionInclude()) {
+            let r = aggregateWithCollections(result, columnMap, mapper)
+            closeExecutor(exec)
+            return r
+        }
         var entities = ArrayList<T>()
         while (result.next()) {
             entities.add(mapper(result, columnMap))
@@ -311,6 +316,47 @@ public class Query<T> {
             case s: Session => s.close()
             case _ => ()
         }
+    }
+
+    private func hasCollectionInclude(): Bool {
+        for (inc in included) {
+            let (kind, _, _, _, _, _) = inc.resolve()
+            if (kind == RelationKind.HasManyRel || kind == RelationKind.RefManyRel) {
+                return true
+            }
+        }
+        false
+    }
+
+    private func aggregateWithCollections(
+        result: QueryResult,
+        columnMap: HashMap<String, Int64>,
+        mapper: (QueryResult, HashMap<String, Int64>) -> T
+    ): Array<T> {
+        var map = HashMap<Int64, T>()
+        while (result.next()) {
+            let id = result.get<Int64>(columnMap["id"])
+            if (!map.contains(id)) {
+                map[id] = mapper(result, columnMap)
+            }
+            let entity = map[id]
+            for (inc in included) {
+                let (kind, name, _, _, _, _) = inc.resolve()
+                if (kind == RelationKind.HasManyRel || kind == RelationKind.RefManyRel) {
+                    let prefix = name + "."
+                    if (columnMap.contains(prefix + "id")) {
+                        let stripped = stripPrefix(columnMap, prefix)
+                        let target = inc.getTargetMapper()(result, stripped)
+                        inc.getFieldSetter()(entity, target)
+                    }
+                }
+            }
+        }
+        var entities = ArrayList<T>()
+        for ((_, entity) in map.toArray()) {
+            entities.add(entity)
+        }
+        entities.toArray()
     }
 }
 
