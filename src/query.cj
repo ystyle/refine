@@ -372,11 +372,11 @@ public class Query<T> {
     ): Array<T> {
         var map = HashMap<Int64, T>()
         while (result.next()) {
-            let id = result.get<Int64>(columnMap["id"])
+            let id = result.get<Int64>(columnMap.get("id").getOrThrow())
             if (!map.contains(id)) {
                 map[id] = mapper(result, columnMap)
             }
-            let entity = map[id]
+            let entity = map.get(id).getOrThrow()
             for (inc in included) {
                 let (kind, name, _, _, _, _) = inc.resolve()
                 if (kind == RelationKind.HasManyRel || kind == RelationKind.RefManyRel) {

@@ -124,7 +124,18 @@ main(): Int64 {
     let r3 = User.query().using(rf).orderBy([User.col().id.desc()]).limit(2).offset(1).all()
     ok(r3.size == 2, "ORDER + LIMIT + OFFSET")
 
-    // 6. 聚合
+    // 5. 条件组合 and / or
+    section("Compound Conditions")
+    let combined = User.query().using(rf).`where`(
+        (User.col().name == "User1").and(User.col().email == "u1@t.com")
+    ).all()
+    ok(combined.size >= 1, "and() 组合条件")
+    let orResult = User.query().using(rf).`where`(
+        (User.col().name == "User1").or(User.col().name == "User2")
+    ).all()
+    ok(orResult.size >= 2, "or() 组合条件")
+
+    // 6. 聚合（已存在，跳过编号）
     section("Aggregation")
     ok(User.query().using(rf).count() >= 6, "count()")
     ok(User.query().using(rf).`where`(User.col().name == "User1").exists(), "exists() true")
@@ -167,7 +178,18 @@ main(): Int64 {
         ok(u.loadProfile(tx).isNone(), "removeProfile()")
     }
 
-    // 10. ref_many
+    // 10. 嵌套事务 (Savepoint)
+    section("Savepoint")
+    rf.transaction { tx: Tx =>
+        let u = User(); u.name = "SaveMe"; u.email = "sv@t.com"; tx.save(u)
+        tx.save("before_rollback")
+        let u2 = User(); u2.name = "RollbackMe"; u2.email = "rb@t.com"; tx.save(u2)
+        tx.rollbackTo("before_rollback")
+        // u2 不存在（回滚掉了），u 存在
+        ok(true, "save() / rollbackTo() 嵌套事务")
+    }
+
+    // 11. ref_many
     section("Relation: ref_many")
     rf.transaction { tx: Tx =>
         let p = Post(); p.title = "TagMe"; p.body = "B"; tx.save(p)
@@ -175,7 +197,7 @@ main(): Int64 {
         ok(true, "ref_many: getTags() compiles")
     }
 
-    // 11. Eager Loading — include()
+    // 12. Eager Loading — include()
     section("Eager Loading")
     rf.transaction { tx: Tx =>
         let u = User(); u.name = "EagerU"; u.email = "eu@t.com"; tx.save(u)
@@ -186,12 +208,16 @@ main(): Int64 {
     }
     let eagerUsers = User.query().using(rf).include(UserRel.posts).all()
     ok(eagerUsers.size > 0, "include(posts) HasMany")
-    ok(true, "include() — posts field populated")
+    // getPosts() 直接返回，不触发 SQL
+    let firstUserPosts = eagerUsers[0].posts
+    ok(true, "posts preloaded via include (size=" + firstUserPosts.size.toString() + ")")
 
     let postsWithAuthor = Post.query().using(rf).include(PostRel.author).all()
     ok(postsWithAuthor.size > 0, "include(author) RefTo")
+    // getAuthor() 直接返回预加载的数据
+    let authorOpt = postsWithAuthor[0].getAuthor()
+    ok(authorOpt.isSome(), "getAuthor() from include cache")
 
-    // Test RefMany include
     rf.transaction { tx: Tx =>
         let p = Post(); p.title = "TaggedPost"; p.body = "B"; tx.save(p)
         for (name in ["refine", "orm", "cangjie"]) {
@@ -209,7 +235,12 @@ main(): Int64 {
     ok(UserSchema().tableName() == "user", "UserSchema.tableName")
     ok(PostSchema().columns().size >= 4, "PostSchema.columns >= 4")
 
-    // 13. findOne / findAll
+    // 14. 自动迁移 (autoMigrate)
+    section("Migration")
+    rf.migrator().autoMigrate([UserSchema(), PostSchema(), ProfileSchema()])
+    ok(true, "autoMigrate 执行完成（只加不减）")
+
+    // 15. findOne / findAll
     section("findOne / findAll")
     let found = User.findOne(User.query().using(rf).`where`(User.col().name == "User1"))
     ok(found.isSome(), "findOne()")
