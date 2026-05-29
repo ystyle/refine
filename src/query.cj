@@ -153,11 +153,11 @@ public class Query<T> {
             let tgtFk = Raw(dialect.quoteIdentifier(name) + "." + dialect.quoteIdentifier(fk))
             match (kind) {
                 case RelationKind.RefToRel =>
-                    stmt.addClause(JoinClause(table, name, Binary(srcRef, Eq, tgtRef)))
+                    stmt.addJoinClause(table, name, Binary(srcRef, Eq, tgtRef))
                 case RelationKind.HasOneRel =>
-                    stmt.addClause(JoinClause(table, name, Binary(srcId, Eq, tgtFk)))
+                    stmt.addJoinClause(table, name, Binary(srcId, Eq, tgtFk))
                 case RelationKind.HasManyRel =>
-                    stmt.addClause(JoinClause(table, name, Binary(srcId, Eq, tgtFk)))
+                    stmt.addJoinClause(table, name, Binary(srcId, Eq, tgtFk))
                 case RelationKind.RefManyRel =>
                     let junctionVia = via.getOrThrow()
                     let srcFk = sourceTable + "_id"
@@ -165,11 +165,11 @@ public class Query<T> {
                     let junctionAlias = name + "_junction"
                     let join1On = Binary(srcId, Eq,
                         Raw(dialect.quoteIdentifier(junctionAlias) + "." + dialect.quoteIdentifier(srcFk)))
-                    stmt.addClause(JoinClause(junctionVia, junctionAlias, join1On))
+                    stmt.addJoinClause(junctionVia, junctionAlias, join1On)
                     let join2On = Binary(
                         Raw(dialect.quoteIdentifier(junctionAlias) + "." + dialect.quoteIdentifier(tgtFk)),
                         Eq, tgtRef)
-                    stmt.addClause(JoinClause(table, name, join2On))
+                    stmt.addJoinClause(table, name, join2On)
             }
             for (j in 0..fields.size) {
                 let col = fields[j]
@@ -270,13 +270,16 @@ public class Query<T> {
 
     public func one(mapper: (QueryResult, HashMap<String, Int64>) -> T): Option<T> {
         let exec = requireExecutor()
+        let dialect = getDialect()
+        processIncluded(dialect)
+        let hasCollection = hasCollectionInclude()
         let oneStmt = Statement()
         for (clause in stmt.clauses) {
             oneStmt.addClause(clause)
         }
-        oneStmt.addClause(LimitClause(1))
-        let dialect = getDialect()
-        processIncluded(dialect)
+        if (!hasCollection) {
+            oneStmt.addClause(LimitClause(1))
+        }
         let (sql, params) = dialect.render(oneStmt)
         Logger.logSQL(sql, params)
         let start = MonoTime.now()
@@ -284,6 +287,12 @@ public class Query<T> {
         let elapsed = MonoTime.now() - start
         Logger.logSlowQuery(sql, elapsed)
         let columnMap = buildColumnMap(result.columnInfos, columnOffset)
+        if (hasCollection) {
+            let all = aggregateWithCollections(result, columnMap, mapper)
+            closeExecutor(exec)
+            if (all.size > 0) { return Some(all[0]) }
+            return None
+        }
         var res: Option<T> = None
         if (result.next()) {
             res = Some(mapper(result, columnMap))
@@ -348,7 +357,7 @@ public class Query<T> {
 
     private func hasCollectionInclude(): Bool {
         for (inc in included) {
-            let (kind, _, _, _, _, _) = inc.resolve()
+            let (kind, name, _, _, _, _) = inc.resolve()
             if (kind == RelationKind.HasManyRel || kind == RelationKind.RefManyRel) {
                 return true
             }
@@ -381,8 +390,12 @@ public class Query<T> {
                 let (kind, name, _, _, _, _) = inc.resolve()
                 if (kind == RelationKind.HasManyRel || kind == RelationKind.RefManyRel) {
                     let prefix = name + "."
-                    if (columnMap.contains(prefix + "id")) {
-                        if (!isNullId(result, columnMap.get(prefix + "id").getOrThrow())) {
+                    let idKey = prefix + "id"
+                    let hasId = columnMap.contains(idKey)
+                    if (hasId) {
+                        let idx = columnMap.get(prefix + "id").getOrThrow()
+                        if (isNullId(result, idx)) {
+                        } else {
                             let stripped = stripPrefix(columnMap, prefix)
                             let target = inc.getTargetMapper()(result, stripped)
                             inc.getFieldSetter()(entity, target)

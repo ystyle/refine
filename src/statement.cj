@@ -20,4 +20,17 @@ public struct Statement {
     public func addClause(clause: Clause): Unit {
         clauses.add(clause)
     }
+
+    public func addJoinClause(table: String, alias: String, on: Expr): Unit {
+        for (i in 0..clauses.size) {
+            match (clauses[i]) {
+                case Clause.WhereClause(_) | Clause.GroupByClause(_) | Clause.HavingClause(_) |
+                     Clause.OrderByClause(_) | Clause.LimitClause(_) | Clause.OffsetClause(_) =>
+                    clauses.add(Clause.JoinClause(table, alias, on), at: i)
+                    return
+                case _ => ()
+            }
+        }
+        clauses.add(Clause.JoinClause(table, alias, on))
+    }
 }

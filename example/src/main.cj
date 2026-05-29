@@ -206,11 +206,12 @@ main(): Int64 {
             u.addPosts(tx, p)
         }
     }
-    let eagerUsers = User.query().using(rf).include(UserRel.posts).all()
-    ok(eagerUsers.size > 0, "include(posts) HasMany")
-    // getPosts() 直接返回，不触发 SQL
-    let firstUserPosts = eagerUsers[0].posts
-    ok(true, "posts preloaded via include (size=" + firstUserPosts.size.toString() + ")")
+    let eagerU = User.query().using(rf)
+        .`where`(User.col().name == "EagerU")
+        .include(UserRel.posts).one()
+    ok(eagerU.isSome(), "include(posts) HasMany — get user")
+    let firstUserPosts = eagerU.getOrThrow().posts
+    ok(firstUserPosts.size > 0, "getPosts() from include cache (size=" + firstUserPosts.size.toString() + ")")
 
     let postsWithAuthor = Post.query().using(rf).include(PostRel.author).all()
     ok(postsWithAuthor.size > 0, "include(author) RefTo")
