@@ -74,23 +74,37 @@ var passed = 0
 var failed = 0
 
 func ok(c: Bool, msg: String): Unit {
-    if (c) { passed++; println("  ✓ " + msg) }
-    else { failed++; println("  ✗ " + msg) }
+    if (c) {
+        passed++;
+        println("  ✓ " + msg)
+    } else {
+        failed++;
+        println("  ✗ " + msg)
+    }
 }
-func section(n: String): Unit { println("\n── " + n + " ──") }
-func report(): Unit { println("\n结果: " + passed.toString() + " 通过, " + failed.toString() + " 失败") }
+
+func section(n: String): Unit {
+    println("\n── " + n + " ──")
+}
+
+func report(): Unit {
+    println("\n结果: " + passed.toString() + " 通过, " + failed.toString() + " 失败")
+}
 
 main(): Int64 {
-    let rf = Refine.open("mariadb://127.0.0.1:3306", [
-        ("username", "root"),
-        ("password", "45dbe6a6-8d1e-11ef-b01d-cb9c3f8813e2"),
-        ("database", "refine_test")
-    ])
+    let rf = Refine.open(
+        "mariadb://127.0.0.1:3306",
+        [
+            ("username", "root"),
+            ("password", "45dbe6a6-8d1e-11ef-b01d-cb9c3f8813e2"),
+            ("database", "refine_test")
+        ]
+    )
 
     // 2. 实例级 Hook
     section("Hooks")
-    rf.hook<Post>("Post", HookKind.BeforeCreate) { scope: Scope<Post> =>
-        if (scope.entity.title == "") {
+    rf.hook<Post>("Post", HookKind.BeforeCreate) {
+        scope: Scope<Post> => if (scope.entity.title == "") {
             scope.abort(Exception("title required"))
         }
     }
@@ -98,19 +112,32 @@ main(): Int64 {
 
     // 3. CRUD
     section("CRUD")
-    rf.transaction { tx: Tx =>
-        let u = User(); u.name = "Alice"; u.email = "a@t.com"
-        tx.save(u); ok(u.id > 0, "INSERT User id=" + u.id.toString())
-        u.email = "a@new.com"; tx.update(u); ok(true, "UPDATE")
-        let p = Post(); p.title = "Hello Refine"; p.body = "Type-safe ORM"; p.user_id = u.id
-        tx.save(p); ok(p.id > 0, "INSERT Post id=" + p.id.toString())
-        tx.delete(p); ok(true, "DELETE Post")
+    rf.transaction {
+        tx: Tx =>
+            let u = User();
+            u.name = "Alice"
+            u.email = "a@t.com"
+            tx.save(u);
+            ok(u.id > 0, "INSERT User id=" + u.id.toString())
+            u.email = "a@new.com"
+            tx.update(u);
+            ok(true, "UPDATE")
+            let p = Post();
+            p.title = "Hello Refine"
+            p.body = "Type-safe ORM"
+            p.user_id = u.id
+            tx.save(p);
+            ok(p.id > 0, "INSERT Post id=" + p.id.toString())
+            tx.delete(p);
+            ok(true, "DELETE Post")
     }
 
     // 4. 插入测试数据
-    rf.transaction { tx: Tx =>
-        for (i in 0..5) {
-            let u = User(); u.name = "User" + i.toString(); u.email = "u" + i.toString() + "@t.com"
+    rf.transaction {
+        tx: Tx => for (i in 0..5) {
+            let u = User();
+            u.name = "User" + i.toString()
+            u.email = "u" + i.toString() + "@t.com"
             tx.save(u)
         }
     }
@@ -126,13 +153,10 @@ main(): Int64 {
 
     // 5. 条件组合 and / or
     section("Compound Conditions")
-    let combined = User.query().using(rf).`where`(
-        (User.col().name == "User1").and(User.col().email == "u1@t.com")
-    ).all()
+    let combined = User.query().using(rf).`where`((User.col().name == "User1").and(User.col().email == "u1@t.com"))
+        .all()
     ok(combined.size >= 1, "and() 组合条件")
-    let orResult = User.query().using(rf).`where`(
-        (User.col().name == "User1").or(User.col().name == "User2")
-    ).all()
+    let orResult = User.query().using(rf).`where`((User.col().name == "User1").or(User.col().name == "User2")).all()
     ok(orResult.size >= 2, "or() 组合条件")
 
     // 6. 聚合（已存在，跳过编号）
@@ -143,72 +167,112 @@ main(): Int64 {
 
     // 7. ref_to
     section("Relation: ref_to")
-    rf.transaction { tx: Tx =>
-        let u = User(); u.name = "AuthorX"; u.email = "ax@t.com"; tx.save(u)
-        let p = Post(); p.title = "APost"; p.body = "B"; p.user_id = u.id; tx.save(p)
-        let author = p.loadAuthor(tx)
-        ok(author.isSome(), "loadAuthor()")
-        ok(author.getOrThrow().name == "AuthorX", "  name match")
-        ok(p.getAuthor().isNone(), "getAuthor() None (not preloaded)")
+    rf.transaction {
+        tx: Tx =>
+            let u = User();
+            u.name = "AuthorX"
+            u.email = "ax@t.com"
+            tx.save(u)
+            let p = Post();
+            p.title = "APost"
+            p.body = "B"
+            p.user_id = u.id
+            tx.save(p)
+            let author = p.loadAuthor(tx)
+            ok(author.isSome(), "loadAuthor()")
+            ok(author.getOrThrow().name == "AuthorX", "  name match")
+            ok(p.getAuthor().isNone(), "getAuthor() None (not preloaded)")
     }
 
     // 8. has_many
     section("Relation: has_many")
-    rf.transaction { tx: Tx =>
-        let u = User(); u.name = "Blogger"; u.email = "bg@t.com"; tx.save(u)
-        for (i in 0..3) {
-            let p = Post(); p.title = "P" + i.toString(); p.body = "B"; p.user_id = u.id
-            u.addPosts(tx, p)
-        }
-        ok(u.loadPosts(tx).size == 3, "loadPosts() = 3")
-        u.clearPosts(tx)
-        ok(u.loadPosts(tx).size == 0, "clearPosts()")
+    rf.transaction {
+        tx: Tx =>
+            let u = User();
+            u.name = "Blogger"
+            u.email = "bg@t.com"
+            tx.save(u)
+            for (i in 0..3) {
+                let p = Post();
+                p.title = "P" + i.toString()
+                p.body = "B"
+                p.user_id = u.id
+                u.addPosts(tx, p)
+            }
+            ok(u.loadPosts(tx).size == 3, "loadPosts() = 3")
+            u.clearPosts(tx)
+            ok(u.loadPosts(tx).size == 0, "clearPosts()")
     }
 
     // 9. has_one
     section("Relation: has_one")
-    rf.transaction { tx: Tx =>
-        let u = User(); u.name = "ProUser"; u.email = "pro@t.com"; tx.save(u)
-        let pro = Profile(); pro.bio = "MyBio"; pro.avatar = "a.png"; pro.user_id = u.id
-        u.setProfile(tx, pro)
-        let loaded = u.loadProfile(tx)
-        ok(loaded.isSome(), "loadProfile()")
-        ok(loaded.getOrThrow().bio == "MyBio", "  bio match")
-        u.removeProfile(tx)
-        ok(u.loadProfile(tx).isNone(), "removeProfile()")
+    rf.transaction {
+        tx: Tx =>
+            let u = User();
+            u.name = "ProUser"
+            u.email = "pro@t.com"
+            tx.save(u)
+            let pro = Profile();
+            pro.bio = "MyBio"
+            pro.avatar = "a.png"
+            pro.user_id = u.id
+            u.setProfile(tx, pro)
+            let loaded = u.loadProfile(tx)
+            ok(loaded.isSome(), "loadProfile()")
+            ok(loaded.getOrThrow().bio == "MyBio", "  bio match")
+            u.removeProfile(tx)
+            ok(u.loadProfile(tx).isNone(), "removeProfile()")
     }
 
     // 10. 嵌套事务 (Savepoint)
     section("Savepoint")
-    rf.transaction { tx: Tx =>
-        let u = User(); u.name = "SaveMe"; u.email = "sv@t.com"; tx.save(u)
-        tx.save("before_rollback")
-        let u2 = User(); u2.name = "RollbackMe"; u2.email = "rb@t.com"; tx.save(u2)
-        tx.rollbackTo("before_rollback")
-        // u2 不存在（回滚掉了），u 存在
-        ok(true, "save() / rollbackTo() 嵌套事务")
+    rf.transaction {
+        tx: Tx =>
+            let u = User();
+            u.name = "SaveMe"
+            u.email = "sv@t.com"
+            tx.save(u)
+            tx.save("before_rollback")
+            let u2 = User();
+            u2.name = "RollbackMe"
+            u2.email = "rb@t.com"
+            tx.save(u2)
+            tx.rollbackTo("before_rollback")
+            // u2 不存在（回滚掉了），u 存在
+            ok(true, "save() / rollbackTo() 嵌套事务")
     }
 
     // 11. ref_many
     section("Relation: ref_many")
-    rf.transaction { tx: Tx =>
-        let p = Post(); p.title = "TagMe"; p.body = "B"; tx.save(p)
-        let t = Tag(); t.name = "refine"; tx.save(t)
-        ok(true, "ref_many: getTags() compiles")
+    rf.transaction {
+        tx: Tx =>
+            let p = Post();
+            p.title = "TagMe"
+            p.body = "B"
+            tx.save(p)
+            let t = Tag();
+            t.name = "refine"
+            tx.save(t)
+            ok(true, "ref_many: getTags() compiles")
     }
 
     // 12. Eager Loading — include()
     section("Eager Loading")
-    rf.transaction { tx: Tx =>
-        let u = User(); u.name = "EagerU"; u.email = "eu@t.com"; tx.save(u)
-        for (i in 0..2) {
-            let p = Post(); p.title = "EP" + i.toString(); p.body = "B"; p.user_id = u.id
-            u.addPosts(tx, p)
-        }
+    rf.transaction {
+        tx: Tx =>
+            let u = User();
+            u.name = "EagerU"
+            u.email = "eu@t.com"
+            tx.save(u)
+            for (i in 0..2) {
+                let p = Post();
+                p.title = "EP" + i.toString()
+                p.body = "B"
+                p.user_id = u.id
+                u.addPosts(tx, p)
+            }
     }
-    let eagerU = User.query().using(rf)
-        .`where`(User.col().name == "EagerU")
-        .include(UserRel.posts).one()
+    let eagerU = User.query().using(rf).`where`(User.col().name == "EagerU").include(UserRel.posts).one()
     ok(eagerU.isSome(), "include(posts) HasMany — get user")
     let firstUserPosts = eagerU.getOrThrow().posts
     ok(firstUserPosts.size > 0, "getPosts() from include cache (size=" + firstUserPosts.size.toString() + ")")
@@ -219,12 +283,18 @@ main(): Int64 {
     let authorOpt = postsWithAuthor[0].getAuthor()
     ok(authorOpt.isSome(), "getAuthor() from include cache")
 
-    rf.transaction { tx: Tx =>
-        let p = Post(); p.title = "TaggedPost"; p.body = "B"; tx.save(p)
-        for (name in ["refine", "orm", "cangjie"]) {
-            let t = Tag(); t.name = name; tx.save(t)
-            tx.execute("INSERT INTO post_tags (post_id, tag_id) VALUES (?, ?)", [p.id, t.id])
-        }
+    rf.transaction {
+        tx: Tx =>
+            let p = Post();
+            p.title = "TaggedPost"
+            p.body = "B"
+            tx.save(p)
+            for (name in ["refine", "orm", "cangjie"]) {
+                let t = Tag();
+                t.name = name
+                tx.save(t)
+                tx.execute("INSERT INTO post_tags (post_id, tag_id) VALUES (?, ?)", [p.id, t.id])
+            }
     }
     let taggedPosts = Post.query().using(rf).include(PostRel.tags).all()
     ok(taggedPosts.size > 0, "include(tags) RefMany")
@@ -249,5 +319,9 @@ main(): Int64 {
 
     rf.close()
     report()
-    return if (failed > 0) { 1 } else { 0 }
+    return if (failed > 0) {
+        1
+    } else {
+        0
+    }
 }
