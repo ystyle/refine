@@ -116,7 +116,12 @@ func mergeAnnotationRels(rels: ArrayList<RelInfo>, refMessages: ArrayList<MacroM
         let target = m.getString("target")
         let fk = m.getString("fk")
         let relFields = ArrayList<String>()
-        relFields.add("id")
+        if (m.hasItem("fields")) {
+            let fs = m.getString("fields")
+            for (name in fs.split("|")) { relFields.add(name) }
+        } else {
+            relFields.add("id")
+        }
         result.add(RelInfo(fieldName, "ref_to", target, fk, relFields, ""))
     }
     for (m in relMessages) {
@@ -126,7 +131,12 @@ func mergeAnnotationRels(rels: ArrayList<RelInfo>, refMessages: ArrayList<MacroM
         var viaOrBy = ""
         if (m.hasItem("via")) { viaOrBy = m.getString("via") }
         let relFields = ArrayList<String>()
-        relFields.add("id")
+        if (m.hasItem("fields")) {
+            let fs = m.getString("fields")
+            for (name in fs.split("|")) { relFields.add(name) }
+        } else {
+            relFields.add("id")
+        }
         if (kind == "has_many" || kind == "has_one") {
             result.add(RelInfo(fieldName, kind, target, viaOrBy, relFields, ""))
         } else {
@@ -196,6 +206,20 @@ func buildColsStruct(className: String, cd: ClassDecl): Tokens {
     )
 }
 
+func genFieldCols(fieldNames: ArrayList<String>): Tokens {
+    var tokens = Tokens()
+    tokens = tokens + Token(TokenKind.LSQUARE)
+    var first = true
+    for (name in fieldNames) {
+        if (!first) { tokens = tokens + Token(TokenKind.COMMA) }
+        let nameLit = Token(TokenKind.STRING_LITERAL, name)
+        tokens = tokens + quote(Col<Any>($(nameLit)))
+        first = false
+    }
+    tokens = tokens + Token(TokenKind.RSQUARE)
+    tokens
+}
+
 func buildRelClass(className: String, rels: ArrayList<RelInfo>): Tokens {
     let relClassName = Token(TokenKind.IDENTIFIER, className + "Rel")
     if (rels.size == 0) { return quote(class $(relClassName) {}) }
@@ -233,25 +257,35 @@ func buildRelClass(className: String, rels: ArrayList<RelInfo>): Tokens {
         }
         body = body + Token(TokenKind.NL)
         let colNamesFunc = Token(TokenKind.IDENTIFIER, r.target + "ColumnNames")
+        let hasCustomFields = r.fields.size > 1 || (r.fields.size == 1 && r.fields[0] != "id")
+        var fieldsTok: Tokens
+        if (hasCustomFields) {
+            fieldsTok = genFieldCols(r.fields)
+        } else {
+            fieldsTok = Tokens()
+            fieldsTok = fieldsTok + colNamesFunc
+            fieldsTok = fieldsTok + Token(TokenKind.LPAREN)
+            fieldsTok = fieldsTok + Token(TokenKind.RPAREN)
+        }
         if (r.kind == "ref_to") {
             let fkLit = Token(TokenKind.STRING_LITERAL, r.by)
             body = body + quote(
-                static let $(fieldIdent) = RefTo<$(targetType)>($(nameLit), Col<Any>($(fkLit)), $(colNamesFunc)(), $(targetTableLit), $(mapperIdent), $(setterIdent))
+                static let $(fieldIdent) = RefTo<$(targetType)>($(nameLit), Col<Any>($(fkLit)), $(fieldsTok), $(targetTableLit), $(mapperIdent), $(setterIdent))
             )
         } else if (r.kind == "has_one") {
             let fkLit = Token(TokenKind.STRING_LITERAL, r.by)
             body = body + quote(
-                static let $(fieldIdent) = HasOne<$(targetType)>($(nameLit), $(fkLit), $(colNamesFunc)(), $(targetTableLit), $(mapperIdent), $(setterIdent))
+                static let $(fieldIdent) = HasOne<$(targetType)>($(nameLit), $(fkLit), $(fieldsTok), $(targetTableLit), $(mapperIdent), $(setterIdent))
             )
         } else if (r.kind == "has_many") {
             let fkLit = Token(TokenKind.STRING_LITERAL, r.by)
             body = body + quote(
-                static let $(fieldIdent) = HasMany<$(targetType)>($(nameLit), $(fkLit), $(colNamesFunc)(), $(targetTableLit), $(mapperIdent), $(setterIdent))
+                static let $(fieldIdent) = HasMany<$(targetType)>($(nameLit), $(fkLit), $(fieldsTok), $(targetTableLit), $(mapperIdent), $(setterIdent))
             )
         } else {
             let viaLit = Token(TokenKind.STRING_LITERAL, r.via)
             body = body + quote(
-                static let $(fieldIdent) = RefMany<$(targetType)>($(nameLit), $(viaLit), $(colNamesFunc)(), $(targetTableLit), $(mapperIdent), $(setterIdent))
+                static let $(fieldIdent) = RefMany<$(targetType)>($(nameLit), $(viaLit), $(fieldsTok), $(targetTableLit), $(mapperIdent), $(setterIdent))
             )
         }
         first = false
@@ -853,11 +887,30 @@ public macro Ref(attr: Tokens, input: Tokens): Tokens {
     let fieldName = decl.identifier.value
     var target = ""
     var fk = fieldName + "_id"
+    var fieldsStr = ""
 
     if (attr.size >= 4 && attr[2].kind == TokenKind.IDENTIFIER && attr[2].value == "target") {
         for (i in 0..attr.size) {
             if (attr[i].kind == TokenKind.IDENTIFIER && attr[i].value == "target" && i + 2 < attr.size) { target = attr[i + 2].value }
             if (attr[i].kind == TokenKind.IDENTIFIER && attr[i].value == "by" && i + 2 < attr.size) { fk = attr[i + 2].value }
+            if (attr[i].kind == TokenKind.IDENTIFIER && attr[i].value == "fields" && i + 2 < attr.size) {
+                var fieldsValues = ArrayList<String>()
+                var j = i + 2
+                if (j < attr.size && attr[j].kind == TokenKind.LSQUARE) {
+                    j++
+                    while (j < attr.size && attr[j].kind != TokenKind.RSQUARE) {
+                        if (attr[j].kind == TokenKind.STRING_LITERAL) {
+                            fieldsValues.add(attr[j].value)
+                        }
+                        j++
+                    }
+                }
+                var firstField = true
+                for (fv in fieldsValues) {
+                    if (firstField) { fieldsStr = fv; firstField = false }
+                    else { fieldsStr = fieldsStr + "|" + fv }
+                }
+            }
         }
     } else {
         var parsingTarget = true
@@ -871,6 +924,7 @@ public macro Ref(attr: Tokens, input: Tokens): Tokens {
     if (target != "") {
         setItem("fieldName", fieldName); setItem("kind", "ref_to")
         setItem("target", target); setItem("fk", fk)
+        if (fieldsStr != "") { setItem("fields", fieldsStr) }
     }
     input
 }
@@ -879,13 +933,31 @@ public macro Rel(attr: Tokens, input: Tokens): Tokens {
     if (attr.size == 0) { return input }
     let decl = parseDecl(input)
     let fieldName = decl.identifier.value
-    var kind = ""; var target = ""; var viaOrBy = ""
+    var kind = ""; var target = ""; var viaOrBy = ""; var fieldsStr = ""
 
     if (attr.size >= 4 && attr[2].kind == TokenKind.IDENTIFIER && attr[2].value == "target") {
         for (i in 0..attr.size) {
             if (attr[i].kind == TokenKind.IDENTIFIER && attr[i].value == "target" && i + 2 < attr.size) { target = attr[i + 2].value }
             if (attr[i].kind == TokenKind.IDENTIFIER && attr[i].value == "by" && i + 2 < attr.size) { viaOrBy = attr[i + 2].value }
             if (attr[i].kind == TokenKind.IDENTIFIER && attr[i].value == "via" && i + 2 < attr.size) { viaOrBy = attr[i + 2].value }
+            if (attr[i].kind == TokenKind.IDENTIFIER && attr[i].value == "fields" && i + 2 < attr.size) {
+                var fieldsValues = ArrayList<String>()
+                var j = i + 2
+                if (j < attr.size && attr[j].kind == TokenKind.LSQUARE) {
+                    j++
+                    while (j < attr.size && attr[j].kind != TokenKind.RSQUARE) {
+                        if (attr[j].kind == TokenKind.STRING_LITERAL) {
+                            fieldsValues.add(attr[j].value)
+                        }
+                        j++
+                    }
+                }
+                var firstField = true
+                for (fv in fieldsValues) {
+                    if (firstField) { fieldsStr = fv; firstField = false }
+                    else { fieldsStr = fieldsStr + "|" + fv }
+                }
+            }
         }
         if (attr[0].kind == TokenKind.IDENTIFIER) { kind = attr[0].value }
     } else {
@@ -900,6 +972,7 @@ public macro Rel(attr: Tokens, input: Tokens): Tokens {
     if (kind != "" && target != "") {
         setItem("fieldName", fieldName); setItem("kind", kind); setItem("target", target)
         if (viaOrBy != "") { setItem("via", viaOrBy) }
+        if (fieldsStr != "") { setItem("fields", fieldsStr) }
     }
     input
 }

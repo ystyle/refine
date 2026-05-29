@@ -191,6 +191,17 @@ main(): Int64 {
     let postsWithAuthor = Post.query().using(rf).include(PostRel.author).all()
     ok(postsWithAuthor.size > 0, "include(author) RefTo")
 
+    // Test RefMany include
+    rf.transaction { tx: Tx =>
+        let p = Post(); p.title = "TaggedPost"; p.body = "B"; tx.save(p)
+        for (name in ["refine", "orm", "cangjie"]) {
+            let t = Tag(); t.name = name; tx.save(t)
+            tx.execute("INSERT INTO post_tags (post_id, tag_id) VALUES (?, ?)", [p.id, t.id])
+        }
+    }
+    let taggedPosts = Post.query().using(rf).include(PostRel.tags).all()
+    ok(taggedPosts.size > 0, "include(tags) RefMany")
+
     // 12. 快捷 API + Schema
     section("Shortcuts & Schema")
     ok(rf.all(User.query()).size > 0, "rf.all()")

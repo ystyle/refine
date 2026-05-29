@@ -158,7 +158,18 @@ public class Query<T> {
                     stmt.addClause(JoinClause(table, name, Binary(srcId, Eq, tgtFk)))
                 case RelationKind.HasManyRel =>
                     stmt.addClause(JoinClause(table, name, Binary(srcId, Eq, tgtFk)))
-                case RelationKind.RefManyRel => ()
+                case RelationKind.RefManyRel =>
+                    let junctionVia = via.getOrThrow()
+                    let srcFk = sourceTable + "_id"
+                    let tgtFk = table + "_id"
+                    let junctionAlias = name + "_junction"
+                    let join1On = Binary(srcId, Eq,
+                        Raw(dialect.quoteIdentifier(junctionVia) + "." + dialect.quoteIdentifier(srcFk)))
+                    stmt.addClause(JoinClause(junctionVia, junctionAlias, join1On))
+                    let join2On = Binary(
+                        Raw(dialect.quoteIdentifier(junctionVia) + "." + dialect.quoteIdentifier(tgtFk)),
+                        Eq, tgtRef)
+                    stmt.addClause(JoinClause(table, name, join2On))
             }
             for (j in 0..fields.size) {
                 let col = fields[j]
