@@ -164,10 +164,10 @@ public class Query<T> {
                     let tgtFk = table + "_id"
                     let junctionAlias = name + "_junction"
                     let join1On = Binary(srcId, Eq,
-                        Raw(dialect.quoteIdentifier(junctionVia) + "." + dialect.quoteIdentifier(srcFk)))
+                        Raw(dialect.quoteIdentifier(junctionAlias) + "." + dialect.quoteIdentifier(srcFk)))
                     stmt.addClause(JoinClause(junctionVia, junctionAlias, join1On))
                     let join2On = Binary(
-                        Raw(dialect.quoteIdentifier(junctionVia) + "." + dialect.quoteIdentifier(tgtFk)),
+                        Raw(dialect.quoteIdentifier(junctionAlias) + "." + dialect.quoteIdentifier(tgtFk)),
                         Eq, tgtRef)
                     stmt.addClause(JoinClause(table, name, join2On))
             }
