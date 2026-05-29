@@ -61,17 +61,17 @@ public class Query<T> {
         this
     }
 
-    public func `where`(predicates: Array<Expr>): Query<T> {
+    public func filter(predicates: Array<Expr>): Query<T> {
         stmt.addClause(WhereClause(predicates))
         this
     }
 
-    public func `where`(predicate: Expr): Query<T> {
+    public func filter(predicate: Expr): Query<T> {
         stmt.addClause(WhereClause([predicate]))
         this
     }
 
-    public func orderBy(fields: Array<Expr>): Query<T> {
+    public func order(fields: Array<Expr>): Query<T> {
         stmt.addClause(OrderByClause(fields))
         this
     }

@@ -29,7 +29,7 @@ public class QueryTest {
     @TestCase
     public func testWhereSinglePredicate(): Unit {
         let q = Query<Int64>()
-        q.`where`(Expr.Binary(Expr.Column("age"), BinOp.Gt, Expr.Value(18)))
+        q.filter(Expr.Binary(Expr.Column("age"), BinOp.Gt, Expr.Value(18)))
         @Expect(q.stmt.clauses.size, 1)
         match (q.stmt.clauses[0]) {
             case Clause.WhereClause(predicates) => @Expect(predicates.size, 1)
@@ -40,7 +40,7 @@ public class QueryTest {
     @TestCase
     public func testWhereMultiplePredicates(): Unit {
         let q = Query<Int64>()
-        q.`where`([
+        q.filter([
             Expr.Binary(Expr.Column("age"), BinOp.Gt, Expr.Value(18)),
             Expr.Binary(Expr.Column("status"), BinOp.Eq, Expr.Value("active"))
         ])
@@ -54,7 +54,7 @@ public class QueryTest {
     @TestCase
     public func testOrderBy(): Unit {
         let q = Query<Int64>()
-        q.orderBy([Expr.FuncCall("DESC", [Expr.Column("created_at")])])
+        q.order([Expr.FuncCall("DESC", [Expr.Column("created_at")])])
         @Expect(q.stmt.clauses.size, 1)
         match (q.stmt.clauses[0]) {
             case Clause.OrderByClause(fields) => @Expect(fields.size, 1)
@@ -126,8 +126,8 @@ public class QueryTest {
     @TestCase
     public func testMethodChaining(): Unit {
         let q = Query<Int64>()
-            .`where`(Expr.Binary(Expr.Column("age"), BinOp.Gt, Expr.Value(18)))
-            .orderBy([Expr.Column("name")])
+            .filter(Expr.Binary(Expr.Column("age"), BinOp.Gt, Expr.Value(18)))
+            .order([Expr.Column("name")])
             .limit(10)
             .offset(20)
         @Expect(q.stmt.clauses.size, 4)
@@ -153,8 +153,8 @@ public class QueryTest {
     public func testWhereOrderByLimitChain(): Unit {
         let q = Query<Int64>()
             .select([Expr.Column("id"), Expr.Column("name")])
-            .`where`(Expr.Binary(Expr.Column("age"), BinOp.Gt, Expr.Value(18)))
-            .orderBy([Expr.Column("name")])
+            .filter(Expr.Binary(Expr.Column("age"), BinOp.Gt, Expr.Value(18)))
+            .order([Expr.Column("name")])
             .limit(10)
         @Expect(q.stmt.clauses.size, 4)
         match (q.stmt.clauses[0]) {

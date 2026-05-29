@@ -144,26 +144,26 @@ main(): Int64 {
 
     // 5. 类型安全查询
     section("Typed Query")
-    let r1 = User.query().using(rf).`where`(User.col().name == "User1").all()
+    let r1 = User.query().using(rf).filter(User.col().name == "User1").all()
     ok(r1.size >= 1, "WHERE name='User1'")
-    let r2 = User.query().using(rf).orderBy([User.col().id.asc()]).limit(3).all()
+    let r2 = User.query().using(rf).order([User.col().id.asc()]).limit(3).all()
     ok(r2.size == 3, "ORDER + LIMIT")
-    let r3 = User.query().using(rf).orderBy([User.col().id.desc()]).limit(2).offset(1).all()
+    let r3 = User.query().using(rf).order([User.col().id.desc()]).limit(2).offset(1).all()
     ok(r3.size == 2, "ORDER + LIMIT + OFFSET")
 
     // 5. 条件组合 and / or
     section("Compound Conditions")
-    let combined = User.query().using(rf).`where`((User.col().name == "User1").and(User.col().email == "u1@t.com"))
+    let combined = User.query().using(rf).filter((User.col().name == "User1").and(User.col().email == "u1@t.com"))
         .all()
     ok(combined.size >= 1, "and() 组合条件")
-    let orResult = User.query().using(rf).`where`((User.col().name == "User1").or(User.col().name == "User2")).all()
+    let orResult = User.query().using(rf).filter((User.col().name == "User1").or(User.col().name == "User2")).all()
     ok(orResult.size >= 2, "or() 组合条件")
 
     // 6. 聚合（已存在，跳过编号）
     section("Aggregation")
     ok(User.query().using(rf).count() >= 6, "count()")
-    ok(User.query().using(rf).`where`(User.col().name == "User1").exists(), "exists() true")
-    ok(!User.query().using(rf).`where`(User.col().name == "Nox").exists(), "exists() false")
+    ok(User.query().using(rf).filter(User.col().name == "User1").exists(), "exists() true")
+    ok(!User.query().using(rf).filter(User.col().name == "Nox").exists(), "exists() false")
 
     // 7. ref_to
     section("Relation: ref_to")
@@ -272,7 +272,7 @@ main(): Int64 {
                 u.addPosts(tx, p)
             }
     }
-    let eagerU = User.query().using(rf).`where`(User.col().name == "EagerU").include(UserRel.posts).one()
+    let eagerU = User.query().using(rf).filter(User.col().name == "EagerU").include(UserRel.posts).one()
     ok(eagerU.isSome(), "include(posts) HasMany — get user")
     let firstUserPosts = eagerU.getOrThrow().posts
     ok(firstUserPosts.size > 0, "getPosts() from include cache (size=" + firstUserPosts.size.toString() + ")")
@@ -302,7 +302,7 @@ main(): Int64 {
     // 12. 快捷 API + Schema
     section("Shortcuts & Schema")
     ok(rf.all(User.query()).size > 0, "rf.all()")
-    ok(rf.one(User.query().`where`(User.col().name == "User1")).isSome(), "rf.one()")
+    ok(rf.one(User.query().filter(User.col().name == "User1")).isSome(), "rf.one()")
     ok(UserSchema().tableName() == "user", "UserSchema.tableName")
     ok(PostSchema().columns().size >= 4, "PostSchema.columns >= 4")
 
@@ -313,9 +313,9 @@ main(): Int64 {
 
     // 15. findOne / findAll
     section("findOne / findAll")
-    let found = User.findOne(User.query().using(rf).`where`(User.col().name == "User1"))
+    let found = User.findOne(User.query().using(rf).filter(User.col().name == "User1"))
     ok(found.isSome(), "findOne()")
-    ok(User.findAll(User.query().using(rf).`where`(User.col().name == "User0")).size >= 1, "findAll()")
+    ok(User.findAll(User.query().using(rf).filter(User.col().name == "User0")).size >= 1, "findAll()")
 
     rf.close()
     report()
