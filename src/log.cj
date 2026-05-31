@@ -65,15 +65,7 @@ public class Logger {
             for (p in params) {
                 parts.add(formatAny(p))
             }
-            var paramStr = ""
-            var first = true
-            for (s in parts) {
-                if (!first) {
-                    paramStr = paramStr + ", "
-                }
-                paramStr = paramStr + s
-                first = false
-            }
+            var paramStr = String.join(parts.toArray(), delimiter: ", ")
             log("SQL", "${sql}  [params: ${paramStr}]")
         }
     }

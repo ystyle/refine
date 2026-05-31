@@ -49,7 +49,7 @@ public class SQLiteDialect <: Dialect {
                     sql.add("LEFT JOIN " + quoteIdentifier(table) + " " + quoteIdentifier(alias) + " ON " + renderExpr(on))
             }
         }
-        (joinStrings(sql, " "), params.toArray())
+        (String.join(sql.toArray(), delimiter: " "), params.toArray())
     }
 
     private func renderExpr(expr: Expr): String {
@@ -82,7 +82,7 @@ public class SQLiteDialect <: Dialect {
         for (e in exprs) {
             parts.add(renderExpr(e))
         }
-        joinStrings(parts, ", ")
+        String.join(parts.toArray(), delimiter: ", ")
     }
 
     private func renderOp(op: BinOp): String {
@@ -142,18 +142,4 @@ public class SQLiteDialect <: Dialect {
     public func initialize(db: DB): Unit {}
 
     public func defaultValueOf(st: StorageType): String { "" }
-
-    private func joinStrings(strings: ArrayList<String>, separator: String): String {
-        var result = ""
-        var first = true
-        for (s in strings) {
-            if (first) {
-                result = s
-                first = false
-            } else {
-                result = result + separator + s
-            }
-        }
-        result
-    }
 }

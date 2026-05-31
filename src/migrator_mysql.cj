@@ -68,11 +68,11 @@ public class MySQLMigrator <: Migrator {
             if (!hasTable(tableName)) { createTable(schema); continue }
             let existingCols = getExistingColumnNames(tableName)
             for (col in schema.columns()) {
-                if (!containsString(existingCols, col.name)) { addColumn(tableName, col) }
+                if (!existingCols.contains(col.name)) { addColumn(tableName, col) }
             }
             let existingIdxs = getExistingIndexNames(tableName)
             for (idx in schema.indexes()) {
-                if (!containsString(existingIdxs, idx.name)) { addIndex(tableName, idx) }
+                if (!existingIdxs.contains(idx.name)) { addIndex(tableName, idx) }
             }
         }
     }
@@ -95,8 +95,4 @@ public class MySQLMigrator <: Migrator {
         names
     }
 
-    private static func containsString(list: ArrayList<String>, target: String): Bool {
-        for (s in list) { if (s == target) { return true } }
-        false
-    }
 }

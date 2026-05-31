@@ -3,25 +3,6 @@ macro package refine.macros
 import std.ast.*
 import std.collection.ArrayList
 
-func strStartsWith(s: String, prefix: String): Bool {
-    if (s.size < prefix.size) { return false }
-    s[0..prefix.size] == prefix
-}
-
-func strEndsWith(s: String, suffix: String): Bool {
-    if (s.size < suffix.size) { return false }
-    s[s.size - suffix.size..s.size] == suffix
-}
-
-func strContains(s: String, substr: String): Bool {
-    if (s.size < substr.size) { return false }
-    if (substr.size == 0) { return true }
-    for (i in 0..s.size - substr.size + 1) {
-        if (s[i..i + substr.size] == substr) { return true }
-    }
-    false
-}
-
 struct FieldInfo {
     var name: String
     var typeName: String
@@ -69,7 +50,7 @@ func detectRelations(fields: ArrayList<FieldInfo>): ArrayList<RelInfo> {
     let result = ArrayList<RelInfo>()
     for (f in fields) {
         let tn = f.typeName
-        if (strContains(tn, "Option<")) {
+        if (tn.contains("Option<")) {
             let start = tn.indexOf("Option<").getOrThrow() + 7
             let end = tn.lastIndexOf(">").getOrThrow()
             let targetType = tn[start..end]
@@ -77,14 +58,14 @@ func detectRelations(fields: ArrayList<FieldInfo>): ArrayList<RelInfo> {
             let relFields = ArrayList<String>()
             relFields.add("id")
             result.add(RelInfo(f.name, "ref_to", targetType, byCol, relFields, ""))
-        } else if (strContains(tn, "ArrayList<")) {
+        } else if (tn.contains("ArrayList<")) {
             let start = tn.indexOf("ArrayList<").getOrThrow() + 10
             let end = tn.lastIndexOf(">").getOrThrow()
             let targetType = tn[start..end]
             let relFields = ArrayList<String>()
             relFields.add("id")
             result.add(RelInfo(f.name, "ref_many", targetType, "", relFields, f.name))
-        } else if (strContains(tn, "Array<")) {
+        } else if (tn.contains("Array<")) {
             let start = tn.indexOf("Array<").getOrThrow() + 6
             let end = tn.lastIndexOf(">").getOrThrow()
             let targetType = tn[start..end]
@@ -148,30 +129,16 @@ func mergeAnnotationRels(rels: ArrayList<RelInfo>, refMessages: ArrayList<MacroM
 
 func lowerTableName(name: String): String {
     if (name.size == 0) { return name }
-    let firstB = name[0]
-    if (firstB >= 65u8 && firstB <= 90u8) {
-        let lowerB = firstB + 32u8
-        var bytes = Array<UInt8>(name.size, {i => if (i == 0) { lowerB } else { name[i] } })
-        let sb = StringBuilder()
-        sb.appendFromUtf8(bytes)
-        sb.toString()
-    } else { name }
+    name[0..1].toAsciiLower() + name[1..]
 }
 
 func upperFirstLetter(name: String): String {
     if (name.size == 0) { return name }
-    let firstB = name[0]
-    if (firstB >= 97u8 && firstB <= 122u8) {
-        let upperB = firstB - 32u8
-        var bytes = Array<UInt8>(name.size, {i => if (i == 0) { upperB } else { name[i] } })
-        let sb = StringBuilder()
-        sb.appendFromUtf8(bytes)
-        sb.toString()
-    } else { name }
+    name[0..1].toAsciiUpper() + name[1..]
 }
 
 func isRelationField(typeName: String): Bool {
-    strContains(typeName, "Option") || strContains(typeName, "ArrayList") || strContains(typeName, "Array")
+    typeName.contains("Option") || typeName.contains("ArrayList") || typeName.contains("Array")
 }
 
 func typeNameToStorageType(typeName: String): String {
@@ -338,24 +305,15 @@ func buildDeleteMethod(className: String): Tokens {
 // --- SQL Generation ---
 
 func buildInsertSQLString(fields: ArrayList<FieldInfo>, tableName: String): String {
-    var sql = "INSERT INTO " + tableName + " ("
-    var first = true
+    var colNames = ArrayList<String>()
+    var placeholders = ArrayList<String>()
     for (f in fields) {
         if (f.name == "id" || isRelationField(f.typeName)) { continue }
-        if (!first) { sql = sql + ", " }
-        sql = sql + f.name
-        first = false
+        colNames.add(f.name)
+        placeholders.add("?")
     }
-    sql = sql + ") VALUES ("
-    first = true
-    for (f in fields) {
-        if (f.name == "id" || isRelationField(f.typeName)) { continue }
-        if (!first) { sql = sql + ", " }
-        sql = sql + "?"
-        first = false
-    }
-    sql = sql + ")"
-    sql
+    "INSERT INTO " + tableName + " (" + String.join(colNames.toArray(), delimiter: ", ") +
+        ") VALUES (" + String.join(placeholders.toArray(), delimiter: ", ") + ")"
 }
 
 func buildEntityArrayTokens(fields: ArrayList<FieldInfo>): Tokens {
@@ -421,16 +379,12 @@ func buildTxSaveExtend(className: String): Tokens {
 }
 
 func buildUpdateSQLString(fields: ArrayList<FieldInfo>, tableName: String): String {
-    var sql = "UPDATE " + tableName + " SET "
-    var first = true
+    var setClauses = ArrayList<String>()
     for (f in fields) {
         if (f.name == "id" || isRelationField(f.typeName)) { continue }
-        if (!first) { sql = sql + ", " }
-        sql = sql + f.name + " = ?"
-        first = false
+        setClauses.add(f.name + " = ?")
     }
-    sql = sql + " WHERE id = ?"
-    sql
+    "UPDATE " + tableName + " SET " + String.join(setClauses.toArray(), delimiter: ", ") + " WHERE id = ?"
 }
 
 func buildUpdateEntityArrayTokens(fields: ArrayList<FieldInfo>): Tokens {

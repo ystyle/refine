@@ -51,7 +51,7 @@ public class PostgreSQLDialect <: Dialect {
                     parts.add("LEFT JOIN " + quoteIdentifier(table) + " " + quoteIdentifier(alias) + " ON " + renderExpr(on))
             }
         }
-        (joinStrings(parts, " "), params.toArray())
+        (String.join(parts.toArray(), delimiter: " "), params.toArray())
     }
 
     private func renderExpr(expr: Expr): String {
@@ -86,7 +86,7 @@ public class PostgreSQLDialect <: Dialect {
         for (e in exprs) {
             parts.add(renderExpr(e))
         }
-        joinStrings(parts, ", ")
+        String.join(parts.toArray(), delimiter: ", ")
     }
 
     private func renderOp(op: BinOp): String {
@@ -125,7 +125,7 @@ public class PostgreSQLDialect <: Dialect {
         for (e in exprs) {
             parts.add(renderExpr(e))
         }
-        joinStrings(parts, " AND ")
+        String.join(parts.toArray(), delimiter: " AND ")
     }
 
     public func hasUpsertSupport(): Bool { true }
@@ -145,7 +145,7 @@ public class PostgreSQLDialect <: Dialect {
         for (c in conflictColumns) {
             conflictCols.add(quoteIdentifier(c))
         }
-        "INSERT INTO " + quoteIdentifier(table) + " (" + joinStrings(cols, ", ") + ") VALUES (" + joinStrings(placeholders, ", ") + ") ON CONFLICT (" + joinStrings(conflictCols, ", ") + ") DO UPDATE SET " + joinStrings(updates, ", ")
+        "INSERT INTO " + quoteIdentifier(table) + " (" + String.join(cols.toArray(), delimiter: ", ") + ") VALUES (" + String.join(placeholders.toArray(), delimiter: ", ") + ") ON CONFLICT (" + String.join(conflictCols.toArray(), delimiter: ", ") + ") DO UPDATE SET " + String.join(updates.toArray(), delimiter: ", ")
     }
 
     public func dataTypeOf(st: StorageType): String {
@@ -171,18 +171,4 @@ public class PostgreSQLDialect <: Dialect {
     public func initialize(db: DB): Unit {}
 
     public func defaultValueOf(st: StorageType): String { "" }
-
-    private func joinStrings(strings: ArrayList<String>, separator: String): String {
-        var result = ""
-        var first = true
-        for (s in strings) {
-            if (first) {
-                result = s
-                first = false
-            } else {
-                result = result + separator + s
-            }
-        }
-        result
-    }
 }

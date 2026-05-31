@@ -49,7 +49,7 @@ public class MySQLDialect <: Dialect {
                     sql.add("LEFT JOIN " + quoteIdentifier(table) + " " + quoteIdentifier(alias) + " ON " + renderExpr(on))
             }
         }
-        (joinStrings(sql, " "), params.toArray())
+        (String.join(sql.toArray(), delimiter: " "), params.toArray())
     }
 
     private func renderExpr(expr: Expr): String {
@@ -82,7 +82,7 @@ public class MySQLDialect <: Dialect {
         for (e in exprs) {
             parts.add(renderExpr(e))
         }
-        joinStrings(parts, ", ")
+        String.join(parts.toArray(), delimiter: ", ")
     }
 
     private func renderOp(op: BinOp): String {
@@ -126,7 +126,7 @@ public class MySQLDialect <: Dialect {
             placeholders.add("?")
             updates.add(quoteIdentifier(c) + " = VALUES(" + quoteIdentifier(c) + ")")
         }
-        "INSERT INTO " + quoteIdentifier(table) + " (" + joinStrings(cols, ", ") + ") VALUES (" + joinStrings(placeholders, ", ") + ") ON DUPLICATE KEY UPDATE " + joinStrings(updates, ", ")
+        "INSERT INTO " + quoteIdentifier(table) + " (" + String.join(cols.toArray(), delimiter: ", ") + ") VALUES (" + String.join(placeholders.toArray(), delimiter: ", ") + ") ON DUPLICATE KEY UPDATE " + String.join(updates.toArray(), delimiter: ", ")
     }
 
     public func dataTypeOf(st: StorageType): String {
@@ -152,18 +152,4 @@ public class MySQLDialect <: Dialect {
     public func initialize(db: DB): Unit {}
 
     public func defaultValueOf(st: StorageType): String { "" }
-
-    private func joinStrings(strings: ArrayList<String>, separator: String): String {
-        var result = ""
-        var first = true
-        for (s in strings) {
-            if (first) {
-                result = s
-                first = false
-            } else {
-                result = result + separator + s
-            }
-        }
-        result
-    }
 }
