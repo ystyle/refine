@@ -11,17 +11,6 @@ public class MySQLMigrator <: Migrator {
         this.dialect = MySQLDialect()
     }
 
-    private static func joinArrayList(strings: ArrayList<String>, separator: String): String {
-        var result = ""
-        var first = true
-        for (s in strings) {
-            if (first) { result = s }
-            else { result = result + separator + s }
-            first = false
-        }
-        result
-    }
-
     public static func columnDefSQL(col: ColumnDef, d: MySQLDialect): String {
         var parts = ArrayList<String>()
         parts.add("`" + col.name + "`")
@@ -29,13 +18,13 @@ public class MySQLMigrator <: Migrator {
         if (col.primaryKey && col.autoIncrement) { parts.add("AUTO_INCREMENT PRIMARY KEY") }
         else if (col.primaryKey) { parts.add("PRIMARY KEY") }
         if (!col.nullable && !col.primaryKey) { parts.add("NOT NULL") }
-        MySQLMigrator.joinArrayList(parts, " ")
+        String.join(parts.toArray(), delimiter: " ")
     }
 
     public static func createTableSQL(schema: TableSchema, d: MySQLDialect): String {
         var colDefs = ArrayList<String>()
         for (col in schema.columns()) { colDefs.add(columnDefSQL(col, d)) }
-        "CREATE TABLE IF NOT EXISTS `" + schema.tableName() + "` (" + MySQLMigrator.joinArrayList(colDefs, ", ") + ")"
+        "CREATE TABLE IF NOT EXISTS `" + schema.tableName() + "` (" + String.join(colDefs.toArray(), delimiter: ", ") + ")"
     }
 
     public func createTable(schema: TableSchema): Unit { let s = db.session(); s.execute(createTableSQL(schema, dialect), []); s.close() }
@@ -59,7 +48,7 @@ public class MySQLMigrator <: Migrator {
         var colParts = ArrayList<String>()
         for (c in idx.columns) { colParts.add("`" + c + "`") }
         let s = db.session()
-        s.execute("CREATE INDEX `" + idx.name + "` ON `" + table + "` (" + MySQLMigrator.joinArrayList(colParts, ", ") + ")", [])
+        s.execute("CREATE INDEX `" + idx.name + "` ON `" + table + "` (" + String.join(colParts.toArray(), delimiter: ", ") + ")", [])
         s.close()
     }
 

@@ -21,7 +21,7 @@ public class SQLiteMigrator <: Migrator {
         if (col.autoIncrement) { parts.add("AUTOINCREMENT") }
         if (col.nullable) { parts.add("NULL") }
         else { parts.add("NOT NULL") }
-        joinArrayList(parts, " ")
+        String.join(parts.toArray(), delimiter: " ")
     }
 
     public static func createTableSQL(schema: TableSchema): String {
@@ -29,9 +29,9 @@ public class SQLiteMigrator <: Migrator {
         for (col in schema.columns()) { colDefs.add(columnDefSQL(col)) }
         var parts = ArrayList<String>()
         parts.add("CREATE TABLE IF NOT EXISTS \"" + schema.tableName() + "\" (")
-        parts.add(joinArrayList(colDefs, ", "))
+        parts.add(String.join(colDefs.toArray(), delimiter: ", "))
         parts.add(")")
-        joinArrayList(parts, "")
+        String.join(parts.toArray(), delimiter: "")
     }
 
     public static func addColumnSQL(table: String, col: ColumnDef): String {
@@ -41,7 +41,7 @@ public class SQLiteMigrator <: Migrator {
     public static func addIndexSQL(table: String, idx: IndexDef): String {
         var colParts = ArrayList<String>()
         for (c in idx.columns) { colParts.add("\"" + c + "\"") }
-        "CREATE INDEX IF NOT EXISTS \"" + idx.name + "\" ON \"" + table + "\" (" + joinArrayList(colParts, ", ") + ")"
+        "CREATE INDEX IF NOT EXISTS \"" + idx.name + "\" ON \"" + table + "\" (" + String.join(colParts.toArray(), delimiter: ", ") + ")"
     }
 
     public static func hasTableSQL(): String { "SELECT name FROM sqlite_master WHERE type='table' AND name=?" }
@@ -97,16 +97,5 @@ public class SQLiteMigrator <: Migrator {
     private static func containsString(list: ArrayList<String>, target: String): Bool {
         for (s in list) { if (s == target) { return true } }
         false
-    }
-
-    private static func joinArrayList(strings: ArrayList<String>, separator: String): String {
-        var result = ""
-        var first = true
-        for (s in strings) {
-            if (first) { result = s }
-            else { result = result + separator + s }
-            first = false
-        }
-        result
     }
 }
