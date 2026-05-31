@@ -58,7 +58,8 @@ cjpm clean
 - `struct` 字段无默认值需要显式 `init` 构造函数
 - `where`、`quote` 是仓颉关键字，方法名需要用反引号或改用其他名称
 - 泛型不变性：`Col<Int64>` ≠ `Col<Any>`，需要显式使用 `Col<Any>` 统一类型
-- `ArrayList` 没有 `join()` 方法，需要手写拼接
+- `String.join(Array<String>, delimiter:)` 用于拼接字符串数组（类似 Go），`ArrayList` 没有 `join()`
+- `String.join(arr, delimiter: ",")` 而不是 `arr.join(",")`
 - 完整枚举变体引用：当变体名与类名相同时，使用 `RelationKind.RefTo` 而非 `RefTo`
 - `&&`/`||` 不支持操作符重载，条件组合使用 `Expr.and()` / `Expr.or()` 方法
 - `Bool` 是关键字，枚举变体用 `` `Bool` `` 转义
