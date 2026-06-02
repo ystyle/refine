@@ -87,13 +87,20 @@ public class ColTest {
         let col = Col<String>("name")
         let expr = col.like("%hello%")
         match (expr) {
-            case Expr.FuncCall(fn, args) =>
-                @Expect(fn, "LIKE")
-                match (args[0]) {
+            case Expr.Binary(l, op, r) =>
+                @Expect(op, BinOp.Like)
+                match (l) {
                     case Expr.Column(n) => @Expect(n, "name")
-                    case _ => @Fail("expected Column in args[0]")
+                    case _ => @Fail("expected Column in left")
                 }
-            case _ => @Fail("expected FuncCall")
+                match (r) {
+                    case Expr.Value(v) => match (v) {
+                        case s: String => @Expect(s, "%hello%")
+                        case _ => @Fail("expected String value")
+                    }
+                    case _ => @Fail("expected Value in right")
+                }
+            case _ => @Fail("expected Binary")
         }
     }
 

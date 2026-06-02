@@ -2,8 +2,6 @@ package demo
 
 import refine.*
 
-// ─── 查询参数 ───────────────────────────────────────────
-
 struct UserFind {
     var id: Option<Int64> = None
     var email: Option<String> = None
@@ -44,7 +42,7 @@ class UserRepo {
         match (p.id) { case Some(v) => q = q.filter(User.col().id == v); case None => () }
         match (p.email) { case Some(v) => q = q.filter(User.col().email == v); case None => () }
         match (p.nameLike) {
-            case Some(v) => q = q.filter(Expr.Binary(Expr.Column("name"), BinOp.Like, Expr.Value("%" + v + "%")))
+            case Some(v) => q = q.filter(User.col().name.like("%" + v + "%"))
             case None => ()
         }
         if (p.withPosts) { q = q.include(UserRel.posts) }
@@ -62,7 +60,7 @@ class UserRepo {
         match (p.id) { case Some(v) => q = q.filter(User.col().id == v); case None => () }
         match (p.email) { case Some(v) => q = q.filter(User.col().email == v); case None => () }
         match (p.nameLike) {
-            case Some(v) => q = q.filter(Expr.Binary(Expr.Column("name"), BinOp.Like, Expr.Value("%" + v + "%")))
+            case Some(v) => q = q.filter(User.col().name.like("%" + v + "%"))
             case None => ()
         }
         if (p.withPosts) { q = q.include(UserRel.posts) }
@@ -85,8 +83,8 @@ class PostRepo {
         match (p.userId) { case Some(v) => q = q.filter(Post.col().user_id == v); case None => () }
         match (p.keyword) {
             case Some(v) =>
-                let titleMatch = Expr.Binary(Expr.Column("title"), BinOp.Like, Expr.Value("%" + v + "%"))
-                let bodyMatch = Expr.Binary(Expr.Column("body"), BinOp.Like, Expr.Value("%" + v + "%"))
+                let titleMatch = Post.col().title.like("%" + v + "%")
+                let bodyMatch = Post.col().body.like("%" + v + "%")
                 q = q.filter(titleMatch.or(bodyMatch))
             case None => ()
         }
@@ -106,8 +104,8 @@ class PostRepo {
         match (p.id) { case Some(v) => q = q.filter(Post.col().id == v); case None => () }
         match (p.keyword) {
             case Some(v) =>
-                let titleMatch = Expr.Binary(Expr.Column("title"), BinOp.Like, Expr.Value("%" + v + "%"))
-                let bodyMatch = Expr.Binary(Expr.Column("body"), BinOp.Like, Expr.Value("%" + v + "%"))
+                let titleMatch = Post.col().title.like("%" + v + "%")
+                let bodyMatch = Post.col().body.like("%" + v + "%")
                 q = q.filter(titleMatch.or(bodyMatch))
             case None => ()
         }

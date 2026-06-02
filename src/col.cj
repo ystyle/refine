@@ -30,7 +30,7 @@ public struct Col<T> {
 
 extend Col<String> {
     public func like(pattern: String): Expr {
-        FuncCall("LIKE", [Column(name), Value(pattern)])
+        Binary(Column(name), Like, Value(pattern))
     }
 }
 
