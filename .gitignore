@@ -20,3 +20,4 @@ _c_test$
 refine_test$
 macro_test$
 hook_test$
+cov_output/

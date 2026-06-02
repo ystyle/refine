@@ -5,6 +5,9 @@
 - 在提示语法错误时使用 `cangjie-mem` 加载语言级记忆
 - 包名声明使用 `.` 分隔：`package refine`、`package refine.dialect`
 
+## 要求
+- 每次需要失败的用例，需要添加到单元测试里，沉淀下来
+
 ## 项目结构
 
 ```

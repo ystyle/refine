@@ -99,6 +99,22 @@ public class MySQLDialectTest {
     }
 
     @TestCase
+    public func testRenderOrderByBeforeLimit(): Unit {
+        let dialect = MySQLDialect()
+        let stmt = Statement()
+        stmt.addClause(SelectClause([Column("id")]))
+        stmt.addClause(FromClause("t"))
+        stmt.addClause(WhereClause([Binary(Column("a"), Eq, Value(1))]))
+        // clauses added in wrong order: LIMIT before ORDER BY
+        stmt.addClause(LimitClause(3))
+        stmt.addClause(OffsetClause(0))
+        stmt.addClause(OrderByClause([Column("id")]))
+        let (sql, _) = dialect.render(stmt)
+        // render must reorder: ORDER BY before LIMIT/OFFSET
+        @Expect(sql, "SELECT `id` FROM `t` WHERE `a` = ? ORDER BY `id` LIMIT 3 OFFSET 0")
+    }
+
+    @TestCase
     public func testRenderBinOps(): Unit {
         let dialect = MySQLDialect()
         let stmt = Statement()

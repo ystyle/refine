@@ -13,43 +13,51 @@ public class SQLiteDialect <: Dialect {
 
     public func render(stmt: Statement): (String, Array<Any>) {
         params = ArrayList<Any>()
-        var sql = ArrayList<String>()
+        var select = ArrayList<String>()
+        var from = ArrayList<String>()
+        var joins = ArrayList<String>()
+        var whereClause = ArrayList<String>()
+        var groupBy = ArrayList<String>()
+        var having = ArrayList<String>()
+        var orderBy = ArrayList<String>()
+        var limit = ArrayList<String>()
         var hasSelect = false
-        for (i in 0..stmt.clauses.size) {
-            match (stmt.clauses[i]) {
-                case SelectClause(_) => hasSelect = true
-                case _ => ()
-            }
-        }
-        if (!hasSelect) { sql.add("SELECT *") }
         for (i in 0..stmt.clauses.size) {
             let clause = stmt.clauses[i]
             match (clause) {
                 case SelectClause(fields) =>
-                    if (fields.size == 0) {
-                        sql.add("SELECT *")
-                    } else {
-                        sql.add("SELECT " + renderExprList(fields))
-                    }
+                    hasSelect = true
+                    if (fields.size == 0) { select.add("SELECT *") }
+                    else { select.add("SELECT " + renderExprList(fields)) }
                 case FromClause(table) =>
-                    sql.add("FROM " + quoteIdentifier(table))
+                    from.add("FROM " + quoteIdentifier(table))
                 case WhereClause(predicates) =>
-                    sql.add("WHERE " + renderExprList(predicates))
+                    whereClause.add("WHERE " + renderExprList(predicates))
                 case OrderByClause(fields) =>
-                    sql.add("ORDER BY " + renderExprList(fields))
+                    orderBy.add("ORDER BY " + renderExprList(fields))
                 case GroupByClause(fields) =>
-                    sql.add("GROUP BY " + renderExprList(fields))
+                    groupBy.add("GROUP BY " + renderExprList(fields))
                 case HavingClause(predicates) =>
-                    sql.add("HAVING " + renderExprList(predicates))
+                    having.add("HAVING " + renderExprList(predicates))
                 case LimitClause(n) =>
-                    sql.add("LIMIT " + n.toString())
+                    limit.add("LIMIT " + n.toString())
                 case OffsetClause(n) =>
-                    sql.add("OFFSET " + n.toString())
+                    limit.add("OFFSET " + n.toString())
                 case JoinClause(table, alias, on) =>
-                    sql.add("LEFT JOIN " + quoteIdentifier(table) + " " + quoteIdentifier(alias) + " ON " + renderExpr(on))
+                    joins.add("LEFT JOIN " + quoteIdentifier(table) + " " + quoteIdentifier(alias) + " ON " + renderExpr(on))
             }
         }
-        (String.join(sql.toArray(), delimiter: " "), params.toArray())
+        var parts = ArrayList<String>()
+        if (!hasSelect) { parts.add("SELECT *") }
+        else { for (s in select) { parts.add(s) } }
+        for (s in from) { parts.add(s) }
+        for (s in joins) { parts.add(s) }
+        for (s in whereClause) { parts.add(s) }
+        for (s in groupBy) { parts.add(s) }
+        for (s in having) { parts.add(s) }
+        for (s in orderBy) { parts.add(s) }
+        for (s in limit) { parts.add(s) }
+        (String.join(parts.toArray(), delimiter: " "), params.toArray())
     }
 
     private func renderExpr(expr: Expr): String {

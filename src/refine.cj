@@ -40,9 +40,11 @@ public class Refine {
         try {
             let result = action(tx)
             tx.commit()
+            conn.close()
             return result
         } catch (e: Exception) {
             tx.rollback()
+            conn.close()
             throw e
         }
     }

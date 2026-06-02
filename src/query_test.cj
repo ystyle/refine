@@ -174,4 +174,26 @@ public class QueryTest {
             case _ => @Fail("expected LimitClause")
         }
     }
+
+    @TestCase
+    public func testQualifyExpr(): Unit {
+        let dialect = SQLiteDialect()
+        let col = Expr.Column("id")
+        let qualified = qualifyExpr(col, "user", dialect)
+        match (qualified) {
+            case Expr.Raw(s) => @Expect(s, "\"user\".\"id\"")
+            case _ => @Fail("expected Raw")
+        }
+        let binary = Expr.Binary(Expr.Column("id"), BinOp.Eq, Expr.Value(1))
+        let qBinary = qualifyExpr(binary, "user", dialect)
+        match (qBinary) {
+            case Expr.Binary(l, op, r) =>
+                @Expect(op, BinOp.Eq)
+                match (l) {
+                    case Expr.Raw(s) => @Expect(s, "\"user\".\"id\"")
+                    case _ => @Fail("expected Raw left")
+                }
+            case _ => @Fail("expected Binary")
+        }
+    }
 }

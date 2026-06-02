@@ -266,10 +266,10 @@ func buildSaveMethod(className: String): Tokens {
     quote(
         public static func save(entity: $(cn)): Unit {
             let scope = Scope<$(cn)>(entity)
-            executeHooks($(nameLit), HookKind.BeforeSave, scope)
+            executeHooks($(nameLit), HookKind.BeforeCreate, scope)
             if (scope.aborted) { throw scope.error.getOrThrow() }
             let afterScope = Scope<$(cn)>(entity)
-            executeHooks($(nameLit), HookKind.AfterSave, afterScope)
+            executeHooks($(nameLit), HookKind.AfterCreate, afterScope)
         }
     )
 }
@@ -366,13 +366,13 @@ func buildTxSaveExtend(className: String): Tokens {
         extend Tx {
             public func save(entity: $(cn)): Unit {
                 let scope = Scope<$(cn)>(entity)
-                if (this.ref.isSome()) { this.ref.getOrThrow().executeHooks($(nameLit), HookKind.BeforeSave, scope) }
+                if (this.ref.isSome()) { this.ref.getOrThrow().executeHooks($(nameLit), HookKind.BeforeCreate, scope) }
                 if (scope.aborted) { throw scope.error.getOrThrow() }
                 let (sql, params) = $(insertSQLFuncName)(entity)
                 let result = this.execute(sql, params)
                 entity.id = result.lastInsertId
                 let afterScope = Scope<$(cn)>(entity)
-                if (this.ref.isSome()) { this.ref.getOrThrow().executeHooks($(nameLit), HookKind.AfterSave, afterScope) }
+                if (this.ref.isSome()) { this.ref.getOrThrow().executeHooks($(nameLit), HookKind.AfterCreate, afterScope) }
             }
         }
     )

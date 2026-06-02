@@ -15,42 +15,50 @@ public class PostgreSQLDialect <: Dialect {
     public func render(stmt: Statement): (String, Array<Any>) {
         params = ArrayList<Any>()
         paramIdx = 1
-        var parts = ArrayList<String>()
+        var select = ArrayList<String>()
+        var from = ArrayList<String>()
+        var joins = ArrayList<String>()
+        var whereClause = ArrayList<String>()
+        var groupBy = ArrayList<String>()
+        var having = ArrayList<String>()
+        var orderBy = ArrayList<String>()
+        var limit = ArrayList<String>()
         var hasSelect = false
-        for (i in 0..stmt.clauses.size) {
-            match (stmt.clauses[i]) {
-                case SelectClause(_) => hasSelect = true
-                case _ => ()
-            }
-        }
-        if (!hasSelect) { parts.add("SELECT *") }
         for (i in 0..stmt.clauses.size) {
             let clause = stmt.clauses[i]
             match (clause) {
                 case SelectClause(fields) =>
-                    if (fields.size == 0) {
-                        parts.add("SELECT *")
-                    } else {
-                        parts.add("SELECT " + renderExprList(fields))
-                    }
+                    hasSelect = true
+                    if (fields.size == 0) { select.add("SELECT *") }
+                    else { select.add("SELECT " + renderExprList(fields)) }
                 case FromClause(table) =>
-                    parts.add("FROM " + quoteIdentifier(table))
+                    from.add("FROM " + quoteIdentifier(table))
                 case WhereClause(predicates) =>
-                    parts.add("WHERE " + renderAndList(predicates))
+                    whereClause.add("WHERE " + renderAndList(predicates))
                 case OrderByClause(fields) =>
-                    parts.add("ORDER BY " + renderExprList(fields))
+                    orderBy.add("ORDER BY " + renderExprList(fields))
                 case GroupByClause(fields) =>
-                    parts.add("GROUP BY " + renderExprList(fields))
+                    groupBy.add("GROUP BY " + renderExprList(fields))
                 case HavingClause(predicates) =>
-                    parts.add("HAVING " + renderAndList(predicates))
+                    having.add("HAVING " + renderAndList(predicates))
                 case LimitClause(n) =>
-                    parts.add("LIMIT " + n.toString())
+                    limit.add("LIMIT " + n.toString())
                 case OffsetClause(n) =>
-                    parts.add("OFFSET " + n.toString())
+                    limit.add("OFFSET " + n.toString())
                 case JoinClause(table, alias, on) =>
-                    parts.add("LEFT JOIN " + quoteIdentifier(table) + " " + quoteIdentifier(alias) + " ON " + renderExpr(on))
+                    joins.add("LEFT JOIN " + quoteIdentifier(table) + " " + quoteIdentifier(alias) + " ON " + renderExpr(on))
             }
         }
+        var parts = ArrayList<String>()
+        if (!hasSelect) { parts.add("SELECT *") }
+        else { for (s in select) { parts.add(s) } }
+        for (s in from) { parts.add(s) }
+        for (s in joins) { parts.add(s) }
+        for (s in whereClause) { parts.add(s) }
+        for (s in groupBy) { parts.add(s) }
+        for (s in having) { parts.add(s) }
+        for (s in orderBy) { parts.add(s) }
+        for (s in limit) { parts.add(s) }
         (String.join(parts.toArray(), delimiter: " "), params.toArray())
     }
 

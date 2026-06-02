@@ -182,7 +182,7 @@ public class MacroExistingTest {
     public func testHookIntegration(): Unit {
         clearHooks()
         let flag = HookFlag()
-        registerHook("Post", HookKind.BeforeSave) { scope: Scope<Post> =>
+        registerHook("Post", HookKind.BeforeCreate) { scope: Scope<Post> =>
             flag.called = true
         }
         let p2 = Post()

@@ -192,7 +192,16 @@ public class Query<T> {
                         }
                         for (a in aliasFields) { combined.add(a) }
                         stmt.clauses[i] = SelectClause(combined.toArray())
-                        return
+                    case _ => ()
+                }
+            }
+            // qualify WHERE column refs with sourceTable to avoid ambiguity after JOIN
+            for (i in 0..stmt.clauses.size) {
+                match (stmt.clauses[i]) {
+                    case Clause.WhereClause(predicates) =>
+                        var qualified = ArrayList<Expr>()
+                        for (p in predicates) { qualified.add(qualifyExpr(p, sourceTable, dialect)) }
+                        stmt.clauses[i] = WhereClause(qualified.toArray())
                     case _ => ()
                 }
             }
@@ -380,6 +389,7 @@ public class Query<T> {
         mapper: (QueryResult, HashMap<String, Int64>) -> T
     ): Array<T> {
         var map = HashMap<Int64, T>()
+        var seen = HashMap<String, Bool>()
         while (result.next()) {
             let id = result.get<Int64>(columnMap.get("id").getOrThrow())
             if (!map.contains(id)) {
@@ -397,8 +407,13 @@ public class Query<T> {
                         if (isNullId(result, idx)) {
                         } else {
                             let stripped = stripPrefix(columnMap, prefix)
-                            let target = inc.getTargetMapper()(result, stripped)
-                            inc.getFieldSetter()(entity, target)
+                            let targetId = result.get<Int64>(stripped.get("id").getOrThrow())
+                            let seenKey = id.toString() + ":" + name + ":" + targetId.toString()
+                            if (!seen.contains(seenKey)) {
+                                seen[seenKey] = true
+                                let target = inc.getTargetMapper()(result, stripped)
+                                inc.getFieldSetter()(entity, target)
+                            }
                         }
                     }
                 }
@@ -424,4 +439,15 @@ func stripPrefix(
         }
     }
     result
+}
+
+func qualifyExpr(expr: Expr, table: String, dialect: Dialect): Expr {
+    match (expr) {
+        case Expr.Column(name) => Raw(dialect.quoteIdentifier(table) + "." + dialect.quoteIdentifier(name))
+        case Expr.Binary(l, op, r) => Binary(qualifyExpr(l, table, dialect), op, qualifyExpr(r, table, dialect))
+        case Expr.Unary(op, e) => Unary(op, qualifyExpr(e, table, dialect))
+        case Expr.Aliased(e, alias) => Aliased(qualifyExpr(e, table, dialect), alias)
+        case Expr.Ordered(e, dir) => Ordered(qualifyExpr(e, table, dialect), dir)
+        case _ => expr
+    }
 }
