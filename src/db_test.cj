@@ -1,6 +1,6 @@
 package refine
 
-import std.database.sql.{Connection, Transaction, QueryResult, UpdateResult, ColumnInfo, ConnectionState, TransactionAccessMode, TransactionDeferrableMode, TransactionIsoLevel, SqlDbType}
+import std.database.sql.{Connection, Transaction, QueryResult, UpdateResult, ColumnInfo, ConnectionState, TransactionAccessMode, TransactionDeferrableMode, TransactionIsoLevel, SqlDbType, Datasource}
 import std.database.sql.Statement as SqlStatement
 import std.collection.HashMap
 import std.unittest.*
@@ -104,6 +104,24 @@ class MockConnection <: Connection {
     public func createTransaction(): Transaction { MockTransaction() }
     public func getMetaData(): HashMap<String, String> { HashMap<String, String>() }
     public func prepareStatement(sql: String): SqlStatement { MockStatement() }
+}
+
+class MockDatasource <: Datasource {
+    public var closed: Bool = false
+
+    public func connect(): Connection {
+        MockConnection()
+    }
+
+    public func close(): Unit {
+        closed = true
+    }
+
+    public func isClosed(): Bool {
+        closed
+    }
+
+    public func setOption(key: String, value: String): Unit {}
 }
 
 @Test
@@ -254,5 +272,48 @@ public class DbTest {
         let tx = Tx(conn)
         let result = tx.query("SELECT * FROM t WHERE id = ?", [1])
         @Expect(result.columnInfos.size, 0)
+    }
+
+    @TestCase
+    public func testDBInit(): Unit {
+        let ds = MockDatasource()
+        let db = DB(ds)
+        let session = db.session()
+        @Expect(session.getDialect().name(), "sqlite")
+    }
+
+    @TestCase
+    public func testDBOpenSQLite(): Unit {
+        let ds = MockDatasource()
+        let db = DB(ds)
+        @Expect(db.getDialect().name(), "sqlite")
+    }
+
+    @TestCase
+    public func testDBClose(): Unit {
+        let ds = MockDatasource()
+        let db = DB(ds)
+        db.close()
+        @Expect(ds.closed, true)
+    }
+
+    @TestCase
+    public func testDBTransactionCommit(): Unit {
+        let ds = MockDatasource()
+        let db = DB(ds)
+        let result = db.transaction({ tx => "committed" })
+        @Expect(result, "committed")
+    }
+
+    @TestCase
+    public func testDBTransactionRollback(): Unit {
+        let ds = MockDatasource()
+        let db = DB(ds)
+        try {
+            db.transaction({ tx => throw Exception("rollback") })
+            @Expect(false, true)
+        } catch (e: Exception) {
+            @Expect(e.message, "rollback")
+        }
     }
 }

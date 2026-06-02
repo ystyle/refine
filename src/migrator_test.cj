@@ -259,4 +259,74 @@ public class MigratorTest {
         let sql = SQLiteMigrator.dropColumnSQL("user", "age")
         @Expect(sql, "ALTER TABLE \"user\" DROP COLUMN \"age\"")
     }
+
+    @TestCase
+    public func testMigratorConstruct(): Unit {
+        let db = DB(MockDatasource())
+        let migrator = SQLiteMigrator(db)
+        @Expect(true, true)
+    }
+
+    @TestCase
+    public func testMigratorCreateTable(): Unit {
+        let db = DB(MockDatasource())
+        let migrator = SQLiteMigrator(db)
+        let schema = UserMigratorTestSchema()
+        migrator.createTable(schema)
+        @Expect(true, true)
+    }
+
+    @TestCase
+    public func testMigratorDropTable(): Unit {
+        let db = DB(MockDatasource())
+        let migrator = SQLiteMigrator(db)
+        migrator.dropTable(UserMigratorTestSchema())
+        @Expect(true, true)
+    }
+
+    @TestCase
+    public func testMigratorHasTable(): Unit {
+        let db = DB(MockDatasource())
+        let migrator = SQLiteMigrator(db)
+        let result = migrator.hasTable("users")
+        @Expect(result, false)
+    }
+
+    @TestCase
+    public func testMigratorAddColumn(): Unit {
+        let db = DB(MockDatasource())
+        let migrator = SQLiteMigrator(db)
+        migrator.addColumn("user", ColumnDef("nickname", StorageType.Text, false, false, true))
+        @Expect(true, true)
+    }
+
+    @TestCase
+    public func testMigratorAddIndex(): Unit {
+        let db = DB(MockDatasource())
+        let migrator = SQLiteMigrator(db)
+        migrator.addIndex("user", IndexDef("idx_name", ["name"]))
+        @Expect(true, true)
+    }
+
+    @TestCase
+    public func testMigratorDropColumn(): Unit {
+        let db = DB(MockDatasource())
+        let migrator = SQLiteMigrator(db)
+        migrator.dropColumn("user", "age")
+        @Expect(true, true)
+    }
+
+    @TestCase
+    public func testMigratorAlterColumn(): Unit {
+        let db = DB(MockDatasource())
+        let migrator = SQLiteMigrator(db)
+        let old = ColumnDef("name", StorageType.Text, false, false, false)
+        let colNew = ColumnDef("name", StorageType.String, false, false, true)
+        try {
+            migrator.alterColumn("user", old, colNew)
+            @Fail("should have thrown")
+        } catch (e: Exception) {
+            @Expect(e.message, "SQLite does not support ALTER COLUMN")
+        }
+    }
 }

@@ -198,4 +198,92 @@ public class DialectTest {
         @Expect(pg.hasReturningSupport(), true)
         @Expect(pg.hasJSONSupport(), true)
     }
+
+    @TestCase
+    public func testRenderOrderedAndAliased(): Unit {
+        let dialect = SQLiteDialect()
+        let stmt = Statement()
+        stmt.addClause(SelectClause([Ordered(Column("id"), "DESC")]))
+        stmt.addClause(FromClause("t"))
+        let (sql, _) = dialect.render(stmt)
+        @Expect(sql.contains("DESC"), true)
+        let stmt2 = Statement()
+        stmt2.addClause(SelectClause([Aliased(Column("name"), "myname")]))
+        stmt2.addClause(FromClause("t"))
+        let (sql2, _) = dialect.render(stmt2)
+        @Expect(sql2.contains("myname"), true)
+    }
+
+    @TestCase
+    public func testRenderUnaryOps(): Unit {
+        let dialect = SQLiteDialect()
+        let stmt = Statement()
+        stmt.addClause(SelectClause([Column("id")]))
+        stmt.addClause(FromClause("t"))
+        let nullExpr = Unary(IsNull, Column("id"))
+        stmt.addClause(WhereClause([nullExpr]))
+        let (sql, _) = dialect.render(stmt)
+        @Expect(sql.contains("IS NULL"), true)
+        let stmt2 = Statement()
+        stmt2.addClause(SelectClause([Column("id")]))
+        stmt2.addClause(FromClause("t"))
+        let notNullExpr = Unary(IsNotNull, Column("id"))
+        stmt2.addClause(WhereClause([notNullExpr]))
+        let (sql2, _) = dialect.render(stmt2)
+        @Expect(sql2.contains("IS NOT NULL"), true)
+    }
+
+    @TestCase
+    public func testRenderSubQuery(): Unit {
+        let dialect = SQLiteDialect()
+        let inner = Statement()
+        inner.addClause(SelectClause([Column("id")]))
+        inner.addClause(FromClause("t"))
+        let outer = Statement()
+        outer.addClause(SelectClause([Column("x")]))
+        outer.addClause(FromClause("parent"))
+        outer.addClause(WhereClause([Binary(Column("x"), In, SubQuery(inner))]))
+        let (sql, _) = dialect.render(outer)
+        @Expect(sql.contains("SELECT"), true)
+        @Expect(sql.contains("parent"), true)
+        @Expect(sql.contains("IN (SELECT"), true)
+    }
+
+    @TestCase
+    public func testUpsertSupport(): Unit {
+        let dialect = SQLiteDialect()
+        @Expect(dialect.hasUpsertSupport(), false)
+    }
+
+    @TestCase
+    public func testInitializeAndDefaultValue(): Unit {
+        let dialect = SQLiteDialect()
+        dialect.initialize(DB(MockDatasource()))
+        @Expect(dialect.defaultValueOf(StorageType.Integer), "")
+    }
+
+    @TestCase
+    public func testRenderBinOpsNe(): Unit {
+        let dialect = SQLiteDialect()
+        let stmt = Statement()
+        stmt.addClause(SelectClause([Column("id")]))
+        stmt.addClause(FromClause("t"))
+        stmt.addClause(WhereClause([Binary(Column("a"), Ne, Value(1))]))
+        let (sql, _) = dialect.render(stmt)
+        @Expect(sql.contains("<>"), true)
+    }
+
+    @TestCase
+    public func testRenderOrderByBeforeLimit(): Unit {
+        let dialect = SQLiteDialect()
+        let stmt = Statement()
+        stmt.addClause(SelectClause([Column("id")]))
+        stmt.addClause(FromClause("t"))
+        stmt.addClause(WhereClause([Binary(Column("a"), Eq, Value(1))]))
+        stmt.addClause(LimitClause(3))
+        stmt.addClause(OffsetClause(0))
+        stmt.addClause(OrderByClause([Column("id")]))
+        let (sql, _) = dialect.render(stmt)
+        @Expect(sql, "SELECT \"id\" FROM \"t\" WHERE \"a\" = ? ORDER BY \"id\" LIMIT 3 OFFSET 0")
+    }
 }

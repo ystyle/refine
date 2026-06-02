@@ -157,4 +157,74 @@ public class MySQLDialectTest {
         let (sql, _) = dialect.render(stmt)
         @Expect(sql, "SELECT `id` FROM `users` LIMIT 10 OFFSET 20")
     }
+
+    @TestCase
+    public func testRenderUnaryOps(): Unit {
+        let dialect = MySQLDialect()
+        let stmt = Statement()
+        stmt.addClause(SelectClause([Column("id")]))
+        stmt.addClause(FromClause("t"))
+        let notNull = Unary(IsNull, Column("id"))
+        stmt.addClause(WhereClause([notNull]))
+        let (sql, _) = dialect.render(stmt)
+        @Expect(sql.contains("IS NULL"), true)
+    }
+
+    @TestCase
+    public func testRenderUpsert(): Unit {
+        let dialect = MySQLDialect()
+        @Expect(dialect.hasUpsertSupport(), true)
+        let sql = dialect.upsertSQL("users", ["id", "name"], ["id"])
+        @Expect(sql.contains("ON DUPLICATE KEY UPDATE"), true)
+        @Expect(sql.contains("INSERT INTO"), true)
+    }
+
+    @TestCase
+    public func testRenderSubQuery(): Unit {
+        let dialect = MySQLDialect()
+        let inner = Statement()
+        inner.addClause(SelectClause([Column("id")]))
+        inner.addClause(FromClause("t"))
+        let outer = Statement()
+        outer.addClause(SelectClause([Column("x")]))
+        outer.addClause(FromClause("parent"))
+        outer.addClause(WhereClause([Binary(Column("x"), In, SubQuery(inner))]))
+        let (sql, _) = dialect.render(outer)
+        @Expect(sql.contains("SELECT"), true)
+        @Expect(sql.contains("parent"), true)
+        @Expect(sql.contains("IN (SELECT"), true)
+    }
+
+    @TestCase
+    public func testRenderBinOpsNe(): Unit {
+        let dialect = MySQLDialect()
+        let stmt = Statement()
+        stmt.addClause(SelectClause([Column("id")]))
+        stmt.addClause(FromClause("t"))
+        stmt.addClause(WhereClause([Binary(Column("a"), Ne, Value(1))]))
+        let (sql, _) = dialect.render(stmt)
+        @Expect(sql.contains("<>"), true)
+    }
+
+    @TestCase
+    public func testRenderOrderedAndAliased(): Unit {
+        let dialect = MySQLDialect()
+        let stmt = Statement()
+        stmt.addClause(SelectClause([Ordered(Column("id"), "DESC")]))
+        stmt.addClause(FromClause("t"))
+        let (sql, _) = dialect.render(stmt)
+        @Expect(sql.contains("DESC"), true)
+        let stmt2 = Statement()
+        stmt2.addClause(SelectClause([Aliased(Column("name"), "myname")]))
+        stmt2.addClause(FromClause("t"))
+        let (sql2, _) = dialect.render(stmt2)
+        @Expect(sql2.contains("myname"), true)
+    }
+
+    @TestCase
+    public func testInitializeAndDefaultValue(): Unit {
+        let dialect = MySQLDialect()
+        dialect.initialize(DB(MockDatasource()))
+        @Expect(dialect.defaultValueOf(StorageType.Integer), "")
+    }
 }

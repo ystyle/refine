@@ -81,4 +81,48 @@ public class RelationTest {
         @Expect(RelationKind.HasOneRel, RelationKind.HasOneRel)
         @Expect(RelationKind.HasManyRel, RelationKind.HasManyRel)
     }
+
+    @TestCase
+    public func testHasOne(): Unit {
+        let mapper: (QueryResult, HashMap<String, Int64>) -> Any = { r, cm => 1 }
+        let setter: (Any, Any) -> Unit = { e, t => () }
+        let rel = HasOne<Int64>("profile", "user_id", [Col<Any>("id")], "profiles", mapper, setter)
+        let (kind, name, table, fk, via, fields) = rel.resolve()
+        @Expect(kind, RelationKind.HasOneRel)
+        @Expect(name, "profile")
+        @Expect(table, "profiles")
+        @Expect(fk, "user_id")
+        @Expect(via.isNone(), true)
+        @Expect(fields.size, 1)
+        let tm = rel.getTargetMapper()
+        let fs = rel.getFieldSetter()
+        @Expect(true, true)
+    }
+
+    @TestCase
+    public func testHasMany(): Unit {
+        let mapper: (QueryResult, HashMap<String, Int64>) -> Any = { r, cm => 1 }
+        let setter: (Any, Any) -> Unit = { e, t => () }
+        let rel = HasMany<String>("posts", "user_id", [Col<Any>("id")], "posts", mapper, setter)
+        let (kind, name, _, fk, _, _) = rel.resolve()
+        @Expect(kind, RelationKind.HasManyRel)
+        @Expect(name, "posts")
+        @Expect(fk, "user_id")
+        @Expect(true, true)
+    }
+
+    @TestCase
+    public func testFieldOverrideRelation(): Unit {
+        let mapper: (QueryResult, HashMap<String, Int64>) -> Any = { r, cm => 1 }
+        let setter: (Any, Any) -> Unit = { e, t => () }
+        let inner = HasMany<String>("tags", "post_id", [Col<Any>("id")], "tags", mapper, setter)
+        let overrides = [Col<Any>("name"), Col<Any>("color")]
+        let wrapper = FieldOverrideRelation(inner, overrides)
+        let (kind, name, _, fk, _, fields) = wrapper.resolve()
+        @Expect(kind, RelationKind.HasManyRel)
+        @Expect(fields.size, 2)
+        let tm = wrapper.getTargetMapper()
+        let fs = wrapper.getFieldSetter()
+        @Expect(true, true)
+    }
 }

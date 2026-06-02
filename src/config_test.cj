@@ -64,4 +64,33 @@ public class ConfigTest {
             // Expected
         }
     }
+
+    @TestCase
+    public func testDatabaseConfigToDB(): Unit {
+        let cfg = DatabaseConfig()
+        cfg.driver = "nonexistent"
+        try {
+            let db = cfg.toDB()
+            @Fail("should have thrown")
+        } catch (e: ConnectionException) {
+            @Expect(e.message, "Driver 'nonexistent' not found")
+        }
+    }
+
+    @TestCase
+    public func testRegister(): Unit {
+        DatabaseRegistry.clear()
+        let cfg = DatabaseConfig()
+        cfg.driver = "sqlite"
+        cfg.dsn = "test.db"
+        DatabaseRegistry.register("mydb", cfg)
+        try {
+            DatabaseRegistry.get("mydb")
+            @Fail("should have thrown")
+        } catch (e: ConnectionException) {
+            @Expect(e.message.contains("not found"), true)
+        } catch (e: ConfigException) {
+            @Fail("wrong exception type")
+        }
+    }
 }

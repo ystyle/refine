@@ -350,7 +350,7 @@ public class Query<T> {
         }
     }
 
-    private func getDialect(): Dialect {
+    public func getDialect(): Dialect {
         match (this.queryDialect) {
             case Some(d) => d
             case None => SQLiteDialect()

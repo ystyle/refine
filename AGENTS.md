@@ -38,10 +38,11 @@ src/
 
 ## 环境配置
 
-使用 `cjvs` 管理仓颉版本。通过 `pty_spawn` 创建 zsh PTY 会话，先执行 `eval $(cjvs stdx env zsh)` 加载环境变量，再执行仓颉命令：
+使用 `cjvs` 管理仓颉版本。通过 `pty_spawn` 创建 zsh PTY 会话，先执行`cjenv` 加载核心库，再 `eval $(cjvs stdx env zsh)` 加载stdx的`LD_LIBRARY_PATH`环境变量，再执行仓颉命令：
 
 ```shell
-eval $(cjvs stdx env zsh)  # 配置 LD_LIBRARY_PATH 等环境变量（含 stdx）
+cjenv                      # 加载核心库环境变量
+eval $(cjvs stdx env zsh)  # 配置 LD_LIBRARY_PATH stdx 环境变量（含 stdx）
 cjpm build
 
 # 运行测试（含代码和测试文件）
