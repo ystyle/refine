@@ -1,8 +1,11 @@
 package refine
 
 import std.collection.ArrayList
+import std.collection.HashMap
+import std.database.sql.QueryResult
 import std.unittest.*
 import std.unittest.testmacro.*
+import refine.macros.*
 import mariadb.cdbc.*
 
 func tryMySQL(): Option<Refine> {
@@ -146,6 +149,154 @@ public class MySQLIntegrationTest {
                 m.dropTable(schema)
                 rf.close()
                 @Expect(true, true)
+            case None => @Expect(true, true)
+        }
+    }
+}
+
+// ─── Query 集成测试 ────────────────────────────────────
+
+@Refine
+@Table["__q_users"]
+class QUser {
+    var id: Int64 = 0
+    var name: String = ""
+}
+
+@Test
+public class QueryIntegrationTest {
+    static var qrf: Option<Refine> = None
+
+    @BeforeAll
+    static func setupClass(): Unit {
+        qrf = tryMySQL()
+        match (qrf) {
+            case Some(rf) =>
+                rf.transaction { tx: Tx =>
+                    tx.execute("CREATE TABLE IF NOT EXISTS __q_users (id BIGINT AUTO_INCREMENT PRIMARY KEY, name VARCHAR(255) NOT NULL)", [])
+                }
+            case None => ()
+        }
+    }
+
+    @AfterAll
+    static func teardownClass(): Unit {
+        match (qrf) {
+            case Some(rf) =>
+                rf.transaction { tx: Tx =>
+                    tx.execute("DROP TABLE IF EXISTS __q_users", [])
+                }
+            case None => ()
+        }
+    }
+
+    @TestCase
+    public func testAllWithFilter(): Unit {
+        match (qrf) {
+            case Some(rf) =>
+                rf.transaction { tx: Tx =>
+                    tx.execute("DELETE FROM __q_users", [])
+                    tx.execute("INSERT INTO __q_users (id, name) VALUES (1, 'Alice')", [])
+                    tx.execute("INSERT INTO __q_users (id, name) VALUES (2, 'Bob')", [])
+                }
+                let users = QUser.query().using(rf).filter(QUser.col().name == "Alice").all()
+                @Expect(users.size, 1)
+                @Expect(users[0].name, "Alice")
+            case None => @Expect(true, true)
+        }
+    }
+
+    @TestCase
+    public func testOneWithFilter(): Unit {
+        match (qrf) {
+            case Some(rf) =>
+                rf.transaction { tx: Tx =>
+                    tx.execute("DELETE FROM __q_users", [])
+                    tx.execute("INSERT INTO __q_users (id, name) VALUES (10, 'Target')", [])
+                }
+                let user = QUser.query().using(rf).filter(QUser.col().name == "Target").one()
+                @Expect(user.isSome(), true)
+                @Expect(user.getOrThrow().name, "Target")
+            case None => @Expect(true, true)
+        }
+    }
+
+    @TestCase
+    public func testCount(): Unit {
+        match (qrf) {
+            case Some(rf) =>
+                rf.transaction { tx: Tx =>
+                    tx.execute("DELETE FROM __q_users", [])
+                    for (i in 0..3) {
+                        tx.execute("INSERT INTO __q_users (name) VALUES ('U" + i.toString() + "')", [])
+                    }
+                }
+                let cnt = QUser.query().using(rf).count()
+                @Expect(cnt >= 3, true)
+            case None => @Expect(true, true)
+        }
+    }
+
+    @TestCase
+    public func testExists(): Unit {
+        match (qrf) {
+            case Some(rf) =>
+                rf.transaction { tx: Tx =>
+                    tx.execute("DELETE FROM __q_users", [])
+                    tx.execute("INSERT INTO __q_users (name) VALUES ('ExistsTest')", [])
+                }
+                @Expect(QUser.query().using(rf).filter(QUser.col().name == "ExistsTest").exists(), true)
+                @Expect(QUser.query().using(rf).filter(QUser.col().name == "NonExistent").exists(), false)
+            case None => @Expect(true, true)
+        }
+    }
+
+    @TestCase
+    public func testOrderLimitOffset(): Unit {
+        match (qrf) {
+            case Some(rf) =>
+                rf.transaction { tx: Tx =>
+                    tx.execute("DELETE FROM __q_users", [])
+                    for (i in 0..5) {
+                        tx.execute("INSERT INTO __q_users (name) VALUES ('U" + i.toString() + "')", [])
+                    }
+                }
+                let users = QUser.query().using(rf).order([QUser.col().id.desc()]).limit(3).offset(1).all()
+                @Expect(users.size, 3)
+            case None => @Expect(true, true)
+        }
+    }
+
+    @TestCase
+    public func testFilterAndOr(): Unit {
+        match (qrf) {
+            case Some(rf) =>
+                rf.transaction { tx: Tx =>
+                    tx.execute("DELETE FROM __q_users", [])
+                    tx.execute("INSERT INTO __q_users (name) VALUES ('A')", [])
+                    tx.execute("INSERT INTO __q_users (name) VALUES ('B')", [])
+                    tx.execute("INSERT INTO __q_users (name) VALUES ('C')", [])
+                }
+                let users = QUser.query().using(rf)
+                    .filter((QUser.col().name == "A").or(QUser.col().name == "C")).all()
+                @Expect(users.size, 2)
+            case None => @Expect(true, true)
+        }
+    }
+
+    @TestCase
+    public func testFilterLike(): Unit {
+        match (qrf) {
+            case Some(rf) =>
+                rf.transaction { tx: Tx =>
+                    tx.execute("DELETE FROM __q_users", [])
+                    tx.execute("INSERT INTO __q_users (name) VALUES ('HelloWorld')", [])
+                    tx.execute("INSERT INTO __q_users (name) VALUES ('HelloThere')", [])
+                    tx.execute("INSERT INTO __q_users (name) VALUES ('Other')", [])
+                }
+                let users = QUser.query().using(rf)
+                    .filter(QUser.col().name.like("%Hello%")).all()
+                @Expect(users.size, 2)
             case None => @Expect(true, true)
         }
     }

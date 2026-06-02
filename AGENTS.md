@@ -53,6 +53,7 @@ cjpm clean
 ```
 
 - 日常开发只需 `cjpm build` 和 `cjpm test`
+- 单独跑某个测试: `cjpm test --filter 'TestName.testMethod'`
 - `cjpm` 会自动处理 `src/` 下所有源文件和测试文件，包括宏定义的编译
 
 ## 已知仓颉约束
