@@ -447,4 +447,119 @@ public class QueryTest {
         let cm = buildColumnMap(infos, 0)
         @Expect(cm.size, 1)
     }
+
+    @TestCase
+    public func testProcessIncludedAddsJoins(): Unit {
+        let q = Query<Int64>()
+        q.select([Expr.Column("id"), Expr.Column("name")])
+        q.from("users")
+        let fk = Col<Any>("user_id")
+        let rel: IRelation = RefTo<Int64>("author", fk, [Col<Any>("id"), Col<Any>("name")], "users", dummyMapper, dummySetter)
+        q.include(rel)
+        let dialect = SQLiteDialect()
+        q.processIncluded(dialect)
+        var hasJoin = false
+        for (c in q.stmt.clauses) {
+            match (c) {
+                case Clause.JoinClause(_, _, _) => hasJoin = true
+                case _ => ()
+            }
+        }
+        @Expect(hasJoin, true)
+    }
+
+    @TestCase
+    public func testProcessIncludedQualifiesWhere(): Unit {
+        let q = Query<Int64>()
+        q.select([Expr.Column("id")])
+        q.from("users")
+        q.filter(Expr.Binary(Expr.Column("id"), BinOp.Eq, Expr.Value(1)))
+        let fk = Col<Any>("user_id")
+        let rel: IRelation = HasMany<Int64>("posts", "user_id", [Col<Any>("id")], "posts", dummyMapper, dummySetter)
+        q.include(rel)
+        let dialect = SQLiteDialect()
+        q.processIncluded(dialect)
+        let (sql, _) = dialect.render(q.stmt)
+        @Expect(sql.contains("\"users\".\"id\""), true)
+    }
+
+    @TestCase
+    public func testProcessIncludedHasMany(): Unit {
+        let q = Query<Int64>()
+        q.select([Expr.Column("id")])
+        q.from("users")
+        let rel: IRelation = HasMany<Int64>("posts", "user_id", [Col<Any>("id"), Col<Any>("title")], "posts", dummyMapper, dummySetter)
+        q.include(rel)
+        let dialect = SQLiteDialect()
+        q.processIncluded(dialect)
+        let (sql, _) = dialect.render(q.stmt)
+        @Expect(sql.contains("LEFT JOIN"), true)
+        @Expect(sql.contains("posts"), true)
+    }
+
+    @TestCase
+    public func testProcessIncludedRefMany(): Unit {
+        let q = Query<Int64>()
+        q.select([Expr.Column("id")])
+        q.from("posts")
+        let rel: IRelation = RefMany<Int64>("tags", "post_tags", [Col<Any>("id"), Col<Any>("name")], "tags", dummyMapper, dummySetter)
+        q.include(rel)
+        let dialect = SQLiteDialect()
+        q.processIncluded(dialect)
+        let (sql, _) = dialect.render(q.stmt)
+        @Expect(sql.contains("LEFT JOIN"), true)
+        @Expect(sql.contains("post_tags"), true)
+    }
+
+    @TestCase
+    public func testProcessIncludedEmptySourceTable(): Unit {
+        // Query without FROM clause — processIncluded should return early
+        let q = Query<Int64>()
+        q.select([Expr.Column("id")])
+        let fk = Col<Any>("user_id")
+        let rel: IRelation = RefTo<Int64>("author", fk, [Col<Any>("id")], "users", dummyMapper, dummySetter)
+        q.include(rel)
+        let dialect = SQLiteDialect()
+        q.processIncluded(dialect)
+        let (sql, _) = dialect.render(q.stmt)
+        @Expect(sql.contains("LEFT JOIN"), false)
+    }
+
+    @TestCase
+    public func testProcessIncludedHasOne(): Unit {
+        let q = Query<Int64>()
+        q.select([Expr.Column("id")])
+        q.from("users")
+        let rel: IRelation = HasOne<Int64>("profile", "user_id", [Col<Any>("id")], "profiles", dummyMapper, dummySetter)
+        q.include(rel)
+        let dialect = SQLiteDialect()
+        q.processIncluded(dialect)
+        let (sql, _) = dialect.render(q.stmt)
+        @Expect(sql.contains("LEFT JOIN"), true)
+    }
+
+    @TestCase
+    public func testProcessIncludedNoopWhenNoIncludes(): Unit {
+        let q = Query<Int64>()
+        q.select([Expr.Column("id")])
+        q.from("users")
+        let countBefore = q.stmt.clauses.size
+        let dialect = SQLiteDialect()
+        q.processIncluded(dialect)
+        @Expect(q.stmt.clauses.size, countBefore)
+    }
+
+    @TestCase
+    public func testProcessIncludedQualifiesSelect(): Unit {
+        let q = Query<Int64>()
+        q.select([Expr.Column("id")])
+        q.from("users")
+        let fk = Col<Any>("user_id")
+        let rel: IRelation = RefTo<Int64>("author", fk, [Col<Any>("id")], "users", dummyMapper, dummySetter)
+        q.include(rel)
+        let dialect = SQLiteDialect()
+        q.processIncluded(dialect)
+        let (sql, _) = dialect.render(q.stmt)
+        @Expect(sql.contains("\"users\".\"id\""), true)
+    }
 }

@@ -116,14 +116,14 @@ public class Refine {
     }
 }
 
-private func extractDriver(url: String): String {
+public func extractDriver(url: String): String {
     match (url.indexOf(":")) {
         case Some(pos) => url[0..pos]
         case None => "sqlite"
     }
 }
 
-private func detectDialect(name: String): Dialect {
+public func detectDialect(name: String): Dialect {
     match (name) {
         case "mysql" | "mariadb" => MySQLDialect()
         case "postgres" | "postgresql" => PostgreSQLDialect()

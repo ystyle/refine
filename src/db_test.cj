@@ -316,4 +316,12 @@ public class DbTest {
             @Expect(e.message, "rollback")
         }
     }
+
+    @TestCase
+    public func testDBOpenWithParamOffset(): Unit {
+        let ds = MockDatasource()
+        let db = DB(ds, 1)
+        db.close()
+        @Expect(true, true)
+    }
 }

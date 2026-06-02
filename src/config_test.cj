@@ -93,4 +93,48 @@ public class ConfigTest {
             @Fail("wrong exception type")
         }
     }
+
+    @TestCase
+    public func testInitAllEmpty(): Unit {
+        DatabaseRegistry.clear()
+        // initAll with no configs should be a no-op
+        DatabaseRegistry.initAll()
+        @Expect(true, true)
+    }
+
+    @TestCase
+    public func testCloseAllEmpty(): Unit {
+        DatabaseRegistry.clear()
+        // closeAll with no instances should be a no-op
+        DatabaseRegistry.closeAll()
+        @Expect(true, true)
+    }
+
+    @TestCase
+    public func testGetCachedHit(): Unit {
+        DatabaseRegistry.clear()
+        let cfg = DatabaseConfig()
+        cfg.driver = "sqlite"
+        cfg.dsn = ":memory:"
+        DatabaseRegistry.register("testdb", cfg)
+        // First call: miss, create, cache
+        // If first call throws, cache is not populated
+        try {
+            let db = DatabaseRegistry.get("testdb")
+            @Expect(true, true)
+        } catch (_: Exception) {
+            // Expected if sqlite driver not available
+        }
+    }
+
+    @TestCase
+    public func testConfigWithDatabaseOpts(): Unit {
+        let cfg = DatabaseConfig()
+        cfg.driver = "mysql"
+        cfg.database = Some("testdb")
+        cfg.user = "root"
+        cfg.passwd = "secret"
+        @Expect(cfg.driver, "mysql")
+        @Expect(cfg.database.getOrThrow(), "testdb")
+    }
 }

@@ -134,4 +134,23 @@ public class RefineTest {
         @Expect(true, true)
         r.close()
     }
+
+    @TestCase
+    public func testExtractDriver(): Unit {
+        @Expect(extractDriver("sqlite://test.db"), "sqlite")
+        @Expect(extractDriver("mysql://localhost:3306/db"), "mysql")
+        @Expect(extractDriver("mariadb://host:3306/db"), "mariadb")
+        @Expect(extractDriver("postgresql://host/db"), "postgresql")
+        @Expect(extractDriver("noscheme"), "sqlite")
+    }
+
+    @TestCase
+    public func testDetectDialect(): Unit {
+        @Expect(detectDialect("sqlite").name(), "sqlite")
+        @Expect(detectDialect("mysql").name(), "mysql")
+        @Expect(detectDialect("mariadb").name(), "mysql")
+        @Expect(detectDialect("postgres").name(), "postgresql")
+        @Expect(detectDialect("postgresql").name(), "postgresql")
+        @Expect(detectDialect("unknown").name(), "sqlite")
+    }
 }

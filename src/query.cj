@@ -132,7 +132,7 @@ public class Query<T> {
         this
     }
 
-    private func processIncluded(dialect: Dialect): Unit {
+    public func processIncluded(dialect: Dialect): Unit {
         if (included.size == 0) { return }
         var sourceTable = ""
         for (clause in stmt.clauses) {
