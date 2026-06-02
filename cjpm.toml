@@ -6,3 +6,6 @@
   output-type = "static"
 
 [dependencies]
+
+[test-dependencies]
+mariadb = {git = "https://gitcode.com/Cangjie-SIG/mariadb-driver.git", branch = "master"}
