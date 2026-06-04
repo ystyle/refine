@@ -50,8 +50,8 @@ User.col().age <= 65          // 小于等于
 
 ```cangjie
 User.col().name.like("%lice%")         // String 类型专属
-User.col().id.in([1, 2, 3])            // IN 查询
-User.col().id.notIn([4, 5])            // NOT IN
+User.col().id.anyOf([1, 2, 3])            // IN 查询
+User.col().id.notAnyOf([4, 5])            // NOT IN
 User.col().id.asc()                     // ORDER BY ASC
 User.col().id.desc()                    // ORDER BY DESC
 ```

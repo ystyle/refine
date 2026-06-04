@@ -20,7 +20,7 @@ rf.transaction { tx: Tx =>
 注册 `BeforeCreate` 钩子在插入前校验：
 
 ```cangjie
-rf.hook<User>("User", HookKind.BeforeCreate) { scope: Scope<User> =>
+rf.hook<User>("User", HookKind.TxBeforeCreate) { scope: Scope<User> =>
     if (scope.entity.name == "") {
         scope.abort(Exception("name required"))
     }

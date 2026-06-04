@@ -20,10 +20,10 @@ public struct Col<T> {
     public func asc(): Expr  { Ordered(Column(name), "ASC") }
     public func desc(): Expr { Ordered(Column(name), "DESC") }
 
-    public func `in`(values: Array<T>): Expr {
+    public func anyOf(values: Array<T>): Expr {
         Binary(Column(name), In, Value(values))
     }
-    public func notIn(values: Array<T>): Expr {
+    public func notAnyOf(values: Array<T>): Expr {
         Binary(Column(name), NotIn, Value(values))
     }
 }

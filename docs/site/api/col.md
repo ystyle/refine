@@ -42,11 +42,11 @@ User.col().id.asc()   // Ordered(Column("id"), "ASC")
 User.col().id.desc()  // Ordered(Column("id"), "DESC")
 ```
 
-### in() / notIn()
+### anyOf() / notAnyOf()
 
 ```cangjie
-User.col().id.in([1, 2, 3])        // IN 查询
-User.col().id.notIn([4, 5])        // NOT IN 查询
+User.col().id.anyOf([1, 2, 3])        // IN 查询
+User.col().id.notAnyOf([4, 5])        // NOT IN 查询
 ```
 
 ## extend Col\<String\>

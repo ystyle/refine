@@ -21,8 +21,6 @@ enum HookKind {
 }
 ```
 
-> 当前版本中 `TxBefore* / TxAfter*` 尚未拆分，`Tx.save/update/delete` 暂使用 `BeforeCreate/AfterCreate` 等。将在后续版本中分拆为两类。
-
 ## 分类对比
 
 | | 事务内钩子 | 事务外钩子 |

@@ -6,15 +6,26 @@
 import refine.*
 
 enum HookKind {
-    | BeforeCreate   // save() 实体创建前
-    | AfterCreate    // save() 实体创建后
-    | BeforeUpdate   // update() 更新前
-    | AfterUpdate    // update() 更新后
-    | BeforeSave     // 保留接口
+    // 事务内钩子 —— Tx.save/update/delete 中触发，scope.db = Some(tx)
+    | TxBeforeCreate   // Tx.save() INSERT 前
+    | TxAfterCreate    // Tx.save() INSERT 后
+    | TxBeforeUpdate   // Tx.update() UPDATE 前
+    | TxAfterUpdate    // Tx.update() UPDATE 后
+    | TxBeforeDelete   // Tx.delete() 前
+    | TxAfterDelete    // Tx.delete() 后
+
+    // 事务外钩子 —— Entity.save/update/delete 中触发，scope.db = None
+    | BeforeCreate
+    | AfterCreate
+    | BeforeUpdate
+    | AfterUpdate
+    | BeforeDelete
+    | AfterDelete
+
+    // 保留 / 待实现
+    | BeforeSave
     | AfterSave
-    | BeforeDelete   // delete() 删除前
-    | AfterDelete    // delete() 删除后
-    | AfterFind      // 已定义，待实现
+    | AfterFind
 }
 ```
 
@@ -24,7 +35,7 @@ enum HookKind {
 class Scope<T> {
     public var entity: T
     public var db: ?Tx
-    public var entityBefore: ?T
+    public var entityBefore: ?T   // 保留，暂未赋值
     public var fields: Array<Col<Any>>
     public var error: ?Exception
     public var aborted: Bool
@@ -45,7 +56,7 @@ type HookFn<T> = (Scope<T>) -> Unit
 实例级别（推荐）：
 
 ```cangjie
-rf.hook<User>("User", HookKind.BeforeCreate) { scope: Scope<User> =>
+rf.hook<User>("User", HookKind.TxBeforeCreate) { scope: Scope<User> =>
     if (scope.entity.name == "") {
         scope.abort(Exception("name required"))
     }
