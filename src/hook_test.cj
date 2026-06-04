@@ -118,4 +118,96 @@ public class HookTest {
         @Expect(beforeCalls.items[0], "before")
         @Expect(afterCalls.items[0], "after")
     }
+
+    @TestCase
+    public func testTxBeforeCreateSeparateFromBeforeCreate(): Unit {
+        clearHooks()
+        let txCalled = OrderBuffer()
+        let nonTxCalled = OrderBuffer()
+
+        registerHook("TestEntity", HookKind.TxBeforeCreate) { scope: Scope<TestEntity> =>
+            txCalled.add("tx")
+        }
+        registerHook("TestEntity", HookKind.BeforeCreate) { scope: Scope<TestEntity> =>
+            nonTxCalled.add("non-tx")
+        }
+
+        let entity = TestEntity("x", 5)
+        // Fire only TxBeforeCreate
+        let scope = Scope<TestEntity>(entity)
+        executeHooks("TestEntity", HookKind.TxBeforeCreate, scope)
+
+        @Expect(txCalled.items.size, 1)
+        @Expect(txCalled.items[0], "tx")
+        @Expect(nonTxCalled.items.size, 0)
+    }
+
+    @TestCase
+    public func testTxAfterUpdateSeparateFromAfterUpdate(): Unit {
+        clearHooks()
+        let txCalled = OrderBuffer()
+        let nonTxCalled = OrderBuffer()
+
+        registerHook("TestEntity", HookKind.TxAfterUpdate) { scope: Scope<TestEntity> =>
+            txCalled.add("tx")
+        }
+        registerHook("TestEntity", HookKind.AfterUpdate) { scope: Scope<TestEntity> =>
+            nonTxCalled.add("non-tx")
+        }
+
+        let entity = TestEntity("y", 6)
+        let scope = Scope<TestEntity>(entity)
+        executeHooks("TestEntity", HookKind.TxAfterUpdate, scope)
+
+        @Expect(txCalled.items.size, 1)
+        @Expect(nonTxCalled.items.size, 0)
+    }
+
+    @TestCase
+    public func testTxBeforeDeleteAndAfterDelete(): Unit {
+        clearHooks()
+        let before = OrderBuffer()
+        let after = OrderBuffer()
+
+        registerHook("TestEntity", HookKind.TxBeforeDelete) { scope: Scope<TestEntity> =>
+            before.add("before")
+        }
+        registerHook("TestEntity", HookKind.TxAfterDelete) { scope: Scope<TestEntity> =>
+            after.add("after")
+        }
+
+        let entity = TestEntity("z", 7)
+        let scope1 = Scope<TestEntity>(entity)
+        executeHooks("TestEntity", HookKind.TxBeforeDelete, scope1)
+
+        let scope2 = Scope<TestEntity>(entity)
+        executeHooks("TestEntity", HookKind.TxAfterDelete, scope2)
+
+        @Expect(before.items.size, 1)
+        @Expect(after.items.size, 1)
+    }
+
+    @TestCase
+    public func testTxBeforeAndAfterCreateOrder(): Unit {
+        clearHooks()
+        let order = OrderBuffer()
+
+        registerHook("TestEntity", HookKind.TxBeforeCreate) { scope: Scope<TestEntity> =>
+            order.add("before")
+        }
+        registerHook("TestEntity", HookKind.TxAfterCreate) { scope: Scope<TestEntity> =>
+            order.add("after")
+        }
+
+        let entity = TestEntity("w", 8)
+        let beforeScope = Scope<TestEntity>(entity)
+        executeHooks("TestEntity", HookKind.TxBeforeCreate, beforeScope)
+
+        let afterScope = Scope<TestEntity>(entity)
+        executeHooks("TestEntity", HookKind.TxAfterCreate, afterScope)
+
+        @Expect(order.items.size, 2)
+        @Expect(order.items[0], "before")
+        @Expect(order.items[1], "after")
+    }
 }

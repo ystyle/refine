@@ -147,6 +147,46 @@ public class MacroSaveTest {
 
         @Expect(conn.stmt.capturedSql, "DELETE FROM post WHERE id = ?")
     }
+
+    @TestCase
+    public func testTxSaveFiresTxBeforeCreate(): Unit {
+        clearHooks()
+        let conn = CaptureConnection()
+        let rf = Refine(RMockDS(), SQLiteDialect(), 0)
+        let tx = Tx(conn, rf, 0)
+
+        let flag = HookFlag()
+        rf.hook<Post>("Post", HookKind.TxBeforeCreate) { scope: Scope<Post> =>
+            flag.called = true
+            if (scope.db.isSome()) { flag.called = true }
+        }
+
+        let p = Post()
+        p.title = "Hook Test"
+        p.content = "Testing hooks"
+        tx.save(p)
+
+        @Expect(flag.called, true)
+    }
+
+    @TestCase
+    public func testTxSaveDoesNotFireNonTxBeforeCreate(): Unit {
+        clearHooks()
+        let conn = CaptureConnection()
+        let rf = Refine(RMockDS(), SQLiteDialect(), 0)
+        let tx = Tx(conn, rf, 0)
+
+        let nonTxFlag = HookFlag()
+        rf.hook<Post>("Post", HookKind.BeforeCreate) { scope: Scope<Post> =>
+            nonTxFlag.called = true
+        }
+
+        let p = Post()
+        p.title = "Separation Test"
+        tx.save(p)
+
+        @Expect(nonTxFlag.called, false)
+    }
 }
 
 @Test

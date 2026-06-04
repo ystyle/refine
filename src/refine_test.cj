@@ -104,6 +104,47 @@ public class RefineTest {
     }
 
     @TestCase
+    public func testTxHookKind(): Unit {
+        let r = Refine(RMockDS(), SQLiteDialect(), 0)
+        let flag = RFlag()
+        r.hook<Int64>("E", HookKind.TxBeforeCreate) { scope: Scope<Int64> => flag.v = true }
+        let s = Scope<Int64>(1)
+        r.executeHooks("E", HookKind.TxBeforeCreate, s)
+        @Expect(flag.v, true)
+        // TxBeforeCreate should NOT fire for BeforeCreate
+        let s2 = Scope<Int64>(1)
+        let flag2 = RFlag()
+        r.hook<Int64>("E", HookKind.BeforeCreate) { scope: Scope<Int64> => flag2.v = true }
+        r.executeHooks("E", HookKind.BeforeCreate, s2)
+        @Expect(flag2.v, true)
+        r.close()
+    }
+
+    @TestCase
+    public func testTxHookAbort(): Unit {
+        let r = Refine(RMockDS(), SQLiteDialect(), 0)
+        r.hook<Int64>("E", HookKind.TxBeforeUpdate) { scope: Scope<Int64> =>
+            scope.abort(Exception("tx stop"))
+        }
+        let s = Scope<Int64>(1)
+        let err = r.executeHooks("E", HookKind.TxBeforeUpdate, s)
+        @Expect(err.isSome(), true)
+        r.close()
+    }
+
+    @TestCase
+    public func testTxHookDeleteAbort(): Unit {
+        let r = Refine(RMockDS(), SQLiteDialect(), 0)
+        r.hook<Int64>("E", HookKind.TxBeforeDelete) { scope: Scope<Int64> =>
+            scope.abort(Exception("tx delete stop"))
+        }
+        let s = Scope<Int64>(1)
+        let err = r.executeHooks("E", HookKind.TxBeforeDelete, s)
+        @Expect(err.isSome(), true)
+        r.close()
+    }
+
+    @TestCase
     public func testAll(): Unit {
         let r = Refine(RMockDS(), SQLiteDialect(), 0)
         let q = Query<Int64>()

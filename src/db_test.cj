@@ -324,4 +324,60 @@ public class DbTest {
         db.close()
         @Expect(true, true)
     }
+
+    @TestCase
+    public func testSessionQueryAllEmpty(): Unit {
+        let conn = MockConnection()
+        let session = Session(conn)
+        let result = session.queryAll("SELECT * FROM t", [],
+            { r: QueryResult, cm: HashMap<String, Int64> => 42 })
+        @Expect(result.size, 0)
+    }
+
+    @TestCase
+    public func testSessionQueryOneEmpty(): Unit {
+        let conn = MockConnection()
+        let session = Session(conn)
+        let result = session.queryOne("SELECT * FROM t WHERE id = ?", [1 as Any],
+            { r: QueryResult, cm: HashMap<String, Int64> => 42 })
+        @Expect(result.isNone(), true)
+    }
+
+    @TestCase
+    public func testTxQueryAllEmpty(): Unit {
+        let rf = Refine(MockDatasource(), SQLiteDialect(), 0)
+        let conn = MockConnection()
+        let tx = Tx(conn, rf, 0)
+        let result = tx.queryAll("SELECT * FROM t", [],
+            { r: QueryResult, cm: HashMap<String, Int64> => 42 })
+        @Expect(result.size, 0)
+    }
+
+    @TestCase
+    public func testTxQueryOneEmpty(): Unit {
+        let rf = Refine(MockDatasource(), SQLiteDialect(), 0)
+        let conn = MockConnection()
+        let tx = Tx(conn, rf, 0)
+        let result = tx.queryOne("SELECT * FROM t WHERE id = ?", [1 as Any],
+            { r: QueryResult, cm: HashMap<String, Int64> => 42 })
+        @Expect(result.isNone(), true)
+    }
+
+    @TestCase
+    public func testTxQueryAllWithoutRef(): Unit {
+        let conn = MockConnection()
+        let tx = Tx(conn)
+        let result = tx.queryAll("SELECT * FROM t", [],
+            { r: QueryResult, cm: HashMap<String, Int64> => 42 })
+        @Expect(result.size, 0)
+    }
+
+    @TestCase
+    public func testTxQueryOneWithoutRef(): Unit {
+        let conn = MockConnection()
+        let tx = Tx(conn)
+        let result = tx.queryOne("SELECT * FROM t WHERE id = ?", [1 as Any],
+            { r: QueryResult, cm: HashMap<String, Int64> => 42 })
+        @Expect(result.isNone(), true)
+    }
 }
