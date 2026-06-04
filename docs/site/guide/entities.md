@@ -144,6 +144,8 @@ class Tag {
 | `UserRel` | 关联定义类，内含 `IRelation` 字段 |
 | `User.query()` | 预配置的 `Query<User>` 工厂方法 |
 | `User.col()` | 返回 `UserCols()` |
+| `User.rowMapper()` | 返回 `UserRowMapper` 函数引用，用于 `queryAll/queryOne` |
+| `User.schemas()` | 返回所有 Schema（主表 + junction 表），用于迁移 |
 | `Tx.save(User)` | INSERT 扩展方法 |
 | `Tx.update(User)` | UPDATE 扩展方法 |
 | `Tx.delete(User)` | DELETE 扩展方法 |

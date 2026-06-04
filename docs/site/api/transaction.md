@@ -39,9 +39,9 @@ while (result.next()) {
     let name = result.get<String>(0)
 }
 
-// 未来版本支持自动映射到实体：
-// let users = tx.queryAll("SELECT * FROM users", [], User.rowMapper())
-// let user  = tx.queryOne("SELECT * FROM users WHERE id = ?", [1], User.rowMapper())
+// 自动映射到实体
+let users = tx.queryAll("SELECT * FROM users", [], User.rowMapper())
+let user  = tx.queryOne("SELECT * FROM users WHERE id = ?", [1], User.rowMapper())
 ```
 
 ## 参数偏移

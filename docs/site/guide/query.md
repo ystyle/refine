@@ -175,9 +175,20 @@ s.close()
 ```
 
 > `r.get<T>(index)` 的列索引：SQLite/PostgreSQL 从 0 开始，MariaDB/MySQL 从 1 开始。
-> 未来版本会提供 `queryAll<T>()` / `queryOne<T>()` 自动映射到实体对象，消除手动 `r.get()` 的繁琐。
 
-### 常见场景
+### 自动映射到实体
+
+使用 `queryAll<T>()` / `queryOne<T>()` 可以直接将查询结果映射为实体对象，无需手动 `r.get()`：
+
+```cangjie
+rf.transaction { tx: Tx =>
+    let users = tx.queryAll("SELECT * FROM users WHERE age > ?", [18], User.rowMapper())
+    // users: Array<User>
+
+    let user = tx.queryOne("SELECT * FROM users WHERE id = ?", [1], User.rowMapper())
+    // user: Option<User>
+}
+```
 
 ### 常见场景
 

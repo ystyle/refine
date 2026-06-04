@@ -13,6 +13,16 @@ rf.migrator().autoMigrate([
 ])
 ```
 
+### 多对多中间表
+
+如果实体有 `@Rel[ref_many, Target, via]` 关联，宏会自动生成对应的 junction 表 Schema。
+使用 `Entity.schemas()` 一次性获取主表 + 所有关联的中间表：
+
+```cangjie
+rf.migrator().autoMigrate(Post.schemas())
+// 等价于: autoMigrate([PostSchema(), Post_TagsJunctionSchema()])
+```
+
 ## 手动创建表
 
 ```cangjie

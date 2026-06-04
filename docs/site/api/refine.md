@@ -29,10 +29,10 @@ let rf = Refine(datasource, dialect, paramOffset)
 let s = rf.session()
 let r = s.query("SELECT COUNT(*) FROM users", [])
 if (r.next()) { let total = r.get<Int64>(0) }
+// 或用自动映射:
+let count = s.queryAll("SELECT * FROM users", [], User.rowMapper())
 s.close()
 ```
-
-> 当前 `query()` 返回 `QueryResult`，需手动 `r.get<T>(idx)` 取字段。未来版本支持 `s.queryAll<T>(sql, params, mapper)` 自动映射到实体。
 
 ### transaction()
 
