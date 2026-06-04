@@ -299,6 +299,25 @@ public class MacroExistingTest {
         @Expect(cols[0].autoIncrement, true)
         @Expect(cols[1].name, "name")
     }
+
+    @TestCase
+    public func testJunctionSchemaGenerated(): Unit {
+        let js = PostWithRel_TagsJunctionSchema()
+        @Expect(js.tableName(), "post_tags")
+        let cols = js.columns()
+        @Expect(cols.size, 2)
+        @Expect(cols[0].name, "postWithRel_id")
+        @Expect(cols[1].name, "tag_id")
+        @Expect(cols[0].storageType, StorageType.Integer)
+    }
+
+    @TestCase
+    public func testSchemasReturnsMainAndJunction(): Unit {
+        let all = PostWithRel.schemas()
+        @Expect(all.size, 2)
+        @Expect(all[0].tableName(), "postWithRel")
+        @Expect(all[1].tableName(), "post_tags")
+    }
 }
 
 @Refine

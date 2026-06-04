@@ -769,6 +769,47 @@ func buildSchemaClass(className: String, fields: ArrayList<FieldInfo>): Tokens {
     )
 }
 
+func buildJunctionSchema(className: String, rel: RelInfo): Tokens {
+    let sourceTable = lowerTableName(className)
+    let viaLit = Token(TokenKind.STRING_LITERAL, rel.via)
+    let srcColLit = Token(TokenKind.STRING_LITERAL, sourceTable + "_id")
+    let tgtColLit = Token(TokenKind.STRING_LITERAL, lowerTableName(rel.target) + "_id")
+    let schemaName = Token(TokenKind.IDENTIFIER, className + "_" + upperFirstLetter(rel.fieldName) + "JunctionSchema")
+    quote(
+        class $(schemaName) <: TableSchema {
+            public func tableName(): String { $(viaLit) }
+            public func columns(): Array<ColumnDef> {
+                [ColumnDef($(srcColLit), StorageType.Integer, false, false, false),
+                 ColumnDef($(tgtColLit), StorageType.Integer, false, false, false)]
+            }
+            public func indexes(): Array<IndexDef> { [] }
+        }
+    )
+}
+
+func buildSchemasFunc(className: String, junctionRelNames: ArrayList<String>): Tokens {
+    let cn = Token(TokenKind.IDENTIFIER, className)
+    let schemaName = Token(TokenKind.IDENTIFIER, className + "Schema")
+    if (junctionRelNames.size == 0) {
+        quote(
+            static func schemas(): Array<TableSchema> { [$(schemaName)()] }
+        )
+    } else {
+        var arr = Tokens()
+        arr = arr + Token(TokenKind.IDENTIFIER, className + "Schema")
+        arr = arr + Token(TokenKind.LPAREN) + Token(TokenKind.RPAREN)
+        for (relName in junctionRelNames) {
+            arr = arr + Token(TokenKind.COMMA)
+            let jsName = Token(TokenKind.IDENTIFIER, className + "_" + upperFirstLetter(relName) + "JunctionSchema")
+            arr = arr + jsName
+            arr = arr + Token(TokenKind.LPAREN) + Token(TokenKind.RPAREN)
+        }
+        quote(
+            static func schemas(): Array<TableSchema> { [$(arr)] }
+        )
+    }
+}
+
 // --- Main Macro ---
 
 public macro Refine(input: Tokens): Tokens {
@@ -826,6 +867,19 @@ public macro Refine(input: Tokens): Tokens {
     let rowMapperTokens = buildRowMapperMethod(className)
     classDecl.body.decls.add(FuncDecl(rowMapperTokens))
 
+    // Generate junction schemas for ref_many relations
+    var junctionTokens = Tokens()
+    var junctionRelNames = ArrayList<String>()
+    for (rel in mergedRels) {
+        if (rel.kind == "ref_many") {
+            if (junctionRelNames.size > 0) { junctionTokens = junctionTokens + Token(TokenKind.NL) + Token(TokenKind.NL) }
+            junctionTokens = junctionTokens + buildJunctionSchema(className, rel)
+            junctionRelNames.add(rel.fieldName)
+        }
+    }
+    let schemasTokens = buildSchemasFunc(className, junctionRelNames)
+    classDecl.body.decls.add(FuncDecl(schemasTokens))
+
     let colsStruct = buildColsStruct(className, classDecl)
     let relClass = buildRelClass(className, mergedRels)
     let insertSQLFunc = buildInsertSQLFunc(className, fields, tableName)
@@ -849,7 +903,8 @@ public macro Refine(input: Tokens): Tokens {
         Token(TokenKind.NL) + Token(TokenKind.NL) + txDeleteExtend +
         Token(TokenKind.NL) + Token(TokenKind.NL) + rowMapper +
         Token(TokenKind.NL) + Token(TokenKind.NL) + columnNamesFunc +
-        Token(TokenKind.NL) + Token(TokenKind.NL) + schemaClass
+        Token(TokenKind.NL) + Token(TokenKind.NL) + schemaClass +
+        junctionTokens
 }
 
 // --- Attribute Macros ---
