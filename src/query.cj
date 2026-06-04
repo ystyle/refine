@@ -39,6 +39,7 @@ public class Query<T> {
     var db: Option<DB> = None
     var columnOffset: Int64 = 0
     public var typeName: String = ""
+    var ref: Option<Refine> = None
 
     public init() {
         this.stmt = Statement()
@@ -130,6 +131,7 @@ public class Query<T> {
         this.executor = Some(rf.session())
         this.queryDialect = Some(rf.getDialect())
         this.columnOffset = rf.getParamOffset()
+        this.ref = Some(rf)
         this
     }
 
@@ -265,7 +267,10 @@ public class Query<T> {
                 let entity = mapper(result, columnMap)
                 if (typeName != "") {
                     let s = Scope<T>(entity)
-                    executeHooks(typeName, HookKind.AfterFind, s)
+                    match (this.ref) {
+                        case Some(rf) => rf.executeHooks(typeName, HookKind.AfterFind, s)
+                        case None => executeHooks(typeName, HookKind.AfterFind, s)
+                    }
                 }
                 entities.add(entity)
             } catch (_: Exception) {
@@ -311,10 +316,13 @@ public class Query<T> {
         var res: Option<T> = None
         if (result.next()) {
             let entity = mapper(result, columnMap)
-            if (typeName != "") {
-                let s = Scope<T>(entity)
-                executeHooks(typeName, HookKind.AfterFind, s)
-            }
+                if (typeName != "") {
+                    let s = Scope<T>(entity)
+                    match (this.ref) {
+                        case Some(rf) => rf.executeHooks(typeName, HookKind.AfterFind, s)
+                        case None => executeHooks(typeName, HookKind.AfterFind, s)
+                    }
+                }
             res = Some(entity)
         }
         closeExecutor(exec)
@@ -407,7 +415,10 @@ public class Query<T> {
                 let entity = mapper(result, columnMap)
                 if (typeName != "") {
                     let s = Scope<T>(entity)
-                    executeHooks(typeName, HookKind.AfterFind, s)
+                    match (this.ref) {
+                        case Some(rf) => rf.executeHooks(typeName, HookKind.AfterFind, s)
+                        case None => executeHooks(typeName, HookKind.AfterFind, s)
+                    }
                 }
                 map[id] = entity
             }
