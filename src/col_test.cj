@@ -157,7 +157,7 @@ public class ColTest {
     @TestCase
     public func testColIn(): Unit {
         let col = Col<Int64>("id")
-        let expr = col.`in`([1, 2, 3])
+        let expr = col.anyOf([1, 2, 3])
         match (expr) {
             case Expr.Binary(_, op, _) => @Expect(op, BinOp.In)
             case _ => @Fail("expected Binary")
@@ -167,7 +167,7 @@ public class ColTest {
     @TestCase
     public func testColNotIn(): Unit {
         let col = Col<Int64>("id")
-        let expr = col.notIn([1, 2, 3])
+        let expr = col.notAnyOf([1, 2, 3])
         match (expr) {
             case Expr.Binary(_, op, _) => @Expect(op, BinOp.NotIn)
             case _ => @Fail("expected Binary")

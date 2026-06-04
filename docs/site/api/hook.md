@@ -22,10 +22,10 @@ enum HookKind {
     | BeforeDelete
     | AfterDelete
 
-    // 保留 / 待实现
+    // 保留
     | BeforeSave
     | AfterSave
-    | AfterFind
+    | AfterFind      // all() / one() 映射后触发，用于脱敏
 }
 ```
 

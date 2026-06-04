@@ -38,6 +38,7 @@ public class Query<T> {
     var mapper: Option<(QueryResult, HashMap<String, Int64>) -> T> = None
     var db: Option<DB> = None
     var columnOffset: Int64 = 0
+    public var typeName: String = ""
 
     public init() {
         this.stmt = Statement()
@@ -261,7 +262,12 @@ public class Query<T> {
         var entities = ArrayList<T>()
         while (result.next()) {
             try {
-                entities.add(mapper(result, columnMap))
+                let entity = mapper(result, columnMap)
+                if (typeName != "") {
+                    let s = Scope<T>(entity)
+                    executeHooks(typeName, HookKind.AfterFind, s)
+                }
+                entities.add(entity)
             } catch (_: Exception) {
                 ()
             }
@@ -304,7 +310,12 @@ public class Query<T> {
         }
         var res: Option<T> = None
         if (result.next()) {
-            res = Some(mapper(result, columnMap))
+            let entity = mapper(result, columnMap)
+            if (typeName != "") {
+                let s = Scope<T>(entity)
+                executeHooks(typeName, HookKind.AfterFind, s)
+            }
+            res = Some(entity)
         }
         closeExecutor(exec)
         res
@@ -393,7 +404,12 @@ public class Query<T> {
         while (result.next()) {
             let id = result.get<Int64>(columnMap.get("id").getOrThrow())
             if (!map.contains(id)) {
-                map[id] = mapper(result, columnMap)
+                let entity = mapper(result, columnMap)
+                if (typeName != "") {
+                    let s = Scope<T>(entity)
+                    executeHooks(typeName, HookKind.AfterFind, s)
+                }
+                map[id] = entity
             }
             let entity = map.get(id).getOrThrow()
             for (inc in included) {

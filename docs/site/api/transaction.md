@@ -58,7 +58,7 @@ MariaDB 驱动使用 1-based 参数索引。`Tx` 根据 `paramOffset` 自动适�
 宏生成的 `Tx.save/update/delete` 自动触发实体钩子：
 
 ```cangjie
-tx.save(entity)     // BeforeCreate → INSERT → AfterCreate
-tx.update(entity)   // BeforeUpdate → UPDATE → AfterUpdate
-tx.delete(entity)   // BeforeDelete → DELETE → AfterDelete
+tx.save(entity)     // TxBeforeCreate → INSERT → TxAfterCreate
+tx.update(entity)   // TxBeforeUpdate → UPDATE → TxAfterUpdate
+tx.delete(entity)   // TxBeforeDelete → DELETE → TxAfterDelete
 ```

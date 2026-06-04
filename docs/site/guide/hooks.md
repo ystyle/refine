@@ -90,3 +90,21 @@ Tx.delete(entity):
 ```
 
 事务内钩子抛异常或调用 `scope.abort()` 会导致整个事务回滚。
+
+## AfterFind
+
+`AfterFind` 在 `all()` / `one()` 映射完每个实体后触发。用于脱敏敏感字段、填充计算字段等：
+
+```cangjie
+import refine.*
+
+registerHook<User>("User", HookKind.AfterFind) { scope: Scope<User> =>
+    scope.entity.password = ""
+}
+
+// 之后所有 User.query().all() / .one() 的结果 password 字段被清空
+let users = User.query().using(rf).all()
+// users[0].password == ""
+```
+
+> `AfterFind` 通过全局 `registerHook()` 注册，对所有查询生效。宏生成的 `query()` 会自动设置 `typeName`，查询时检测到有对应的钩子则触发。

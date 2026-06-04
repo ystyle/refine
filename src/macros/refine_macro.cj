@@ -904,10 +904,12 @@ public macro Refine(input: Tokens): Tokens {
 
     let mapperFuncName = Token(TokenKind.IDENTIFIER, className + "RowMapper")
     let selectCols = buildSelectColumnTokens(mergedFields)
+    let nameLit = Token(TokenKind.STRING_LITERAL, className)
     let queryTokens = if (isSoftDelete) {
         quote(
             static func query(): Query<$(classNameToken)> {
                 let q = Query<$(classNameToken)>()
+                q.typeName = $(nameLit)
                 q.select($(selectCols))
                 q.from($(Token(TokenKind.STRING_LITERAL, tableName)))
                 q.filter(Expr.Binary(Expr.Column("deleted_at"), BinOp.Eq, Expr.Value(0)))
@@ -919,6 +921,7 @@ public macro Refine(input: Tokens): Tokens {
         quote(
             static func query(): Query<$(classNameToken)> {
                 let q = Query<$(classNameToken)>()
+                q.typeName = $(nameLit)
                 q.select($(selectCols))
                 q.from($(Token(TokenKind.STRING_LITERAL, tableName)))
                 q.setMapper($(mapperFuncName))
