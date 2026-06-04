@@ -27,7 +27,7 @@ cov_*
 coverage_report/
 
 # VitePress docs
-docs/node_modules/
-docs/package-lock.json
+docs/site/node_modules/
+docs/site/package-lock.json
 docs/site/.vitepress/cache/
-docs/site/dist/
+docs/dist/
