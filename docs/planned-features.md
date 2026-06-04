@@ -36,6 +36,13 @@ rf.migrator().autoMigrate(Post.schemas())
 // 自动创建：post 表 + post_tags 中间表
 ```
 
+### 软删除
+
+实体包含 `deleted_at: Int64` 字段时自动启用。查询自动加 `WHERE deleted_at = 0`，`Tx.delete()` 执行 UPDATE 而非 DELETE。
+
+- `@HardDelete` 注解标记的实体即使有 `deleted_at` 也走物理删除
+- `Tx.physicalDelete()` 方法绕过软删除，直接物理删除
+
 ---
 
 ## ⬜ 待实现
@@ -51,13 +58,3 @@ rf.migrator().autoMigrate(Post.schemas())
 | INSERT | 不含 id 列，依赖自增 | **含 id 列** |
 | 自动生成 | `result.lastInsertId` | **`idGenerator.generate()`**（空时才生成） |
 | 用户自设 | 忽略，走自增 | **支持，不覆盖** |
-
-### 软删除
-
-**方案：默认全局软删除 + 实体级 `@HardDelete` 覆盖**
-
-- 实体默认软删除：`deleted_at` 字段标记，查询自动加 `WHERE deleted_at IS NULL`
-- `@HardDelete` 注解标记的实体走物理删除
-- `physicalDelete()` 方法绕过软删除，直接物理删除
-- 宏在生成查询时自动附加 `deleted_at IS NULL` 条件
-- 需要迁移支持：老表自动添加 `deleted_at` 列

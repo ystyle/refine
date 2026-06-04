@@ -134,6 +134,41 @@ class Tag {
 - `has_one` / `has_many`：被关联物外键指向你的 id（外键在目标表），你拥有其生命周期
 - `ref_many`：`via` 参数指定中间表名（如 `order_tags`），中间表需含 `source_id` 和 `target_id`
 
+## 软删除
+
+实体包含 `deleted_at` 字段时自动启用软删除。`Tx.delete()` 会将 `deleted_at` 置为非零值而非物理删除，查询自动过滤已删除记录：
+
+```cangjie
+@Refine
+class SoftUser {
+    var id: Int64 = 0
+    var name: String = ""
+    @Field[Integer]
+    var deleted_at: Int64 = 0
+}
+
+// 软删除：UPDATE softUser SET deleted_at = 1 WHERE id = ?
+rf.transaction { tx: Tx => tx.delete(user) }
+
+// 物理删除：DELETE FROM softUser WHERE id = ?
+rf.transaction { tx: Tx => tx.physicalDelete(user) }
+```
+
+### @HardDelete
+
+`@HardDelete` 注解标记的实体即使有 `deleted_at` 字段也走物理删除：
+
+```cangjie
+@Refine
+@HardDelete
+class Log {
+    var id: Int64 = 0
+    var message: String = ""
+    @Field[Integer]
+    var deleted_at: Int64 = 0
+}
+```
+
 ## 自动生成的代码
 
 `@Refine` 宏为每个实体生成以下代码（以 `User` 为例）：
@@ -148,7 +183,8 @@ class Tag {
 | `User.schemas()` | 返回所有 Schema（主表 + junction 表），用于迁移 |
 | `Tx.save(User)` | INSERT 扩展方法 |
 | `Tx.update(User)` | UPDATE 扩展方法 |
-| `Tx.delete(User)` | DELETE 扩展方法 |
+| `Tx.delete(User)` | DELETE 扩展方法（软删除实体为 UPDATE `deleted_at`） |
+| `Tx.physicalDelete(User)` | 物理 DELETE 扩展方法（绕过软删除） |
 | `UserRowMapper` | 行映射器函数 |
 | `UserColumnNames` | 列名数组函数 |
 | `UserSchema` | `TableSchema` 实现 |
