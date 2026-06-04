@@ -5,28 +5,45 @@ import std.collection.ArrayList
 import std.database.sql.QueryResult
 
 public enum HookKind {
+    // 事务内钩子 —— Tx.save/update/delete 中触发，scope.db = Some(tx)
+    | TxBeforeCreate
+    | TxAfterCreate
+    | TxBeforeUpdate
+    | TxAfterUpdate
+    | TxBeforeDelete
+    | TxAfterDelete
+
+    // 事务外钩子 —— Entity.save/update/delete 中触发，scope.db = None
     | BeforeCreate
     | AfterCreate
     | BeforeUpdate
     | AfterUpdate
-    | BeforeSave
-    | AfterSave
     | BeforeDelete
     | AfterDelete
+
+    // 保留
+    | BeforeSave
+    | AfterSave
     | AfterFind
 }
 
 extend HookKind <: ToString {
     public func toString(): String {
         match (this) {
+            case TxBeforeCreate => "TxBeforeCreate"
+            case TxAfterCreate => "TxAfterCreate"
+            case TxBeforeUpdate => "TxBeforeUpdate"
+            case TxAfterUpdate => "TxAfterUpdate"
+            case TxBeforeDelete => "TxBeforeDelete"
+            case TxAfterDelete => "TxAfterDelete"
             case BeforeCreate => "BeforeCreate"
             case AfterCreate => "AfterCreate"
             case BeforeUpdate => "BeforeUpdate"
             case AfterUpdate => "AfterUpdate"
-            case BeforeSave => "BeforeSave"
-            case AfterSave => "AfterSave"
             case BeforeDelete => "BeforeDelete"
             case AfterDelete => "AfterDelete"
+            case BeforeSave => "BeforeSave"
+            case AfterSave => "AfterSave"
             case AfterFind => "AfterFind"
         }
     }

@@ -2,6 +2,7 @@ package refine
 
 import std.database.sql.{Datasource, Connection, Transaction, QueryResult, UpdateResult, Driver, DriverManager, PooledDatasource}
 import std.database.sql.Statement as SqlStatement
+import std.collection.{ArrayList, HashMap}
 import std.time.DateTime
 
 public class DB {
@@ -195,6 +196,50 @@ public interface ExecutionContext {
 
 extend Session <: ExecutionContext {}
 extend Tx <: ExecutionContext {}
+
+extend Tx {
+    public func queryAll<T>(sql: String, params: Array<Any>,
+                            mapper: (QueryResult, HashMap<String, Int64>) -> T): Array<T> {
+        let result = this.query(sql, params)
+        let offset = if (this.ref.isSome()) { this.ref.getOrThrow().getParamOffset() } else { 0 }
+        let cm = buildColumnMap(result.columnInfos, offset)
+        var entities = ArrayList<T>()
+        while (result.next()) {
+            entities.add(mapper(result, cm))
+        }
+        entities.toArray()
+    }
+
+    public func queryOne<T>(sql: String, params: Array<Any>,
+                            mapper: (QueryResult, HashMap<String, Int64>) -> T): Option<T> {
+        let result = this.query(sql, params)
+        let offset = if (this.ref.isSome()) { this.ref.getOrThrow().getParamOffset() } else { 0 }
+        let cm = buildColumnMap(result.columnInfos, offset)
+        if (result.next()) { Some(mapper(result, cm)) } else { None }
+    }
+}
+
+extend Session {
+    public func queryAll<T>(sql: String, params: Array<Any>,
+                            mapper: (QueryResult, HashMap<String, Int64>) -> T): Array<T> {
+        let result = this.query(sql, params)
+        let offset = if (this.ref.isSome()) { this.ref.getOrThrow().getParamOffset() } else { 0 }
+        let cm = buildColumnMap(result.columnInfos, offset)
+        var entities = ArrayList<T>()
+        while (result.next()) {
+            entities.add(mapper(result, cm))
+        }
+        entities.toArray()
+    }
+
+    public func queryOne<T>(sql: String, params: Array<Any>,
+                            mapper: (QueryResult, HashMap<String, Int64>) -> T): Option<T> {
+        let result = this.query(sql, params)
+        let offset = if (this.ref.isSome()) { this.ref.getOrThrow().getParamOffset() } else { 0 }
+        let cm = buildColumnMap(result.columnInfos, offset)
+        if (result.next()) { Some(mapper(result, cm)) } else { None }
+    }
+}
 
 extend DB {
     public func migrator(): Migrator {

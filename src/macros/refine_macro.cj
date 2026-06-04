@@ -366,13 +366,15 @@ func buildTxSaveExtend(className: String): Tokens {
         extend Tx {
             public func save(entity: $(cn)): Unit {
                 let scope = Scope<$(cn)>(entity)
-                if (this.ref.isSome()) { this.ref.getOrThrow().executeHooks($(nameLit), HookKind.BeforeCreate, scope) }
+                scope.db = Some(this)
+                if (this.ref.isSome()) { this.ref.getOrThrow().executeHooks($(nameLit), HookKind.TxBeforeCreate, scope) }
                 if (scope.aborted) { throw scope.error.getOrThrow() }
                 let (sql, params) = $(insertSQLFuncName)(entity)
                 let result = this.execute(sql, params)
                 entity.id = result.lastInsertId
                 let afterScope = Scope<$(cn)>(entity)
-                if (this.ref.isSome()) { this.ref.getOrThrow().executeHooks($(nameLit), HookKind.AfterCreate, afterScope) }
+                afterScope.db = Some(this)
+                if (this.ref.isSome()) { this.ref.getOrThrow().executeHooks($(nameLit), HookKind.TxAfterCreate, afterScope) }
             }
         }
     )
@@ -426,12 +428,14 @@ func buildTxUpdateExtend(className: String): Tokens {
         extend Tx {
             public func update(entity: $(cn)): Unit {
                 let scope = Scope<$(cn)>(entity)
-                if (this.ref.isSome()) { this.ref.getOrThrow().executeHooks($(nameLit), HookKind.BeforeUpdate, scope) }
+                scope.db = Some(this)
+                if (this.ref.isSome()) { this.ref.getOrThrow().executeHooks($(nameLit), HookKind.TxBeforeUpdate, scope) }
                 if (scope.aborted) { throw scope.error.getOrThrow() }
                 let (sql, params) = $(updateSQLFuncName)(entity)
                 this.execute(sql, params)
                 let afterScope = Scope<$(cn)>(entity)
-                if (this.ref.isSome()) { this.ref.getOrThrow().executeHooks($(nameLit), HookKind.AfterUpdate, afterScope) }
+                afterScope.db = Some(this)
+                if (this.ref.isSome()) { this.ref.getOrThrow().executeHooks($(nameLit), HookKind.TxAfterUpdate, afterScope) }
             }
         }
     )
@@ -467,12 +471,14 @@ func buildTxDeleteExtend(className: String): Tokens {
         extend Tx {
             public func delete(entity: $(cn)): Unit {
                 let scope = Scope<$(cn)>(entity)
-                if (this.ref.isSome()) { this.ref.getOrThrow().executeHooks($(nameLit), HookKind.BeforeDelete, scope) }
+                scope.db = Some(this)
+                if (this.ref.isSome()) { this.ref.getOrThrow().executeHooks($(nameLit), HookKind.TxBeforeDelete, scope) }
                 if (scope.aborted) { throw scope.error.getOrThrow() }
                 let (sql, params) = $(deleteSQLFuncName)(entity)
                 this.execute(sql, params)
                 let afterScope = Scope<$(cn)>(entity)
-                if (this.ref.isSome()) { this.ref.getOrThrow().executeHooks($(nameLit), HookKind.AfterDelete, afterScope) }
+                afterScope.db = Some(this)
+                if (this.ref.isSome()) { this.ref.getOrThrow().executeHooks($(nameLit), HookKind.TxAfterDelete, afterScope) }
             }
         }
     )
@@ -548,6 +554,16 @@ func buildRowMapper(className: String, cd: ClassDecl, rels: ArrayList<RelInfo>):
     assignments = assignments + Token(TokenKind.IDENTIFIER, "entity")
     quote(
         func $(funcName)(result: QueryResult, columnMap: HashMap<String, Int64>): $(cn) { $(assignments) }
+    )
+}
+
+func buildRowMapperMethod(className: String): Tokens {
+    let cn = Token(TokenKind.IDENTIFIER, className)
+    let mapperFunc = Token(TokenKind.IDENTIFIER, className + "RowMapper")
+    quote(
+        public static func rowMapper(): (QueryResult, HashMap<String, Int64>) -> $(cn) {
+            $(mapperFunc)
+        }
     )
 }
 
@@ -806,6 +822,9 @@ public macro Refine(input: Tokens): Tokens {
     classDecl.body.decls.add(FuncDecl(findAllTokens))
     let findOneTokens = buildFindOneMethod(className)
     classDecl.body.decls.add(FuncDecl(findOneTokens))
+
+    let rowMapperTokens = buildRowMapperMethod(className)
+    classDecl.body.decls.add(FuncDecl(rowMapperTokens))
 
     let colsStruct = buildColsStruct(className, classDecl)
     let relClass = buildRelClass(className, mergedRels)

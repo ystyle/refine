@@ -1,0 +1,118 @@
+# Refine
+
+ORM 核心入口。管理数据库连接、事务、会话、钩子。
+
+## 创建实例
+
+```cangjie
+// 最简单的形式（SQLite 内存数据库）
+let rf = Refine.open("sqlite::memory:")
+
+// 带连接参数（MariaDB 示例）
+let rf = Refine.open("mariadb://127.0.0.1:3306", [
+    ("username", "root"),
+    ("password", "secret"),
+    ("database", "myapp")
+])
+
+// 直接构造（用于测试）
+let rf = Refine(datasource, dialect, paramOffset)
+```
+
+## 方法
+
+### session()
+
+获取一个数据库会话。每次调用从连接池获取一个新连接。可在会话上执行原生 SQL。
+
+```cangjie
+let s = rf.session()
+let r = s.query("SELECT COUNT(*) FROM users", [])
+if (r.next()) { let total = r.get<Int64>(0) }
+s.close()
+```
+
+> 当前 `query()` 返回 `QueryResult`，需手动 `r.get<T>(idx)` 取字段。未来版本支持 `s.queryAll<T>(sql, params, mapper)` 自动映射到实体。
+
+### transaction()
+
+编程式事务。闭包内所有的 `tx.save/update/delete` 均在同一个事务中。
+
+```cangjie
+let result = rf.transaction { tx: Tx =>
+    let user = User()
+    user.name = "Alice"
+    tx.save(user)
+    user  // 返回值
+}
+```
+
+- 闭包正常返回 → `commit()`
+- 抛出异常 → `rollback()` + 继续传播异常
+- 连接在事务结束后自动 `close()`
+
+### hook()
+
+注册生命周期钩子。
+
+```cangjie
+rf.hook<User>("User", HookKind.BeforeCreate) { scope: Scope<User> =>
+    if (scope.entity.name == "") {
+        scope.abort(Exception("name required"))
+    }
+}
+```
+
+### all() / one()
+
+对 `Query<T>` 执行查询，自动设置方言和参数偏移。
+
+```cangjie
+let q = User.query().using(rf)
+    .filter(User.col().name == "Alice")
+
+// 等价于 q.all()
+let users = rf.all(q)
+
+// 等价于 q.one()
+let user = rf.one(q)
+```
+
+### migrator()
+
+获取对应方言的迁移器实例。
+
+```cangjie
+let m = rf.migrator()
+m.autoMigrate([UserSchema()])
+```
+
+### getDialect()
+
+```cangjie
+let dialect = rf.getDialect()
+dialect.name()  // "sqlite" / "mysql" / "postgresql"
+```
+
+### getParamOffset()
+
+返回参数索引偏移量（MariaDB 为 1，其他为 0）。
+
+### close()
+
+关闭数据源连接池。
+
+```cangjie
+rf.close()
+```
+
+## 工具函数
+
+```cangjie
+// 从 URL 提取驱动名
+extractDriver("mariadb://host:3306/db")  // "mariadb"
+
+// 从驱动名检测方言
+detectDialect("mysql").name()  // "mysql"
+detectDialect("sqlite").name() // "sqlite"
+```

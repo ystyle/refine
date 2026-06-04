@@ -25,3 +25,11 @@ cov_output/
 cov_*
 *.gcno
 coverage_report/
+
+# Node / VitePress
+node_modules/
+package-lock.json
+
+# VitePress docs
+docs/site/.vitepress/cache/
+docs/site/dist/
