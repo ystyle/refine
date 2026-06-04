@@ -9,12 +9,17 @@ public class Refine {
     private var dialect: Dialect
     private var paramOffset: Int64 = 0
     private var hookRegistry = HashMap<String, ArrayList<Any>>()
+    private var idGenerator: IdGenerator = SonyflakeIdGenerator()
 
     internal init(datasource: Datasource, dialect: Dialect, paramOffset: Int64) {
         this.datasource = datasource
         this.dialect = dialect
         this.paramOffset = paramOffset
     }
+
+    public func getIdGenerator(): IdGenerator { idGenerator }
+
+    public func setIdGenerator(gen: IdGenerator): Unit { idGenerator = gen }
 
     public static func open(url: String): Refine {
         open(url, [])
