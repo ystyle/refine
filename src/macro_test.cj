@@ -338,3 +338,105 @@ public class FieldAnnotationTest {
         @Expect(cols[1].storageType, StorageType.Text)
     }
 }
+
+// ─── Soft Delete Entity ────────────────────────────────
+
+@Refine
+class SoftUser {
+    var id: Int64 = 0
+    var name: String = ""
+    @Field[Integer]
+    var deleted_at: Int64 = 0
+}
+
+@Refine
+@HardDelete
+class HardUser {
+    var id: Int64 = 0
+    var name: String = ""
+    @Field[Integer]
+    var deleted_at: Int64 = 0
+}
+
+@Test
+public class SoftDeleteTest {
+    @TestCase
+    public func testTxDeleteIsUpdateForSoftDelete(): Unit {
+        clearHooks()
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        let u = SoftUser()
+        u.id = 1
+        u.name = "test"
+        tx.delete(u)
+        @Expect(conn.stmt.capturedSql.contains("UPDATE"), true)
+        @Expect(conn.stmt.capturedSql.contains("deleted_at"), true)
+        @Expect(conn.stmt.capturedSql.contains("softUser"), true)
+    }
+
+    @TestCase
+    public func testTxPhysicalDeleteIsDeleteForSoftDelete(): Unit {
+        clearHooks()
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        let u = SoftUser()
+        u.id = 1
+        u.name = "test"
+        tx.physicalDelete(u)
+        @Expect(conn.stmt.capturedSql.contains("DELETE"), true)
+        @Expect(conn.stmt.capturedSql.contains("softUser"), true)
+    }
+
+    @TestCase
+    public func testTxDeleteIsDeleteForHardDeleted(): Unit {
+        clearHooks()
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        let u = HardUser()
+        u.id = 1
+        u.name = "test"
+        tx.delete(u)
+        @Expect(conn.stmt.capturedSql.contains("DELETE"), true)
+        @Expect(conn.stmt.capturedSql.contains("hardUser"), true)
+    }
+
+    @TestCase
+    public func testSoftDeleteQueryAddsFilter(): Unit {
+        let q = SoftUser.query()
+        var hasDeletedAtFilter = false
+        for (c in q.stmt.clauses) {
+            match (c) {
+                case Clause.WhereClause(predicates) =>
+                    for (p in predicates) {
+                        match (p) {
+                            case Expr.Binary(Expr.Column(name), _, _) =>
+                                if (name == "deleted_at") { hasDeletedAtFilter = true }
+                            case _ => ()
+                        }
+                    }
+                case _ => ()
+            }
+        }
+        @Expect(hasDeletedAtFilter, true)
+    }
+
+    @TestCase
+    public func testHardDeleteQueryNoFilter(): Unit {
+        let q = HardUser.query()
+        var hasDeletedAtFilter = false
+        for (c in q.stmt.clauses) {
+            match (c) {
+                case Clause.WhereClause(predicates) =>
+                    for (p in predicates) {
+                        match (p) {
+                            case Expr.Binary(Expr.Column(name), _, _) =>
+                                if (name == "deleted_at") { hasDeletedAtFilter = true }
+                            case _ => ()
+                        }
+                    }
+                case _ => ()
+            }
+        }
+        @Expect(hasDeletedAtFilter, false)
+    }
+}

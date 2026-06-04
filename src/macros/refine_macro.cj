@@ -443,9 +443,25 @@ func buildTxUpdateExtend(className: String): Tokens {
 
 func buildDeleteSQLString(tableName: String): String { "DELETE FROM " + tableName + " WHERE id = ?" }
 
+func buildSoftDeleteSQLString(tableName: String): String {
+    "UPDATE " + tableName + " SET deleted_at = ? WHERE id = ?"
+}
+
 func buildDeleteEntityIdToken(): Tokens {
     var arr = Tokens()
     arr = arr + Token(TokenKind.LSQUARE)
+    arr = arr + Token(TokenKind.IDENTIFIER, "entity")
+    arr = arr + Token(TokenKind.DOT)
+    arr = arr + Token(TokenKind.IDENTIFIER, "id")
+    arr = arr + Token(TokenKind.RSQUARE)
+    arr
+}
+
+func buildSoftDeleteEntityParamsToken(): Tokens {
+    var arr = Tokens()
+    arr = arr + Token(TokenKind.LSQUARE)
+    arr = arr + Token(TokenKind.IDENTIFIER, "1")
+    arr = arr + Token(TokenKind.COMMA)
     arr = arr + Token(TokenKind.IDENTIFIER, "entity")
     arr = arr + Token(TokenKind.DOT)
     arr = arr + Token(TokenKind.IDENTIFIER, "id")
@@ -460,6 +476,51 @@ func buildDeleteSQLFunc(className: String, tableName: String): Tokens {
     let entityArray = buildDeleteEntityIdToken()
     quote(
         func $(funcName)(entity: $(cn)): (String, Array<Any>) { ($(sqlToken), $(entityArray)) }
+    )
+}
+
+func buildSoftDeleteSQLFunc(className: String, tableName: String): Tokens {
+    let funcName = Token(TokenKind.IDENTIFIER, className + "SoftDeleteSQL")
+    let cn = Token(TokenKind.IDENTIFIER, className)
+    let sqlStr = buildSoftDeleteSQLString(tableName)
+    quote(
+        func $(funcName)(entity: $(cn)): (String, Array<Any>) {
+            ($(Token(TokenKind.STRING_LITERAL, sqlStr)), [1 as Any, entity.id])
+        }
+    )
+}
+
+func buildTxSoftDeleteExtend(className: String): Tokens {
+    let cn = Token(TokenKind.IDENTIFIER, className)
+    let softDeleteSQLFuncName = Token(TokenKind.IDENTIFIER, className + "SoftDeleteSQL")
+    let deleteSQLFuncName = Token(TokenKind.IDENTIFIER, className + "DeleteSQL")
+    let nameLit = Token(TokenKind.STRING_LITERAL, className)
+    quote(
+        extend Tx {
+            public func delete(entity: $(cn)): Unit {
+                let scope = Scope<$(cn)>(entity)
+                scope.db = Some(this)
+                if (this.ref.isSome()) { this.ref.getOrThrow().executeHooks($(nameLit), HookKind.TxBeforeDelete, scope) }
+                if (scope.aborted) { throw scope.error.getOrThrow() }
+                let (sql, params) = $(softDeleteSQLFuncName)(entity)
+                this.execute(sql, params)
+                let afterScope = Scope<$(cn)>(entity)
+                afterScope.db = Some(this)
+                if (this.ref.isSome()) { this.ref.getOrThrow().executeHooks($(nameLit), HookKind.TxAfterDelete, afterScope) }
+            }
+
+            public func physicalDelete(entity: $(cn)): Unit {
+                let scope = Scope<$(cn)>(entity)
+                scope.db = Some(this)
+                if (this.ref.isSome()) { this.ref.getOrThrow().executeHooks($(nameLit), HookKind.TxBeforeDelete, scope) }
+                if (scope.aborted) { throw scope.error.getOrThrow() }
+                let (sql, params) = $(deleteSQLFuncName)(entity)
+                this.execute(sql, params)
+                let afterScope = Scope<$(cn)>(entity)
+                afterScope.db = Some(this)
+                if (this.ref.isSome()) { this.ref.getOrThrow().executeHooks($(nameLit), HookKind.TxAfterDelete, afterScope) }
+            }
+        }
     )
 }
 
@@ -833,17 +894,38 @@ public macro Refine(input: Tokens): Tokens {
     let relMessages = getChildMessages("Rel")
     let mergedRels = mergeAnnotationRels(rels, refMessages, relMessages)
 
+    // Detect soft delete: has deleted_at field AND no @HardDelete annotation
+    var hasDeletedAt = false
+    for (f in mergedFields) {
+        if (f.name == "deleted_at") { hasDeletedAt = true; break }
+    }
+    let hardDeleteMessages = getChildMessages("HardDelete")
+    let isSoftDelete = hasDeletedAt && hardDeleteMessages.size == 0
+
     let mapperFuncName = Token(TokenKind.IDENTIFIER, className + "RowMapper")
     let selectCols = buildSelectColumnTokens(mergedFields)
-    let queryTokens = quote(
-        static func query(): Query<$(classNameToken)> {
-            let q = Query<$(classNameToken)>()
-            q.select($(selectCols))
-            q.from($(Token(TokenKind.STRING_LITERAL, tableName)))
-            q.setMapper($(mapperFuncName))
-            q
-        }
-    )
+    let queryTokens = if (isSoftDelete) {
+        quote(
+            static func query(): Query<$(classNameToken)> {
+                let q = Query<$(classNameToken)>()
+                q.select($(selectCols))
+                q.from($(Token(TokenKind.STRING_LITERAL, tableName)))
+                q.filter(Expr.Binary(Expr.Column("deleted_at"), BinOp.Eq, Expr.Value(0)))
+                q.setMapper($(mapperFuncName))
+                q
+            }
+        )
+    } else {
+        quote(
+            static func query(): Query<$(classNameToken)> {
+                let q = Query<$(classNameToken)>()
+                q.select($(selectCols))
+                q.from($(Token(TokenKind.STRING_LITERAL, tableName)))
+                q.setMapper($(mapperFuncName))
+                q
+            }
+        )
+    }
     classDecl.body.decls.add(FuncDecl(queryTokens))
 
     let colsName = Token(TokenKind.IDENTIFIER, className + "Cols")
@@ -886,25 +968,43 @@ public macro Refine(input: Tokens): Tokens {
     let txSaveExtend = buildTxSaveExtend(className)
     let updateSQLFunc = buildUpdateSQLFunc(className, fields, tableName)
     let txUpdateExtend = buildTxUpdateExtend(className)
-    let deleteSQLFunc = buildDeleteSQLFunc(className, tableName)
-    let txDeleteExtend = buildTxDeleteExtend(className)
     let rowMapper = buildRowMapper(className, classDecl, mergedRels)
     buildRelationMethods(className, mergedRels, classDecl)
     let schemaClass = buildSchemaClass(className, mergedFields)
     let columnNamesFunc = buildColumnNamesFunc(className, classDecl)
-
-    classDecl.toTokens() + Token(TokenKind.NL) + Token(TokenKind.NL) +
-        colsStruct + Token(TokenKind.NL) + Token(TokenKind.NL) + relClass +
-        Token(TokenKind.NL) + Token(TokenKind.NL) + insertSQLFunc +
-        Token(TokenKind.NL) + Token(TokenKind.NL) + txSaveExtend +
-        Token(TokenKind.NL) + Token(TokenKind.NL) + updateSQLFunc +
-        Token(TokenKind.NL) + Token(TokenKind.NL) + txUpdateExtend +
-        Token(TokenKind.NL) + Token(TokenKind.NL) + deleteSQLFunc +
-        Token(TokenKind.NL) + Token(TokenKind.NL) + txDeleteExtend +
-        Token(TokenKind.NL) + Token(TokenKind.NL) + rowMapper +
-        Token(TokenKind.NL) + Token(TokenKind.NL) + columnNamesFunc +
-        Token(TokenKind.NL) + Token(TokenKind.NL) + schemaClass +
-        junctionTokens
+    var deleteSQLFunc = buildDeleteSQLFunc(className, tableName)
+    var txDeleteExtend: Tokens
+    if (isSoftDelete) {
+        let softDeleteSQLFunc = buildSoftDeleteSQLFunc(className, tableName)
+        txDeleteExtend = buildTxSoftDeleteExtend(className)
+        classDecl.toTokens() + Token(TokenKind.NL) + Token(TokenKind.NL) +
+            colsStruct + Token(TokenKind.NL) + Token(TokenKind.NL) + relClass +
+            Token(TokenKind.NL) + Token(TokenKind.NL) + insertSQLFunc +
+            Token(TokenKind.NL) + Token(TokenKind.NL) + txSaveExtend +
+            Token(TokenKind.NL) + Token(TokenKind.NL) + updateSQLFunc +
+            Token(TokenKind.NL) + Token(TokenKind.NL) + txUpdateExtend +
+            Token(TokenKind.NL) + Token(TokenKind.NL) + deleteSQLFunc +
+            Token(TokenKind.NL) + Token(TokenKind.NL) + softDeleteSQLFunc +
+            Token(TokenKind.NL) + Token(TokenKind.NL) + txDeleteExtend +
+            Token(TokenKind.NL) + Token(TokenKind.NL) + rowMapper +
+            Token(TokenKind.NL) + Token(TokenKind.NL) + columnNamesFunc +
+            Token(TokenKind.NL) + Token(TokenKind.NL) + schemaClass +
+            junctionTokens
+    } else {
+        txDeleteExtend = buildTxDeleteExtend(className)
+        classDecl.toTokens() + Token(TokenKind.NL) + Token(TokenKind.NL) +
+            colsStruct + Token(TokenKind.NL) + Token(TokenKind.NL) + relClass +
+            Token(TokenKind.NL) + Token(TokenKind.NL) + insertSQLFunc +
+            Token(TokenKind.NL) + Token(TokenKind.NL) + txSaveExtend +
+            Token(TokenKind.NL) + Token(TokenKind.NL) + updateSQLFunc +
+            Token(TokenKind.NL) + Token(TokenKind.NL) + txUpdateExtend +
+            Token(TokenKind.NL) + Token(TokenKind.NL) + deleteSQLFunc +
+            Token(TokenKind.NL) + Token(TokenKind.NL) + txDeleteExtend +
+            Token(TokenKind.NL) + Token(TokenKind.NL) + rowMapper +
+            Token(TokenKind.NL) + Token(TokenKind.NL) + columnNamesFunc +
+            Token(TokenKind.NL) + Token(TokenKind.NL) + schemaClass +
+            junctionTokens
+    }
 }
 
 // --- Attribute Macros ---
@@ -1024,3 +1124,6 @@ public macro Table(attr: Tokens, input: Tokens): Tokens {
     }
     input
 }
+
+// Marker annotation: entity with this annotation uses physical delete instead of soft delete
+public macro HardDelete(input: Tokens): Tokens { input }
