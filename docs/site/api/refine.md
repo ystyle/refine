@@ -98,6 +98,38 @@ dialect.name()  // "sqlite" / "mysql" / "postgresql"
 
 返回参数索引偏移量（MariaDB 为 1，其他为 0）。
 
+### getIdGenerator() / setIdGenerator()
+
+获取或设置 ID 生成器。默认用 Sonyflake 分布式 ID 生成器，可通过接口替换：
+
+```cangjie
+let rf = Refine.open("sqlite:test.db")
+let gen = rf.getIdGenerator()
+let id = gen.generate()  // "183729475612348416"
+
+// 切换为随机 ID 生成器
+rf.setIdGenerator(RandomIdGenerator())
+let id2 = rf.getIdGenerator().generate()  // "4a7b2c81-93d6-4e2f-b50a-1c8d3e9f0a2b"
+```
+
+内置实现：
+
+| 类 | 说明 |
+|---|---|
+| `SonyflakeIdGenerator` | 基于 Sonyflake 算法的分布式 ID，64bit 整数转字符串 |
+| `RandomIdGenerator` | 随机 UUID 格式 ID（用于测试/开发） |
+
+实现自定义：
+
+```cangjie
+class MyIdGen <: IdGenerator {
+    public func generate(): String {
+        // 返回唯一 ID 字符串
+    }
+}
+rf.setIdGenerator(MyIdGen())
+```
+
 ### close()
 
 关闭数据源连接池。
