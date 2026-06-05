@@ -47,6 +47,39 @@ rf.migrator().autoMigrate(Post.schemas())
 
 ## ⬜ 待实现
 
+### 批量插入
+
+当前只有单条 `tx.save(entity)`，批量需 for 循环 N 次 INSERT，无事务保障且性能差。
+
+**方案：宏生成 `batchInsertSQL`，`Tx` 新增 `batchSave<T>()` 方法。**
+
+宏利用现有 `InsertSQL(entity)` 的列信息和参数提取，直接生成批量 SQL：
+
+```cangjie
+// 宏生成
+func batchInsertSQL(entities: Array<User>): (String, Array<Any>) {
+    var allParams = ArrayList<Any>()
+    for (e in entities) {
+        allParams.add(e.name)
+        allParams.add(e.email)
+    }
+    ("INSERT INTO user (name, email) VALUES (?,?), (?,?), ...", allParams)
+}
+
+// Tx 扩展
+extend Tx {
+    public func batchSave<T>(entities: Array<T>): Unit {
+        let (sql, params) = batchInsertSQL(entities)
+        this.execute(sql, params)
+    }
+}
+```
+
+- 自动处理参数数量，生成对应数量的 `(?,?)` 占位符
+- 在 `rf.transaction { tx => tx.batchSave(users) }` 中使用，单条 SQL 写入
+- 支持钩子：每个实体 BeforeCreate → 收集参数 → 批量执行 → 每个实体 AfterCreate
+- 支持 `id: String` 路径：批量生成 UUID 后再组 SQL
+
 ### UUID 主键 + 用户自定义 ID
 
 > **状态：待确认设计方案是否继续推进。**
