@@ -57,9 +57,22 @@ class HookFlag {
     public init() {}
 }
 
+class CaptureUpdateResult <: UpdateResult {
+    public prop lastInsertId: Int64 { get() { _lastInsertId } }
+    public prop rowCount: Int64 { get() { _rowCount } }
+    private var _lastInsertId: Int64
+    private var _rowCount: Int64
+    public init(lastInsertId: Int64, rowCount: Int64) {
+        this._lastInsertId = lastInsertId
+        this._rowCount = rowCount
+    }
+}
+
 class CaptureStatement <: SqlStatement {
     public var capturedSql: String = ""
     public var capturedParams: Array<Any> = []
+    public var mockLastInsertId: Int64 = 0
+    public var mockRowCount: Int64 = 0
 
     public func close(): Unit {}
     public func isClosed(): Bool { false }
@@ -72,8 +85,8 @@ class CaptureStatement <: SqlStatement {
     public func set<T>(index: Int, value: T): Unit {}
     public func setNull(index: Int): Unit {}
     public func setOption(_key: String, value: String): Unit {}
-    public func update(): UpdateResult { MockUpdateResult() }
-    public func update(_params: Array<SqlDbType>): UpdateResult { MockUpdateResult() }
+    public func update(): UpdateResult { CaptureUpdateResult(mockLastInsertId, mockRowCount) }
+    public func update(_params: Array<SqlDbType>): UpdateResult { CaptureUpdateResult(mockLastInsertId, mockRowCount) }
 }
 
 class CaptureConnection <: Connection {
@@ -186,6 +199,109 @@ public class MacroSaveTest {
         tx.save(p)
 
         @Expect(nonTxFlag.called, false)
+    }
+
+    // ─── Batch Save Tests ────────────────────────────────
+
+    @TestCase
+    public func testTxBatchSavePost(): Unit {
+        clearHooks()
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+
+        let p1 = Post()
+        p1.title = "Title 1"
+        p1.content = "Content 1"
+        let p2 = Post()
+        p2.title = "Title 2"
+        p2.content = "Content 2"
+
+        tx.batchSave([p1, p2])
+
+        @Expect(conn.stmt.capturedSql, "INSERT INTO post (title, content) VALUES (?, ?), (?, ?)")
+    }
+
+    @TestCase
+    public func testTxBatchSaveUser(): Unit {
+        clearHooks()
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+
+        let u1 = User()
+        u1.name = "Alice"
+        u1.email = "alice@test.com"
+        let u2 = User()
+        u2.name = "Bob"
+        u2.email = "bob@test.com"
+
+        tx.batchSave([u1, u2])
+
+        @Expect(conn.stmt.capturedSql, "INSERT INTO user (name, email) VALUES (?, ?), (?, ?)")
+    }
+
+    @TestCase
+    public func testTxBatchSaveFiresTxBeforeCreate(): Unit {
+        clearHooks()
+        let conn = CaptureConnection()
+        let rf = Refine(RMockDS(), SQLiteDialect(), 0)
+        let tx = Tx(conn, rf, 0)
+
+        let flag = HookFlag()
+        rf.hook<Post>("Post", HookKind.TxBeforeCreate) { scope: Scope<Post> =>
+            flag.called = true
+        }
+
+        let p1 = Post(); p1.title = "A"
+        let p2 = Post(); p2.title = "B"
+        tx.batchSave([p1, p2])
+
+        @Expect(flag.called, true)
+    }
+
+    @TestCase
+    public func testTxBatchSaveFiresTxAfterCreate(): Unit {
+        clearHooks()
+        let conn = CaptureConnection()
+        let rf = Refine(RMockDS(), SQLiteDialect(), 0)
+        let tx = Tx(conn, rf, 0)
+
+        let flag = HookFlag()
+        rf.hook<Post>("Post", HookKind.TxAfterCreate) { scope: Scope<Post> =>
+            flag.called = true
+        }
+
+        let p1 = Post(); p1.title = "A"
+        let p2 = Post(); p2.title = "B"
+        tx.batchSave([p1, p2])
+
+        @Expect(flag.called, true)
+    }
+
+    @TestCase
+    public func testTxBatchSaveSetsIds(): Unit {
+        clearHooks()
+        let conn = CaptureConnection()
+        conn.stmt.mockLastInsertId = 100
+        conn.stmt.mockRowCount = 2
+        let tx = Tx(conn)
+
+        let p1 = Post(); p1.title = "A"; p1.content = "B"
+        let p2 = Post(); p2.title = "C"; p2.content = "D"
+        tx.batchSave([p1, p2])
+
+        @Expect(p1.id, 100)
+        @Expect(p2.id, 101)
+    }
+
+    @TestCase
+    public func testTxBatchSaveEmptyEntities(): Unit {
+        clearHooks()
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+
+        tx.batchSave(ArrayList<Post>().toArray())
+
+        @Expect(conn.stmt.capturedSql, "")
     }
 }
 

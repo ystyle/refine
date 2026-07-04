@@ -27,6 +27,25 @@ let users = tx.queryAll("SELECT * FROM users WHERE age > ?", [18], User.rowMappe
 let user  = tx.queryOne("SELECT * FROM users WHERE id = ?", [1], User.rowMapper())
 ```
 
+### 批量插入
+
+宏生成 `ClassNameBatchInsertSQL(entities: Array<T>)`，`Tx` 新增 `batchSave<T>(entities)` 扩展方法：
+
+```cangjie
+rf.transaction { tx =>
+    let users = [user1, user2, user3]
+    tx.batchSave(users)
+    // 单条 INSERT INTO user (...) VALUES (?, ?), (?, ?), (?, ?)
+    // user1.id = lastInsertId, user2.id = lastInsertId + 1, ...
+}
+```
+
+- 宏自动生成对应行数的 `(?, ?)` 占位符，所有参数扁平化收集到单条 SQL
+- 支持 TxBeforeCreate / TxAfterCreate 钩子（每个实体独立触发）
+- 空输入（`entities.size == 0`）直接返回，不执行 SQL
+- ID 写回：`result.lastInsertId` 为 baseId，按 `baseId + i` 推算后续 ID（适用自增主键）
+- 与 `tx.save(entity)` 行为语义一致
+
 ### 多对多中间表自动迁移
 
 宏为 `@Rel[ref_many, Target, via]` 自动生成 junction 表 Schema。调用 `Entity.schemas()` 获取所有 Schema（含 junction）：
@@ -47,38 +66,15 @@ rf.migrator().autoMigrate(Post.schemas())
 
 ## ⬜ 待实现
 
-### 批量插入
+### 批量更新
 
-当前只有单条 `tx.save(entity)`，批量需 for 循环 N 次 INSERT，无事务保障且性能差。
+> **状态：未确认方案。**
 
-**方案：宏生成 `batchInsertSQL`，`Tx` 新增 `batchSave<T>()` 方法。**
+当前只有单条 `tx.update(entity)`，批量需 for 循环 N 次 UPDATE。
 
-宏利用现有 `InsertSQL(entity)` 的列信息和参数提取，直接生成批量 SQL：
-
-```cangjie
-// 宏生成
-func batchInsertSQL(entities: Array<User>): (String, Array<Any>) {
-    var allParams = ArrayList<Any>()
-    for (e in entities) {
-        allParams.add(e.name)
-        allParams.add(e.email)
-    }
-    ("INSERT INTO user (name, email) VALUES (?,?), (?,?), ...", allParams)
-}
-
-// Tx 扩展
-extend Tx {
-    public func batchSave<T>(entities: Array<T>): Unit {
-        let (sql, params) = batchInsertSQL(entities)
-        this.execute(sql, params)
-    }
-}
-```
-
-- 自动处理参数数量，生成对应数量的 `(?,?)` 占位符
-- 在 `rf.transaction { tx => tx.batchSave(users) }` 中使用，单条 SQL 写入
-- 支持钩子：每个实体 BeforeCreate → 收集参数 → 批量执行 → 每个实体 AfterCreate
-- 支持 `id: String` 路径：批量生成 UUID 后再组 SQL
+待设计批量更新 API，可能的方案：
+- 宏生成 `batchUpdateSQL` + `Tx.batchUpdate<T>(entities)`（类似批量插入）
+- 每条 UPDATE 用不同的参数值，但必须复用 `SET col = ? WHERE id = ?` 模板
 
 ### UUID 主键 + 用户自定义 ID
 

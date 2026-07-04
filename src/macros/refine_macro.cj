@@ -384,6 +384,79 @@ func buildTxSaveExtend(className: String): Tokens {
     )
 }
 
+func buildBatchInsertSQLFunc(className: String, fields: ArrayList<FieldInfo>, tableName: String): Tokens {
+    let funcName = Token(TokenKind.IDENTIFIER, className + "BatchInsertSQL")
+    let cn = Token(TokenKind.IDENTIFIER, className)
+
+    var colNames = ArrayList<String>()
+    var paramCount = 0
+    for (f in fields) {
+        if (f.name == "id" || isRelationField(f.typeName)) { continue }
+        colNames.add(f.name)
+        paramCount++
+    }
+    let colNamesStr = String.join(colNames.toArray(), delimiter: ", ")
+    let sqlPrefix = "INSERT INTO " + tableName + " (" + colNamesStr + ") VALUES "
+    let sqlPrefixToken = Token(TokenKind.STRING_LITERAL, sqlPrefix)
+
+    var qParts = ArrayList<String>()
+    for (_ in 0..paramCount) { qParts.add("?") }
+    let placeholderGroup = "(" + String.join(qParts.toArray(), delimiter: ", ") + ")"
+    let placeholderGroupToken = Token(TokenKind.STRING_LITERAL, placeholderGroup)
+
+    var addParams = Tokens()
+    for (f in fields) {
+        if (f.name == "id" || isRelationField(f.typeName)) { continue }
+        addParams = addParams + quote(
+            allParams.add(entities[_i_].$(Token(TokenKind.IDENTIFIER, f.name)));
+        )
+    }
+
+    quote(
+        func $(funcName)(entities: Array<$(cn)>): (String, Array<Any>) {
+            var allParams = ArrayList<Any>()
+            for (_i_ in 0..entities.size) {
+                $(addParams)
+            }
+            var placeholders = ArrayList<String>()
+            for (_j_ in 0..entities.size) {
+                placeholders.add($(placeholderGroupToken))
+            }
+            ($(sqlPrefixToken) + String.join(placeholders.toArray(), delimiter: ", "), allParams.toArray())
+        }
+    )
+}
+
+func buildTxBatchSaveExtend(className: String): Tokens {
+    let cn = Token(TokenKind.IDENTIFIER, className)
+    let batchInsertSQLFuncName = Token(TokenKind.IDENTIFIER, className + "BatchInsertSQL")
+    let nameLit = Token(TokenKind.STRING_LITERAL, className)
+
+    quote(
+        extend Tx {
+            public func batchSave(entities: Array<$(cn)>): Unit {
+                if (entities.size == 0) { return }
+                for (_bi_ in 0..entities.size) {
+                    let e = entities[_bi_]
+                    let scope = Scope<$(cn)>(e)
+                    scope.db = Some(this)
+                    if (this.ref.isSome()) { this.ref.getOrThrow().executeHooks($(nameLit), HookKind.TxBeforeCreate, scope) }
+                    if (scope.aborted) { throw scope.error.getOrThrow() }
+                }
+                let (sql, params) = $(batchInsertSQLFuncName)(entities)
+                let result = this.execute(sql, params)
+                let baseId = result.lastInsertId
+                for (_bi_ in 0..entities.size) {
+                    entities[_bi_].id = baseId + _bi_
+                    let afterScope = Scope<$(cn)>(entities[_bi_])
+                    afterScope.db = Some(this)
+                    if (this.ref.isSome()) { this.ref.getOrThrow().executeHooks($(nameLit), HookKind.TxAfterCreate, afterScope) }
+                }
+            }
+        }
+    )
+}
+
 func buildUpdateSQLString(fields: ArrayList<FieldInfo>, tableName: String): String {
     var setClauses = ArrayList<String>()
     for (f in fields) {
@@ -973,6 +1046,8 @@ public macro Refine(input: Tokens): Tokens {
     let relClass = buildRelClass(className, mergedRels)
     let insertSQLFunc = buildInsertSQLFunc(className, fields, tableName)
     let txSaveExtend = buildTxSaveExtend(className)
+    let batchInsertSQLFunc = buildBatchInsertSQLFunc(className, fields, tableName)
+    let txBatchSaveExtend = buildTxBatchSaveExtend(className)
     let updateSQLFunc = buildUpdateSQLFunc(className, fields, tableName)
     let txUpdateExtend = buildTxUpdateExtend(className)
     let rowMapper = buildRowMapper(className, classDecl, mergedRels)
@@ -988,6 +1063,8 @@ public macro Refine(input: Tokens): Tokens {
             colsStruct + Token(TokenKind.NL) + Token(TokenKind.NL) + relClass +
             Token(TokenKind.NL) + Token(TokenKind.NL) + insertSQLFunc +
             Token(TokenKind.NL) + Token(TokenKind.NL) + txSaveExtend +
+            Token(TokenKind.NL) + Token(TokenKind.NL) + batchInsertSQLFunc +
+            Token(TokenKind.NL) + Token(TokenKind.NL) + txBatchSaveExtend +
             Token(TokenKind.NL) + Token(TokenKind.NL) + updateSQLFunc +
             Token(TokenKind.NL) + Token(TokenKind.NL) + txUpdateExtend +
             Token(TokenKind.NL) + Token(TokenKind.NL) + deleteSQLFunc +
@@ -1003,6 +1080,8 @@ public macro Refine(input: Tokens): Tokens {
             colsStruct + Token(TokenKind.NL) + Token(TokenKind.NL) + relClass +
             Token(TokenKind.NL) + Token(TokenKind.NL) + insertSQLFunc +
             Token(TokenKind.NL) + Token(TokenKind.NL) + txSaveExtend +
+            Token(TokenKind.NL) + Token(TokenKind.NL) + batchInsertSQLFunc +
+            Token(TokenKind.NL) + Token(TokenKind.NL) + txBatchSaveExtend +
             Token(TokenKind.NL) + Token(TokenKind.NL) + updateSQLFunc +
             Token(TokenKind.NL) + Token(TokenKind.NL) + txUpdateExtend +
             Token(TokenKind.NL) + Token(TokenKind.NL) + deleteSQLFunc +
