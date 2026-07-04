@@ -55,7 +55,7 @@ export default defineConfig({
       ],
     },
     socialLinks: [
-      { icon: 'github', link: 'https://github.com/anomalyco/refine' },
+      { icon: 'github', link: 'https://github.com/ystyle/refine' },
     ],
     footer: {
       message: 'MIT License',

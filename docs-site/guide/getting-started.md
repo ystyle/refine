@@ -4,7 +4,7 @@
 
 ```toml
 [dependencies]
-refine = { git = "https://github.com/anomalyco/refine", branch = "master" }
+refine = { git = "https://atomgit.com/ystyle/refine.git", branch = "master" }
 ```
 
 ## 定义实体
