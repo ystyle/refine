@@ -43,7 +43,7 @@ class Post {
     @Rel[has_many, Comment, post_id]
     var comments: ArrayList<Comment> = ArrayList<Comment>()
 
-    @Rel[ref_many, Tag, post_tags]
+    @Ref[Tag, via: post_tags]
     var tags: ArrayList<Tag> = ArrayList<Tag>()
 }
 

@@ -134,7 +134,7 @@ class Order {
     var invoice: Option<Invoice> = None
 
     // ref_many: 引用标签，删单标签还在
-    @Rel[ref_many, Tag, order_tags]
+    @Ref[Tag, via: order_tags]
     var tags: ArrayList<Tag> = ArrayList<Tag>()
 }
 

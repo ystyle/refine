@@ -95,7 +95,7 @@ func mergeAnnotationRels(rels: ArrayList<RelInfo>, refMessages: ArrayList<MacroM
     for (m in refMessages) {
         let fieldName = m.getString("fieldName")
         let target = m.getString("target")
-        let fk = m.getString("fk")
+        let kind = m.getString("kind")
         let relFields = ArrayList<String>()
         if (m.hasItem("fields")) {
             let fs = m.getString("fields")
@@ -103,7 +103,13 @@ func mergeAnnotationRels(rels: ArrayList<RelInfo>, refMessages: ArrayList<MacroM
         } else {
             relFields.add("id")
         }
-        result.add(RelInfo(fieldName, "ref_to", target, fk, relFields, ""))
+        if (kind == "ref_many") {
+            let via = m.getString("via")
+            result.add(RelInfo(fieldName, "ref_many", target, "", relFields, via))
+        } else {
+            let fk = m.getString("fk")
+            result.add(RelInfo(fieldName, "ref_to", target, fk, relFields, ""))
+        }
     }
     for (m in relMessages) {
         let fieldName = m.getString("fieldName")
@@ -120,8 +126,6 @@ func mergeAnnotationRels(rels: ArrayList<RelInfo>, refMessages: ArrayList<MacroM
         }
         if (kind == "has_many" || kind == "has_one") {
             result.add(RelInfo(fieldName, kind, target, viaOrBy, relFields, ""))
-        } else {
-            result.add(RelInfo(fieldName, kind, target, "", relFields, viaOrBy))
         }
     }
     result
@@ -1018,12 +1022,18 @@ public macro Ref(attr: Tokens, input: Tokens): Tokens {
     let fieldName = decl.identifier.value
     var target = ""
     var fk = fieldName + "_id"
+    var via = ""
     var fieldsStr = ""
 
-    if (attr.size >= 4 && attr[2].kind == TokenKind.IDENTIFIER && attr[2].value == "target") {
+    if (attr.size >= 4 && attr[2].kind == TokenKind.IDENTIFIER) {
+        // Check if first token is a positional target or a named arg keyword
+        if (attr[0].kind == TokenKind.IDENTIFIER && attr[0].value != "target" && attr[0].value != "by" && attr[0].value != "via" && attr[0].value != "fields") {
+            target = attr[0].value
+        }
         for (i in 0..attr.size) {
             if (attr[i].kind == TokenKind.IDENTIFIER && attr[i].value == "target" && i + 2 < attr.size) { target = attr[i + 2].value }
             if (attr[i].kind == TokenKind.IDENTIFIER && attr[i].value == "by" && i + 2 < attr.size) { fk = attr[i + 2].value }
+            if (attr[i].kind == TokenKind.IDENTIFIER && attr[i].value == "via" && i + 2 < attr.size) { via = attr[i + 2].value }
             if (attr[i].kind == TokenKind.IDENTIFIER && attr[i].value == "fields" && i + 2 < attr.size) {
                 var fieldsValues = ArrayList<String>()
                 var j = i + 2
@@ -1047,14 +1057,21 @@ public macro Ref(attr: Tokens, input: Tokens): Tokens {
         var parsingTarget = true
         for (t in attr) {
             if (t.kind == TokenKind.IDENTIFIER) {
-                if (parsingTarget) { target = t.value; parsingTarget = false }
-                else { fk = t.value }
+                if (t.value == "via") { via = t.value }
+                else if (parsingTarget) { target = t.value; parsingTarget = false }
+                else if (via == "") { fk = t.value }
             }
         }
     }
     if (target != "") {
-        setItem("fieldName", fieldName); setItem("kind", "ref_to")
-        setItem("target", target); setItem("fk", fk)
+        setItem("fieldName", fieldName)
+        if (via != "") {
+            setItem("kind", "ref_many")
+            setItem("target", target); setItem("via", via)
+        } else {
+            setItem("kind", "ref_to")
+            setItem("target", target); setItem("fk", fk)
+        }
         if (fieldsStr != "") { setItem("fields", fieldsStr) }
     }
     input
@@ -1064,13 +1081,25 @@ public macro Rel(attr: Tokens, input: Tokens): Tokens {
     if (attr.size == 0) { return input }
     let decl = parseDecl(input)
     let fieldName = decl.identifier.value
-    var kind = ""; var target = ""; var viaOrBy = ""; var fieldsStr = ""
+    var target = ""; var viaOrBy = ""; var fieldsStr = ""
 
-    if (attr.size >= 4 && attr[2].kind == TokenKind.IDENTIFIER && attr[2].value == "target") {
+    if (attr.size >= 4 && attr[2].kind == TokenKind.IDENTIFIER) {
+        if (attr[0].kind == TokenKind.IDENTIFIER && (attr[0].value == "has_one" || attr[0].value == "has_many")) {
+            // Legacy format: @Rel[has_many, Target, fk]
+            for (t in attr) {
+                if (t.kind == TokenKind.IDENTIFIER) {
+                    if (t.value != "has_one" && t.value != "has_many") {
+                        if (target == "") { target = t.value }
+                        else if (viaOrBy == "") { viaOrBy = t.value }
+                    }
+                }
+            }
+        } else if (attr[0].kind == TokenKind.IDENTIFIER && attr[0].value != "target" && attr[0].value != "by" && attr[0].value != "fields") {
+            target = attr[0].value
+        }
         for (i in 0..attr.size) {
             if (attr[i].kind == TokenKind.IDENTIFIER && attr[i].value == "target" && i + 2 < attr.size) { target = attr[i + 2].value }
             if (attr[i].kind == TokenKind.IDENTIFIER && attr[i].value == "by" && i + 2 < attr.size) { viaOrBy = attr[i + 2].value }
-            if (attr[i].kind == TokenKind.IDENTIFIER && attr[i].value == "via" && i + 2 < attr.size) { viaOrBy = attr[i + 2].value }
             if (attr[i].kind == TokenKind.IDENTIFIER && attr[i].value == "fields" && i + 2 < attr.size) {
                 var fieldsValues = ArrayList<String>()
                 var j = i + 2
@@ -1090,17 +1119,20 @@ public macro Rel(attr: Tokens, input: Tokens): Tokens {
                 }
             }
         }
-        if (attr[0].kind == TokenKind.IDENTIFIER) { kind = attr[0].value }
     } else {
         var index = 0
         for (t in attr) {
             if (t.kind == TokenKind.IDENTIFIER) {
-                match (index) { case 0 => kind = t.value; case 1 => target = t.value; case 2 => viaOrBy = t.value; case _ => () }
+                if (t.value == "has_one" || t.value == "has_many") { continue }
+                match (index) { case 0 => target = t.value; case 1 => viaOrBy = t.value; case _ => () }
                 index++
             }
         }
     }
-    if (kind != "" && target != "") {
+    if (target != "") {
+        // Auto-detect kind from field type
+        let inputStr = input.toString()
+        let kind = if (inputStr.contains("ArrayList") || inputStr.contains("Array")) { "has_many" } else { "has_one" }
         setItem("fieldName", fieldName); setItem("kind", kind); setItem("target", target)
         if (viaOrBy != "") { setItem("via", viaOrBy) }
         if (fieldsStr != "") { setItem("fields", fieldsStr) }

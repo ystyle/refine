@@ -9,7 +9,7 @@ Refine 的关联体系按 **拥有** 和 **引用** 二分：
 | `@Ref[Target, fk]` | 引用一个 | `Option<Target>` | `LEFT JOIN target ON source.fk = target.id` |
 | `@Rel[has_one, Target, fk]` | 拥有一个 | `Option<Target>` | `LEFT JOIN target ON source.id = target.fk` |
 | `@Rel[has_many, Target, fk]` | 拥有多个 | `ArrayList<Target>` | LEFT JOIN + 结果去重 |
-| `@Rel[ref_many, Target, via]` | 引用多个 | `ArrayList<Target>` | 两次 LEFT JOIN（via 中间表） |
+| `@Ref[Target, via: ...]` | 引用多个 | `ArrayList<Target>` | 两次 LEFT JOIN（via 中间表） |
 
 ### 拥有 vs 引用
 
@@ -42,7 +42,7 @@ class Order {
     @Rel[has_one, Invoice, order_id]
     var invoice: Option<Invoice> = None
 
-    @Rel[ref_many, Tag, order_tags]
+    @Ref[Tag, via: order_tags]
     var tags: ArrayList<Tag> = ArrayList<Tag>()
 }
 
@@ -162,7 +162,7 @@ loadCreator(tx: Tx): Option<User>    // 按 fk 加载关联
 getCreator(): Option<User>           // 返回已预加载的关联
 ```
 
-### @Rel[ref_many] 生成
+### @Ref[ref_many] 生成
 
 ```
 loadTags(tx: Tx): ArrayList<Tag>     // 通过中间表加载关联

@@ -38,7 +38,7 @@ class Order {
     var invoice: Option<Invoice> = None
 
     // ref_many: 引用标签，删单标签还在
-    @Rel[ref_many, Tag, order_tags]
+    @Ref[Tag, via: order_tags]
     var tags: ArrayList<Tag> = ArrayList<Tag>()
 }
 
@@ -82,7 +82,7 @@ Refine 的核心特色：按 **拥有** 和 **引用** 二分，四种关联语�
 | `@Ref[Target, fk]` | ref_one | 引用一个 | 当前表 | 目标保留 |
 | `@Rel[has_one, Target, fk]` | has_one | 拥有一个 | 目标表 | 级联删除 |
 | `@Rel[has_many, Target, fk]` | has_many | 拥有多个 | 目标表 | 级联删除 |
-| `@Rel[ref_many, Target, via]` | ref_many | 引用多个 | 中间表 | 目标保留 |
+| `@Ref[Target, via: ...]` | ref_many | 引用多个 | 中间表 | 目标保留 |
 
 ## 安装
 

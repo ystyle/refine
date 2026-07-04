@@ -9,7 +9,7 @@
 | `RefTo<T>` | `@Ref[Target, fk]` | 引用一个（ref_one） | 当前表 | 不删除 |
 | `HasOne<T>` | `@Rel[has_one, Target, fk]` | 拥有一个 | 目标表 | 随主表删除 |
 | `HasMany<T>` | `@Rel[has_many, Target, fk]` | 拥有多个 | 目标表 | 随主表删除 |
-| `RefMany<T>` | `@Rel[ref_many, Target, via]` | 引用多个 | 中间表 | 不删除 |
+| `RefMany<T>` | `@Ref[Target, via: ...]` | 引用多个 | 中间表 | 不删除 |
 
 ## IRelation 接口
 
@@ -34,7 +34,7 @@ enum RelationKind {
     | RefToRel     // @Ref — ref_one
     | HasOneRel    // @Rel[has_one]
     | HasManyRel   // @Rel[has_many]
-    | RefManyRel   // @Rel[ref_many]
+    | RefManyRel   // @Ref[Tag, via: ...] — ref_many
 }
 ```
 

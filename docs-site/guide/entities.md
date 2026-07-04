@@ -55,7 +55,7 @@ class Article {
 
 ## 关联字段
 
-四种关联：引用 (ref) 和拥有 (has)，各有一对一和一对多。
+四种关联：**`@Ref` = 引用，`@Rel` = 拥有**，各有一对一和一对多。
 
 ### @Ref\[Target, foreignKey] — ref_one
 
@@ -74,13 +74,30 @@ class Order {
 }
 ```
 
-### @Rel\[kind, Target, foreignKey/via]
+### @Ref\[Target, via: ...] — ref_many
+
+引用多个。通过中间表间接引用。你删，目标还在。
+
+```cangjie
+@Refine
+class Order {
+    var id: Int64 = 0
+    var total: Float64 = 0.0
+    var status: String = ""
+
+    @Ref[Tag, via: order_tags]
+    var tags: ArrayList<Tag> = ArrayList<Tag>()
+}
+```
+
+`via` 参数指定中间表名。中间表需含 `sourceTable_id` 和 `targetTable_id` 两列。
+
+### @Rel\[kind, Target, foreignKey]
 
 | kind | 语义 | Cangjie 类型 | SQL |
 |---|---|---|---|
 | `has_many` | 拥有多个 | `ArrayList<Target>` | LEFT JOIN ON source.id = target.fk |
 | `has_one` | 拥有一个 | `Option<Target>` | LEFT JOIN ON source.id = target.fk |
-| `ref_many` | 引用多个 | `ArrayList<Target>` | 两次 LEFT JOIN（via 中间表） |
 
 ```cangjie
 @Refine
@@ -90,10 +107,6 @@ class Order {
     var status: String = ""
     var user_id: Int64 = 0
 
-    // ref_one: 引用创建人，人不在了订单还在
-    @Ref[User, user_id]
-    var creator: Option<User> = None
-
     // has_many: 拥有明细，删单明细跟着删
     @Rel[has_many, OrderItem, order_id]
     var items: ArrayList<OrderItem> = ArrayList<OrderItem>()
@@ -101,10 +114,6 @@ class Order {
     // has_one: 拥有一条发票记录，删单发票跟着删
     @Rel[has_one, Invoice, order_id]
     var invoice: Option<Invoice> = None
-
-    // ref_many: 引用标签，删单标签还在
-    @Rel[ref_many, Tag, order_tags]
-    var tags: ArrayList<Tag> = ArrayList<Tag>()
 }
 
 @Refine
@@ -132,7 +141,6 @@ class Tag {
 ```
 
 - `has_one` / `has_many`：被关联物外键指向你的 id（外键在目标表），你拥有其生命周期
-- `ref_many`：`via` 参数指定中间表名（如 `order_tags`），中间表需含 `source_id` 和 `target_id`
 
 ## 软删除
 

@@ -45,7 +45,7 @@ class PostWithRel {
     @Ref[User, user_id]
     var author: Option<User> = None
 
-    @Rel[ref_many, Tag, post_tags]
+    @Ref[Tag, via: post_tags]
     var tags: ArrayList<Tag> = ArrayList<Tag>()
 
     @Rel[has_many, Comment, post_id]
