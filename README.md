@@ -88,12 +88,15 @@ Refine 的核心特色：按 **拥有** 和 **引用** 二分，四种关联语�
 
 ```toml
 [dependencies]
-refine = { git = "https://github.com/anomalyco/refine", branch = "master" }
+refine = { git = "https://atomgit.com/ystyle/refine.git", branch = "master" }
 ```
+
+> GitHub 镜像：[`https://github.com/ystyle/refine`](https://github.com/ystyle/refine)
 
 ## 文档
 
-- [指南与 API 参考](docs-site/)
+- [在线文档](https://ystyle.top/refine/)
+- [本地文档](docs-site/)
 - [特性规划](docs/planned-features.md)
 
 ## 许可证
