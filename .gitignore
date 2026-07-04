@@ -34,3 +34,4 @@ docs/dist/
 
 # IDE / build artifacts
 .arts/
+log.txt
