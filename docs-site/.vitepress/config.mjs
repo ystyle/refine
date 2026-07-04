@@ -5,7 +5,7 @@ export default defineConfig({
   description: 'Cangjie 编译期类型安全 ORM',
   lang: 'zh-CN',
   base: '/refine/',
-  outDir: '../dist',
+  outDir: '../docs/dist',
   themeConfig: {
     nav: [
       { text: '指南', link: '/guide/getting-started' },

@@ -93,7 +93,7 @@ refine = { git = "https://github.com/anomalyco/refine", branch = "master" }
 
 ## 文档
 
-- [指南与 API 参考](docs/site/)
+- [指南与 API 参考](docs-site/)
 - [特性规划](docs/planned-features.md)
 
 ## 许可证
