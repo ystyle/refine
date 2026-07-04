@@ -15,6 +15,30 @@ rf.transaction { tx: Tx =>
 // save 后 user.id 自动填充为数据库自增 ID
 ```
 
+### 批量插入
+
+批量插入多条记录，生成单条 `INSERT ... VALUES (?, ?), (?, ?), ...` SQL：
+
+```cangjie
+rf.transaction { tx: Tx =>
+    let u1 = User()
+    u1.name = "Alice"
+    u1.email = "alice@example.com"
+    let u2 = User()
+    u2.name = "Bob"
+    u2.email = "bob@example.com"
+
+    tx.batchSave([u1, u2])
+    // INSERT INTO user (name, email) VALUES (?, ?), (?, ?)
+    // u1.id = lastInsertId, u2.id = lastInsertId + 1
+}
+```
+
+- 所有参数扁平化收集到单条 SQL，避免 N 次 INSERT
+- ID 写回：`result.lastInsertId` 为第一条 ID，后续按 `baseId + i` 推算（适用自增主键）
+- 支持 `TxBeforeCreate` / `TxAfterCreate` 钩子（每个实体独立触发）
+- 空数组直接返回，不执行 SQL
+
 ### 钩子校验
 
 注册 `BeforeCreate` 钩子在插入前校验：
