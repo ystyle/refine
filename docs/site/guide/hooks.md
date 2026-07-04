@@ -16,8 +16,11 @@ enum HookKind {
     | BeforeUpdate | AfterUpdate
     | BeforeDelete | AfterDelete
 
+    // 查询后
+    | AfterFind
+
     // 保留 / 待实现
-    | BeforeSave | AfterSave | AfterFind
+    | BeforeSave | AfterSave
 }
 ```
 
