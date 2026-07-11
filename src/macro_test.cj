@@ -43,6 +43,21 @@ class UuidPost {
 }
 
 @Refine
+class ManualIdPost {
+    @Id[auto, false]
+    var id: Int64 = 0
+    var title: String = ""
+}
+
+@Refine
+class OrderTag {
+    @Id[]
+    var order_id: Int64 = 0
+    @Id[]
+    var tag_id: Int64 = 0
+}
+
+@Refine
 class PostWithRel {
     var id: Int64 = 0
     var title: String = ""
@@ -372,6 +387,94 @@ public class MacroSaveTest {
         @Expect(p2.id != "", true)
         @Expect(p1.id != p2.id, true)
         @Expect(conn.stmt.capturedSql.contains("INSERT INTO uuidPost (id, title, content) VALUES (?, ?, ?), (?, ?, ?)"), true)
+    }
+
+    // ─── @Id / Compound Key Tests ──────────────────────
+
+    @TestCase
+    public func testTxSaveManualIdPostIncludesId(): Unit {
+        clearHooks()
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+
+        let p = ManualIdPost()
+        p.id = 42
+        p.title = "Manual"
+        tx.save(p)
+
+        @Expect(conn.stmt.capturedSql.contains("INSERT INTO manualIdPost (id, title)"), true)
+    }
+
+    @TestCase
+    public func testTxUpdateManualIdPost(): Unit {
+        clearHooks()
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+
+        let p = ManualIdPost()
+        p.id = 1
+        p.title = "Updated"
+        tx.update(p)
+
+        @Expect(conn.stmt.capturedSql.contains("UPDATE manualIdPost SET"), true)
+        @Expect(conn.stmt.capturedSql.contains("WHERE id = ?"), true)
+    }
+
+    @TestCase
+    public func testTxDeleteManualIdPost(): Unit {
+        clearHooks()
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+
+        let p = ManualIdPost()
+        p.id = 1
+        tx.delete(p)
+
+        @Expect(conn.stmt.capturedSql.contains("DELETE FROM manualIdPost"), true)
+        @Expect(conn.stmt.capturedSql.contains("WHERE id = ?"), true)
+    }
+
+    @TestCase
+    public func testTxSaveOrderTagCompoundPk(): Unit {
+        clearHooks()
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+
+        let ot = OrderTag()
+        ot.order_id = 1
+        ot.tag_id = 2
+        tx.save(ot)
+
+        @Expect(conn.stmt.capturedSql.contains("INSERT INTO orderTag (order_id, tag_id)"), true)
+        @Expect(conn.stmt.capturedSql.contains("VALUES (?, ?)"), true)
+    }
+
+    @TestCase
+    public func testTxUpdateOrderTagCompoundPk(): Unit {
+        clearHooks()
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+
+        let ot = OrderTag()
+        ot.order_id = 1
+        ot.tag_id = 2
+        tx.update(ot)
+
+        @Expect(conn.stmt.capturedSql.contains("WHERE order_id = ? AND tag_id = ?"), true)
+    }
+
+    @TestCase
+    public func testTxDeleteOrderTagCompoundPk(): Unit {
+        clearHooks()
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+
+        let ot = OrderTag()
+        ot.order_id = 1
+        ot.tag_id = 2
+        tx.delete(ot)
+
+        @Expect(conn.stmt.capturedSql.contains("WHERE order_id = ? AND tag_id = ?"), true)
     }
 }
 

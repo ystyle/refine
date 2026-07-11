@@ -7,10 +7,15 @@ struct FieldInfo {
     var name: String
     var typeName: String
     var storageOverride: String
-    public init(name: String, typeName: String, storageOverride: String) {
+    var isPk: Bool
+    var autoInc: Bool
+    public init(name: String, typeName: String, storageOverride: String,
+                isPk: Bool, autoInc: Bool) {
         this.name = name
         this.typeName = typeName
         this.storageOverride = storageOverride
+        this.isPk = isPk
+        this.autoInc = autoInc
     }
 }
 
@@ -38,7 +43,10 @@ func extractFields(cd: ClassDecl): ArrayList<FieldInfo> {
         match (cd.body.decls[i] as VarDecl) {
             case Some(vd) =>
                 let typeStr = vd.declType.toTokens().toString()
-                let info = FieldInfo(vd.identifier.value, typeStr, "")
+                let fn = vd.identifier.value
+                let isPk = (fn == "id")
+                let autoInc = (fn == "id" && typeStr == "Int64")
+                let info = FieldInfo(fn, typeStr, "", isPk, autoInc)
                 list.add(info)
             case _ => ()
         }
@@ -147,12 +155,55 @@ func isRelationField(typeName: String): Bool {
 
 func detectIdFieldType(fields: ArrayList<FieldInfo>): String {
     for (f in fields) {
-        if (f.name == "id") { return f.typeName }
+        if (f.isPk && f.typeName == "String") { return "String" }
+        if (f.isPk && f.typeName == "Int64") { return "Int64" }
     }
     ""
 }
 
-func skipIdInInsert(idFieldType: String): Bool { idFieldType == "Int64" }
+func getPkFields(fields: ArrayList<FieldInfo>): ArrayList<FieldInfo> {
+    let result = ArrayList<FieldInfo>()
+    for (f in fields) { if (f.isPk) { result.add(f) } }
+    result
+}
+
+func shouldSkipInInsert(f: FieldInfo): Bool {
+    isRelationField(f.typeName) || (f.isPk && f.autoInc)
+}
+
+func applyIdAnnotations(fields: ArrayList<FieldInfo>, idMessages: ArrayList<MacroMessage>): ArrayList<FieldInfo> {
+    if (idMessages.size == 0) { return fields }
+    var result = ArrayList<FieldInfo>()
+    for (i in 0..fields.size) {
+        var f = fields.get(i).getOrThrow()
+        f.isPk = false; f.autoInc = false
+        result.add(f)
+    }
+    for (m in idMessages) {
+        let fieldName = m.getString("fieldName")
+        var next = ArrayList<FieldInfo>()
+        for (i in 0..result.size) {
+            let f = result.get(i).getOrThrow()
+            if (f.name == fieldName) {
+                var updated = f
+                updated.isPk = true
+                if (m.hasItem("auto") && m.getString("auto") == "true" && f.typeName == "Int64") {
+                    updated.autoInc = true
+                }
+                next.add(updated)
+            } else { next.add(f) }
+        }
+        result = next
+    }
+    result
+}
+
+func buildPkWhereClause(pkFields: ArrayList<FieldInfo>): String {
+    var parts = ArrayList<String>()
+    for (pk in pkFields) { parts.add(pk.name + " = ?") }
+    if (parts.size == 0) { return "WHERE id = ?" }
+    " WHERE " + String.join(parts.toArray(), delimiter: " AND ")
+}
 
 func typeNameToStorageType(typeName: String): String {
     if (typeName == "Int8" || typeName == "Int16" || typeName == "Int32" || typeName == "Int64" ||
@@ -317,12 +368,11 @@ func buildDeleteMethod(className: String): Tokens {
 
 // --- SQL Generation ---
 
-func buildInsertSQLString(fields: ArrayList<FieldInfo>, tableName: String, idFieldType: String): String {
+func buildInsertSQLString(fields: ArrayList<FieldInfo>, tableName: String): String {
     var colNames = ArrayList<String>()
     var placeholders = ArrayList<String>()
-    let skipId = skipIdInInsert(idFieldType)
     for (f in fields) {
-        if ((f.name == "id" && skipId) || isRelationField(f.typeName)) { continue }
+        if (shouldSkipInInsert(f)) { continue }
         colNames.add(f.name)
         placeholders.add("?")
     }
@@ -330,13 +380,12 @@ func buildInsertSQLString(fields: ArrayList<FieldInfo>, tableName: String, idFie
         ") VALUES (" + String.join(placeholders.toArray(), delimiter: ", ") + ")"
 }
 
-func buildEntityArrayTokens(fields: ArrayList<FieldInfo>, idFieldType: String): Tokens {
-    let skipId = skipIdInInsert(idFieldType)
+func buildEntityArrayTokens(fields: ArrayList<FieldInfo>): Tokens {
     var arr = Tokens()
     arr = arr + Token(TokenKind.LSQUARE)
     var first = true
     for (f in fields) {
-        if ((f.name == "id" && skipId) || isRelationField(f.typeName)) { continue }
+        if (shouldSkipInInsert(f)) { continue }
         if (!first) { arr = arr + Token(TokenKind.COMMA) }
         arr = arr + Token(TokenKind.IDENTIFIER, "entity")
         arr = arr + Token(TokenKind.DOT)
@@ -362,23 +411,23 @@ func buildSelectColumnTokens(fields: ArrayList<FieldInfo>): Tokens {
     arr
 }
 
-func buildInsertSQLFunc(className: String, fields: ArrayList<FieldInfo>, tableName: String, idFieldType: String): Tokens {
+func buildInsertSQLFunc(className: String, fields: ArrayList<FieldInfo>, tableName: String): Tokens {
     let funcName = Token(TokenKind.IDENTIFIER, className + "InsertSQL")
     let cn = Token(TokenKind.IDENTIFIER, className)
-    let sqlStr = buildInsertSQLString(fields, tableName, idFieldType)
+    let sqlStr = buildInsertSQLString(fields, tableName)
     let sqlToken = Token(TokenKind.STRING_LITERAL, sqlStr)
-    let entityArray = buildEntityArrayTokens(fields, idFieldType)
+    let entityArray = buildEntityArrayTokens(fields)
     quote(
         func $(funcName)(entity: $(cn)): (String, Array<Any>) { ($(sqlToken), $(entityArray)) }
     )
 }
 
-func buildTxSaveExtend(className: String, isStringId: Bool): Tokens {
+func buildTxSaveExtend(className: String, hasStringPk: Bool, hasAutoPk: Bool): Tokens {
     let cn = Token(TokenKind.IDENTIFIER, className)
     let insertSQLFuncName = Token(TokenKind.IDENTIFIER, className + "InsertSQL")
     let nameLit = Token(TokenKind.STRING_LITERAL, className)
 
-    if (isStringId) {
+    if (hasStringPk) {
         quote(
             extend Tx {
                 public func save(entity: $(cn)): Unit {
@@ -395,7 +444,7 @@ func buildTxSaveExtend(className: String, isStringId: Bool): Tokens {
                 }
             }
         )
-    } else {
+    } else if (hasAutoPk) {
         quote(
             extend Tx {
                 public func save(entity: $(cn)): Unit {
@@ -412,18 +461,33 @@ func buildTxSaveExtend(className: String, isStringId: Bool): Tokens {
                 }
             }
         )
+    } else {
+        quote(
+            extend Tx {
+                public func save(entity: $(cn)): Unit {
+                    let scope = Scope<$(cn)>(entity)
+                    scope.db = Some(this)
+                    if (this.ref.isSome()) { this.ref.getOrThrow().executeHooks($(nameLit), HookKind.TxBeforeCreate, scope) }
+                    if (scope.aborted) { throw scope.error.getOrThrow() }
+                    let (sql, params) = $(insertSQLFuncName)(entity)
+                    let _ = this.execute(sql, params)
+                    let afterScope = Scope<$(cn)>(entity)
+                    afterScope.db = Some(this)
+                    if (this.ref.isSome()) { this.ref.getOrThrow().executeHooks($(nameLit), HookKind.TxAfterCreate, afterScope) }
+                }
+            }
+        )
     }
 }
 
-func buildBatchInsertSQLFunc(className: String, fields: ArrayList<FieldInfo>, tableName: String, idFieldType: String): Tokens {
+func buildBatchInsertSQLFunc(className: String, fields: ArrayList<FieldInfo>, tableName: String): Tokens {
     let funcName = Token(TokenKind.IDENTIFIER, className + "BatchInsertSQL")
     let cn = Token(TokenKind.IDENTIFIER, className)
-    let skipId = skipIdInInsert(idFieldType)
 
     var colNames = ArrayList<String>()
     var paramCount = 0
     for (f in fields) {
-        if ((f.name == "id" && skipId) || isRelationField(f.typeName)) { continue }
+        if (shouldSkipInInsert(f)) { continue }
         colNames.add(f.name)
         paramCount++
     }
@@ -438,7 +502,7 @@ func buildBatchInsertSQLFunc(className: String, fields: ArrayList<FieldInfo>, ta
 
     var addParams = Tokens()
     for (f in fields) {
-        if ((f.name == "id" && skipId) || isRelationField(f.typeName)) { continue }
+        if (shouldSkipInInsert(f)) { continue }
         addParams = addParams + quote(
             allParams.add(entities[_i_].$(Token(TokenKind.IDENTIFIER, f.name)));
         )
@@ -459,12 +523,12 @@ func buildBatchInsertSQLFunc(className: String, fields: ArrayList<FieldInfo>, ta
     )
 }
 
-func buildTxBatchSaveExtend(className: String, isStringId: Bool): Tokens {
+func buildTxBatchSaveExtend(className: String, hasStringPk: Bool, hasAutoPk: Bool): Tokens {
     let cn = Token(TokenKind.IDENTIFIER, className)
     let batchInsertSQLFuncName = Token(TokenKind.IDENTIFIER, className + "BatchInsertSQL")
     let nameLit = Token(TokenKind.STRING_LITERAL, className)
 
-    if (isStringId) {
+    if (hasStringPk) {
         quote(
             extend Tx {
                 public func batchSave(entities: Array<$(cn)>): Unit {
@@ -489,7 +553,7 @@ func buildTxBatchSaveExtend(className: String, isStringId: Bool): Tokens {
                 }
             }
         )
-    } else {
+    } else if (hasAutoPk) {
         quote(
             extend Tx {
                 public func batchSave(entities: Array<$(cn)>): Unit {
@@ -513,44 +577,69 @@ func buildTxBatchSaveExtend(className: String, isStringId: Bool): Tokens {
                 }
             }
         )
+    } else {
+        quote(
+            extend Tx {
+                public func batchSave(entities: Array<$(cn)>): Unit {
+                    if (entities.size == 0) { return }
+                    for (_bi_ in 0..entities.size) {
+                        let e = entities[_bi_]
+                        let scope = Scope<$(cn)>(e)
+                        scope.db = Some(this)
+                        if (this.ref.isSome()) { this.ref.getOrThrow().executeHooks($(nameLit), HookKind.TxBeforeCreate, scope) }
+                        if (scope.aborted) { throw scope.error.getOrThrow() }
+                    }
+                    let (sql, params) = $(batchInsertSQLFuncName)(entities)
+                    let _ = this.execute(sql, params)
+                    for (_bi_ in 0..entities.size) {
+                        let afterScope = Scope<$(cn)>(entities[_bi_])
+                        afterScope.db = Some(this)
+                        if (this.ref.isSome()) { this.ref.getOrThrow().executeHooks($(nameLit), HookKind.TxAfterCreate, afterScope) }
+                    }
+                }
+            }
+        )
     }
 }
 
-func buildUpdateSQLString(fields: ArrayList<FieldInfo>, tableName: String): String {
+func buildUpdateSQLString(fields: ArrayList<FieldInfo>, tableName: String, pkFields: ArrayList<FieldInfo>): String {
     var setClauses = ArrayList<String>()
     for (f in fields) {
-        if (f.name == "id" || isRelationField(f.typeName)) { continue }
+        if (f.isPk || isRelationField(f.typeName)) { continue }
         setClauses.add(f.name + " = ?")
     }
-    "UPDATE " + tableName + " SET " + String.join(setClauses.toArray(), delimiter: ", ") + " WHERE id = ?"
+    "UPDATE " + tableName + " SET " + String.join(setClauses.toArray(), delimiter: ", ") + buildPkWhereClause(pkFields)
 }
 
-func buildUpdateEntityArrayTokens(fields: ArrayList<FieldInfo>): Tokens {
+func buildUpdateEntityArrayTokens(fields: ArrayList<FieldInfo>, pkFields: ArrayList<FieldInfo>): Tokens {
     var arr = Tokens()
     arr = arr + Token(TokenKind.LSQUARE)
     var first = true
     for (f in fields) {
-        if (f.name == "id" || isRelationField(f.typeName)) { continue }
+        if (f.isPk || isRelationField(f.typeName)) { continue }
         if (!first) { arr = arr + Token(TokenKind.COMMA) }
         arr = arr + Token(TokenKind.IDENTIFIER, "entity")
         arr = arr + Token(TokenKind.DOT)
         arr = arr + Token(TokenKind.IDENTIFIER, f.name)
         first = false
     }
-    arr = arr + Token(TokenKind.COMMA)
-    arr = arr + Token(TokenKind.IDENTIFIER, "entity")
-    arr = arr + Token(TokenKind.DOT)
-    arr = arr + Token(TokenKind.IDENTIFIER, "id")
+    for (i in 0..pkFields.size) {
+        let pk = pkFields.get(i).getOrThrow()
+        if (first) { first = false } else { arr = arr + Token(TokenKind.COMMA) }
+        arr = arr + Token(TokenKind.IDENTIFIER, "entity")
+        arr = arr + Token(TokenKind.DOT)
+        arr = arr + Token(TokenKind.IDENTIFIER, pk.name)
+    }
     arr = arr + Token(TokenKind.RSQUARE)
     arr
 }
 
-func buildUpdateSQLFunc(className: String, fields: ArrayList<FieldInfo>, tableName: String): Tokens {
+func buildUpdateSQLFunc(className: String, fields: ArrayList<FieldInfo>, tableName: String, pkFields: ArrayList<FieldInfo>): Tokens {
     let funcName = Token(TokenKind.IDENTIFIER, className + "UpdateSQL")
     let cn = Token(TokenKind.IDENTIFIER, className)
-    let sqlStr = buildUpdateSQLString(fields, tableName)
+    let sqlStr = buildUpdateSQLString(fields, tableName, pkFields)
     let sqlToken = Token(TokenKind.STRING_LITERAL, sqlStr)
-    let entityArray = buildUpdateEntityArrayTokens(fields)
+    let entityArray = buildUpdateEntityArrayTokens(fields, pkFields)
     quote(
         func $(funcName)(entity: $(cn)): (String, Array<Any>) { ($(sqlToken), $(entityArray)) }
     )
@@ -577,52 +666,71 @@ func buildTxUpdateExtend(className: String): Tokens {
     )
 }
 
-func buildDeleteSQLString(tableName: String): String { "DELETE FROM " + tableName + " WHERE id = ?" }
-
-func buildSoftDeleteSQLString(tableName: String): String {
-    "UPDATE " + tableName + " SET deleted_at = ? WHERE id = ?"
+func buildDeleteSQLString(tableName: String, pkFields: ArrayList<FieldInfo>): String {
+    "DELETE FROM " + tableName + buildPkWhereClause(pkFields)
 }
 
-func buildDeleteEntityIdToken(): Tokens {
-    var arr = Tokens()
-    arr = arr + Token(TokenKind.LSQUARE)
-    arr = arr + Token(TokenKind.IDENTIFIER, "entity")
-    arr = arr + Token(TokenKind.DOT)
-    arr = arr + Token(TokenKind.IDENTIFIER, "id")
-    arr = arr + Token(TokenKind.RSQUARE)
-    arr
+func buildSoftDeleteSQLString(tableName: String, pkFields: ArrayList<FieldInfo>): String {
+    "UPDATE " + tableName + " SET deleted_at = ?" + buildPkWhereClause(pkFields)
 }
 
-func buildSoftDeleteEntityParamsToken(): Tokens {
+func buildSoftDeleteEntityParamsToken(pkFields: ArrayList<FieldInfo>): Tokens {
     var arr = Tokens()
     arr = arr + Token(TokenKind.LSQUARE)
     arr = arr + Token(TokenKind.IDENTIFIER, "1")
-    arr = arr + Token(TokenKind.COMMA)
-    arr = arr + Token(TokenKind.IDENTIFIER, "entity")
-    arr = arr + Token(TokenKind.DOT)
-    arr = arr + Token(TokenKind.IDENTIFIER, "id")
+    for (pk in pkFields) {
+        arr = arr + Token(TokenKind.COMMA)
+        arr = arr + Token(TokenKind.IDENTIFIER, "entity")
+        arr = arr + Token(TokenKind.DOT)
+        arr = arr + Token(TokenKind.IDENTIFIER, pk.name)
+    }
+    if (pkFields.size == 0) {
+        arr = arr + Token(TokenKind.COMMA)
+        arr = arr + Token(TokenKind.IDENTIFIER, "entity")
+        arr = arr + Token(TokenKind.DOT)
+        arr = arr + Token(TokenKind.IDENTIFIER, "id")
+    }
     arr = arr + Token(TokenKind.RSQUARE)
     arr
 }
 
-func buildDeleteSQLFunc(className: String, tableName: String): Tokens {
+func buildDeleteEntityParamsToken(pkFields: ArrayList<FieldInfo>): Tokens {
+    var arr = Tokens()
+    arr = arr + Token(TokenKind.LSQUARE)
+    var first = true
+    for (pk in pkFields) {
+        if (!first) { arr = arr + Token(TokenKind.COMMA) }
+        arr = arr + Token(TokenKind.IDENTIFIER, "entity")
+        arr = arr + Token(TokenKind.DOT)
+        arr = arr + Token(TokenKind.IDENTIFIER, pk.name)
+        first = false
+    }
+    if (first) {  // fallback
+        arr = arr + Token(TokenKind.IDENTIFIER, "entity")
+        arr = arr + Token(TokenKind.DOT)
+        arr = arr + Token(TokenKind.IDENTIFIER, "id")
+    }
+    arr = arr + Token(TokenKind.RSQUARE)
+    arr
+}
+
+func buildDeleteSQLFunc(className: String, tableName: String, pkFields: ArrayList<FieldInfo>): Tokens {
     let funcName = Token(TokenKind.IDENTIFIER, className + "DeleteSQL")
     let cn = Token(TokenKind.IDENTIFIER, className)
-    let sqlToken = Token(TokenKind.STRING_LITERAL, buildDeleteSQLString(tableName))
-    let entityArray = buildDeleteEntityIdToken()
+    let sqlToken = Token(TokenKind.STRING_LITERAL, buildDeleteSQLString(tableName, pkFields))
+    let entityArray = buildDeleteEntityParamsToken(pkFields)
     quote(
         func $(funcName)(entity: $(cn)): (String, Array<Any>) { ($(sqlToken), $(entityArray)) }
     )
 }
 
-func buildSoftDeleteSQLFunc(className: String, tableName: String): Tokens {
+func buildSoftDeleteSQLFunc(className: String, tableName: String, pkFields: ArrayList<FieldInfo>): Tokens {
     let funcName = Token(TokenKind.IDENTIFIER, className + "SoftDeleteSQL")
     let cn = Token(TokenKind.IDENTIFIER, className)
-    let sqlStr = buildSoftDeleteSQLString(tableName)
+    let sqlStr = buildSoftDeleteSQLString(tableName, pkFields)
+    let entityArray = buildSoftDeleteEntityParamsToken(pkFields)
     quote(
-        func $(funcName)(entity: $(cn)): (String, Array<Any>) {
-            ($(Token(TokenKind.STRING_LITERAL, sqlStr)), [1 as Any, entity.id])
-        }
+        func $(funcName)(entity: $(cn)): (String, Array<Any>) { ($(Token(TokenKind.STRING_LITERAL, sqlStr)), $(entityArray)) }
     )
 }
 
@@ -1022,10 +1130,15 @@ public macro Refine(input: Tokens): Tokens {
     }
 
     let fields = extractFields(classDecl)
-    let idFieldType = detectIdFieldType(fields)
-    let isStringId = (idFieldType == "String")
     let fieldMessages = getChildMessages("Field")
-    let mergedFields = mergeFieldOverrides(fields, fieldMessages)
+    var mergedFields = mergeFieldOverrides(fields, fieldMessages)
+    let idMessages = getChildMessages("Id")
+    mergedFields = applyIdAnnotations(mergedFields, idMessages)
+    let idFieldType = detectIdFieldType(mergedFields)
+    let isStringId = (idFieldType == "String")
+    let pkFields = getPkFields(mergedFields)
+    var hasAutoPk = false
+    for (i in 0..pkFields.size) { if (pkFields.get(i).getOrThrow().autoInc) { hasAutoPk = true; break } }
     let rels = detectRelations(fields)
 
     let refMessages = getChildMessages("Ref")
@@ -1105,20 +1218,20 @@ public macro Refine(input: Tokens): Tokens {
 
     let colsStruct = buildColsStruct(className, classDecl)
     let relClass = buildRelClass(className, mergedRels)
-    let insertSQLFunc = buildInsertSQLFunc(className, fields, tableName, idFieldType)
-    let txSaveExtend = buildTxSaveExtend(className, isStringId)
-    let batchInsertSQLFunc = buildBatchInsertSQLFunc(className, fields, tableName, idFieldType)
-    let txBatchSaveExtend = buildTxBatchSaveExtend(className, isStringId)
-    let updateSQLFunc = buildUpdateSQLFunc(className, fields, tableName)
+    let insertSQLFunc = buildInsertSQLFunc(className, mergedFields, tableName)
+    let txSaveExtend = buildTxSaveExtend(className, isStringId, hasAutoPk)
+    let batchInsertSQLFunc = buildBatchInsertSQLFunc(className, mergedFields, tableName)
+    let txBatchSaveExtend = buildTxBatchSaveExtend(className, isStringId, hasAutoPk)
+    let updateSQLFunc = buildUpdateSQLFunc(className, mergedFields, tableName, pkFields)
     let txUpdateExtend = buildTxUpdateExtend(className)
     let rowMapper = buildRowMapper(className, classDecl, mergedRels)
     buildRelationMethods(className, mergedRels, classDecl)
     let schemaClass = buildSchemaClass(className, mergedFields)
     let columnNamesFunc = buildColumnNamesFunc(className, classDecl)
-    var deleteSQLFunc = buildDeleteSQLFunc(className, tableName)
+    var deleteSQLFunc = buildDeleteSQLFunc(className, tableName, pkFields)
     var txDeleteExtend: Tokens
     if (isSoftDelete) {
-        let softDeleteSQLFunc = buildSoftDeleteSQLFunc(className, tableName)
+        let softDeleteSQLFunc = buildSoftDeleteSQLFunc(className, tableName, pkFields)
         txDeleteExtend = buildTxSoftDeleteExtend(className)
         classDecl.toTokens() + Token(TokenKind.NL) + Token(TokenKind.NL) +
             colsStruct + Token(TokenKind.NL) + Token(TokenKind.NL) + relClass +
@@ -1289,6 +1402,15 @@ public macro Field(attr: Tokens, input: Tokens): Tokens {
         if (attr[i].kind == TokenKind.IDENTIFIER) { storageType = attr[i].value; break }
     }
     setItem("fieldName", fieldName); setItem("storageType", storageType)
+    input
+}
+
+public macro Id(attr: Tokens, input: Tokens): Tokens {
+    let decl = parseDecl(input)
+    setItem("fieldName", decl.identifier.value)
+    if (attr.size >= 3) {
+        setItem("auto", attr[2].value)
+    }
     input
 }
 
