@@ -862,6 +862,65 @@ func buildRowMapper(className: String, cd: ClassDecl, rels: ArrayList<RelInfo>):
     )
 }
 
+func buildKeyExtractor(className: String, pkFields: ArrayList<FieldInfo>): Tokens {
+    let funcName = Token(TokenKind.IDENTIFIER, className + "KeyFromResult")
+    let pkSize = pkFields.size
+    if (pkSize == 0) {
+        return quote(
+            func $(funcName)(result: QueryResult, columnMap: HashMap<String, Int64>): String {
+                result.get<Int64>(columnMap.get("id").getOrThrow()).toString()
+            }
+        )
+    } else if (pkSize == 1) {
+        let pk = pkFields.get(0).getOrThrow()
+        let pkNameLit = Token(TokenKind.STRING_LITERAL, pk.name)
+        if (pk.typeName == "String") {
+            return quote(
+                func $(funcName)(result: QueryResult, columnMap: HashMap<String, Int64>): String {
+                    result.get<String>(columnMap.get($(pkNameLit)).getOrThrow())
+                }
+            )
+        } else {
+            return quote(
+                func $(funcName)(result: QueryResult, columnMap: HashMap<String, Int64>): String {
+                    result.get<Int64>(columnMap.get($(pkNameLit)).getOrThrow()).toString()
+                }
+            )
+        }
+    } else {
+        var parts = Tokens()
+        var first = true
+        for (i in 0..pkSize) {
+            let pk = pkFields.get(i).getOrThrow()
+            let pkNameLit = Token(TokenKind.STRING_LITERAL, pk.name)
+            if (first) {
+                parts = parts + Token(TokenKind.IDENTIFIER, "var")
+                parts = parts + Token(TokenKind.IDENTIFIER, "key")
+                parts = parts + Token(TokenKind.ASSIGN)
+            } else {
+                parts = parts + Token(TokenKind.NL)
+                parts = parts + Token(TokenKind.IDENTIFIER, "key")
+                parts = parts + Token(TokenKind.ASSIGN)
+                parts = parts + Token(TokenKind.IDENTIFIER, "key")
+                parts = parts + Token(TokenKind.ADD)
+                parts = parts + Token(TokenKind.STRING_LITERAL, ":")
+                parts = parts + Token(TokenKind.ADD)
+            }
+            if (pk.typeName == "String") {
+                parts = parts + quote(result.get<String>(columnMap.get($(pkNameLit)).getOrThrow()))
+            } else {
+                parts = parts + quote(result.get<Int64>(columnMap.get($(pkNameLit)).getOrThrow()).toString())
+            }
+            first = false
+        }
+        parts = parts + Token(TokenKind.NL)
+        parts = parts + Token(TokenKind.IDENTIFIER, "key")
+        quote(
+            func $(funcName)(result: QueryResult, columnMap: HashMap<String, Int64>): String { $(parts) }
+        )
+    }
+}
+
 func buildRowMapperMethod(className: String): Tokens {
     let cn = Token(TokenKind.IDENTIFIER, className)
     let mapperFunc = Token(TokenKind.IDENTIFIER, className + "RowMapper")
@@ -1145,6 +1204,9 @@ public macro Refine(input: Tokens): Tokens {
     let relMessages = getChildMessages("Rel")
     let mergedRels = mergeAnnotationRels(rels, refMessages, relMessages)
 
+    let keyExtractorFunc = buildKeyExtractor(className, pkFields)
+    let keyExtractorFuncName = Token(TokenKind.IDENTIFIER, className + "KeyFromResult")
+
     // Detect soft delete: has deleted_at field AND no @HardDelete annotation
     var hasDeletedAt = false
     for (f in mergedFields) {
@@ -1165,6 +1227,7 @@ public macro Refine(input: Tokens): Tokens {
                 q.from($(Token(TokenKind.STRING_LITERAL, tableName)))
                 q.filter(Expr.Binary(Expr.Column("deleted_at"), BinOp.Eq, Expr.Value(0)))
                 q.setMapper($(mapperFuncName))
+                q.setKeyExtractor($(keyExtractorFuncName))
                 q
             }
         )
@@ -1176,6 +1239,7 @@ public macro Refine(input: Tokens): Tokens {
                 q.select($(selectCols))
                 q.from($(Token(TokenKind.STRING_LITERAL, tableName)))
                 q.setMapper($(mapperFuncName))
+                q.setKeyExtractor($(keyExtractorFuncName))
                 q
             }
         )
@@ -1245,6 +1309,7 @@ public macro Refine(input: Tokens): Tokens {
             Token(TokenKind.NL) + Token(TokenKind.NL) + softDeleteSQLFunc +
             Token(TokenKind.NL) + Token(TokenKind.NL) + txDeleteExtend +
             Token(TokenKind.NL) + Token(TokenKind.NL) + rowMapper +
+            Token(TokenKind.NL) + Token(TokenKind.NL) + keyExtractorFunc +
             Token(TokenKind.NL) + Token(TokenKind.NL) + columnNamesFunc +
             Token(TokenKind.NL) + Token(TokenKind.NL) + schemaClass +
             junctionTokens
@@ -1261,6 +1326,7 @@ public macro Refine(input: Tokens): Tokens {
             Token(TokenKind.NL) + Token(TokenKind.NL) + deleteSQLFunc +
             Token(TokenKind.NL) + Token(TokenKind.NL) + txDeleteExtend +
             Token(TokenKind.NL) + Token(TokenKind.NL) + rowMapper +
+            Token(TokenKind.NL) + Token(TokenKind.NL) + keyExtractorFunc +
             Token(TokenKind.NL) + Token(TokenKind.NL) + columnNamesFunc +
             Token(TokenKind.NL) + Token(TokenKind.NL) + schemaClass +
             junctionTokens
