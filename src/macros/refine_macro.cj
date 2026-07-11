@@ -145,6 +145,15 @@ func isRelationField(typeName: String): Bool {
     typeName.contains("Option") || typeName.contains("ArrayList") || typeName.contains("Array")
 }
 
+func detectIdFieldType(fields: ArrayList<FieldInfo>): String {
+    for (f in fields) {
+        if (f.name == "id") { return f.typeName }
+    }
+    ""
+}
+
+func skipIdInInsert(idFieldType: String): Bool { idFieldType == "Int64" }
+
 func typeNameToStorageType(typeName: String): String {
     if (typeName == "Int8" || typeName == "Int16" || typeName == "Int32" || typeName == "Int64" ||
         typeName == "UInt8" || typeName == "UInt16" || typeName == "UInt32" || typeName == "UInt64") {
@@ -308,11 +317,12 @@ func buildDeleteMethod(className: String): Tokens {
 
 // --- SQL Generation ---
 
-func buildInsertSQLString(fields: ArrayList<FieldInfo>, tableName: String): String {
+func buildInsertSQLString(fields: ArrayList<FieldInfo>, tableName: String, idFieldType: String): String {
     var colNames = ArrayList<String>()
     var placeholders = ArrayList<String>()
+    let skipId = skipIdInInsert(idFieldType)
     for (f in fields) {
-        if (f.name == "id" || isRelationField(f.typeName)) { continue }
+        if ((f.name == "id" && skipId) || isRelationField(f.typeName)) { continue }
         colNames.add(f.name)
         placeholders.add("?")
     }
@@ -320,12 +330,13 @@ func buildInsertSQLString(fields: ArrayList<FieldInfo>, tableName: String): Stri
         ") VALUES (" + String.join(placeholders.toArray(), delimiter: ", ") + ")"
 }
 
-func buildEntityArrayTokens(fields: ArrayList<FieldInfo>): Tokens {
+func buildEntityArrayTokens(fields: ArrayList<FieldInfo>, idFieldType: String): Tokens {
+    let skipId = skipIdInInsert(idFieldType)
     var arr = Tokens()
     arr = arr + Token(TokenKind.LSQUARE)
     var first = true
     for (f in fields) {
-        if (f.name == "id" || isRelationField(f.typeName)) { continue }
+        if ((f.name == "id" && skipId) || isRelationField(f.typeName)) { continue }
         if (!first) { arr = arr + Token(TokenKind.COMMA) }
         arr = arr + Token(TokenKind.IDENTIFIER, "entity")
         arr = arr + Token(TokenKind.DOT)
@@ -351,47 +362,68 @@ func buildSelectColumnTokens(fields: ArrayList<FieldInfo>): Tokens {
     arr
 }
 
-func buildInsertSQLFunc(className: String, fields: ArrayList<FieldInfo>, tableName: String): Tokens {
+func buildInsertSQLFunc(className: String, fields: ArrayList<FieldInfo>, tableName: String, idFieldType: String): Tokens {
     let funcName = Token(TokenKind.IDENTIFIER, className + "InsertSQL")
     let cn = Token(TokenKind.IDENTIFIER, className)
-    let sqlStr = buildInsertSQLString(fields, tableName)
+    let sqlStr = buildInsertSQLString(fields, tableName, idFieldType)
     let sqlToken = Token(TokenKind.STRING_LITERAL, sqlStr)
-    let entityArray = buildEntityArrayTokens(fields)
+    let entityArray = buildEntityArrayTokens(fields, idFieldType)
     quote(
         func $(funcName)(entity: $(cn)): (String, Array<Any>) { ($(sqlToken), $(entityArray)) }
     )
 }
 
-func buildTxSaveExtend(className: String): Tokens {
+func buildTxSaveExtend(className: String, isStringId: Bool): Tokens {
     let cn = Token(TokenKind.IDENTIFIER, className)
     let insertSQLFuncName = Token(TokenKind.IDENTIFIER, className + "InsertSQL")
     let nameLit = Token(TokenKind.STRING_LITERAL, className)
-    quote(
-        extend Tx {
-            public func save(entity: $(cn)): Unit {
-                let scope = Scope<$(cn)>(entity)
-                scope.db = Some(this)
-                if (this.ref.isSome()) { this.ref.getOrThrow().executeHooks($(nameLit), HookKind.TxBeforeCreate, scope) }
-                if (scope.aborted) { throw scope.error.getOrThrow() }
-                let (sql, params) = $(insertSQLFuncName)(entity)
-                let result = this.execute(sql, params)
-                entity.id = result.lastInsertId
-                let afterScope = Scope<$(cn)>(entity)
-                afterScope.db = Some(this)
-                if (this.ref.isSome()) { this.ref.getOrThrow().executeHooks($(nameLit), HookKind.TxAfterCreate, afterScope) }
+
+    if (isStringId) {
+        quote(
+            extend Tx {
+                public func save(entity: $(cn)): Unit {
+                    if (entity.id == "" && this.ref.isSome()) { entity.id = this.ref.getOrThrow().getIdGenerator().generate() }
+                    let scope = Scope<$(cn)>(entity)
+                    scope.db = Some(this)
+                    if (this.ref.isSome()) { this.ref.getOrThrow().executeHooks($(nameLit), HookKind.TxBeforeCreate, scope) }
+                    if (scope.aborted) { throw scope.error.getOrThrow() }
+                    let (sql, params) = $(insertSQLFuncName)(entity)
+                    let _ = this.execute(sql, params)
+                    let afterScope = Scope<$(cn)>(entity)
+                    afterScope.db = Some(this)
+                    if (this.ref.isSome()) { this.ref.getOrThrow().executeHooks($(nameLit), HookKind.TxAfterCreate, afterScope) }
+                }
             }
-        }
-    )
+        )
+    } else {
+        quote(
+            extend Tx {
+                public func save(entity: $(cn)): Unit {
+                    let scope = Scope<$(cn)>(entity)
+                    scope.db = Some(this)
+                    if (this.ref.isSome()) { this.ref.getOrThrow().executeHooks($(nameLit), HookKind.TxBeforeCreate, scope) }
+                    if (scope.aborted) { throw scope.error.getOrThrow() }
+                    let (sql, params) = $(insertSQLFuncName)(entity)
+                    let result = this.execute(sql, params)
+                    entity.id = result.lastInsertId
+                    let afterScope = Scope<$(cn)>(entity)
+                    afterScope.db = Some(this)
+                    if (this.ref.isSome()) { this.ref.getOrThrow().executeHooks($(nameLit), HookKind.TxAfterCreate, afterScope) }
+                }
+            }
+        )
+    }
 }
 
-func buildBatchInsertSQLFunc(className: String, fields: ArrayList<FieldInfo>, tableName: String): Tokens {
+func buildBatchInsertSQLFunc(className: String, fields: ArrayList<FieldInfo>, tableName: String, idFieldType: String): Tokens {
     let funcName = Token(TokenKind.IDENTIFIER, className + "BatchInsertSQL")
     let cn = Token(TokenKind.IDENTIFIER, className)
+    let skipId = skipIdInInsert(idFieldType)
 
     var colNames = ArrayList<String>()
     var paramCount = 0
     for (f in fields) {
-        if (f.name == "id" || isRelationField(f.typeName)) { continue }
+        if ((f.name == "id" && skipId) || isRelationField(f.typeName)) { continue }
         colNames.add(f.name)
         paramCount++
     }
@@ -406,7 +438,7 @@ func buildBatchInsertSQLFunc(className: String, fields: ArrayList<FieldInfo>, ta
 
     var addParams = Tokens()
     for (f in fields) {
-        if (f.name == "id" || isRelationField(f.typeName)) { continue }
+        if ((f.name == "id" && skipId) || isRelationField(f.typeName)) { continue }
         addParams = addParams + quote(
             allParams.add(entities[_i_].$(Token(TokenKind.IDENTIFIER, f.name)));
         )
@@ -427,34 +459,61 @@ func buildBatchInsertSQLFunc(className: String, fields: ArrayList<FieldInfo>, ta
     )
 }
 
-func buildTxBatchSaveExtend(className: String): Tokens {
+func buildTxBatchSaveExtend(className: String, isStringId: Bool): Tokens {
     let cn = Token(TokenKind.IDENTIFIER, className)
     let batchInsertSQLFuncName = Token(TokenKind.IDENTIFIER, className + "BatchInsertSQL")
     let nameLit = Token(TokenKind.STRING_LITERAL, className)
 
-    quote(
-        extend Tx {
-            public func batchSave(entities: Array<$(cn)>): Unit {
-                if (entities.size == 0) { return }
-                for (_bi_ in 0..entities.size) {
-                    let e = entities[_bi_]
-                    let scope = Scope<$(cn)>(e)
-                    scope.db = Some(this)
-                    if (this.ref.isSome()) { this.ref.getOrThrow().executeHooks($(nameLit), HookKind.TxBeforeCreate, scope) }
-                    if (scope.aborted) { throw scope.error.getOrThrow() }
-                }
-                let (sql, params) = $(batchInsertSQLFuncName)(entities)
-                let result = this.execute(sql, params)
-                let baseId = result.lastInsertId
-                for (_bi_ in 0..entities.size) {
-                    entities[_bi_].id = baseId + _bi_
-                    let afterScope = Scope<$(cn)>(entities[_bi_])
-                    afterScope.db = Some(this)
-                    if (this.ref.isSome()) { this.ref.getOrThrow().executeHooks($(nameLit), HookKind.TxAfterCreate, afterScope) }
+    if (isStringId) {
+        quote(
+            extend Tx {
+                public func batchSave(entities: Array<$(cn)>): Unit {
+                    if (entities.size == 0) { return }
+                    for (_bi_ in 0..entities.size) {
+                        if (entities[_bi_].id == "" && this.ref.isSome()) { entities[_bi_].id = this.ref.getOrThrow().getIdGenerator().generate() }
+                    }
+                    for (_bi_ in 0..entities.size) {
+                        let e = entities[_bi_]
+                        let scope = Scope<$(cn)>(e)
+                        scope.db = Some(this)
+                        if (this.ref.isSome()) { this.ref.getOrThrow().executeHooks($(nameLit), HookKind.TxBeforeCreate, scope) }
+                        if (scope.aborted) { throw scope.error.getOrThrow() }
+                    }
+                    let (sql, params) = $(batchInsertSQLFuncName)(entities)
+                    let _ = this.execute(sql, params)
+                    for (_bi_ in 0..entities.size) {
+                        let afterScope = Scope<$(cn)>(entities[_bi_])
+                        afterScope.db = Some(this)
+                        if (this.ref.isSome()) { this.ref.getOrThrow().executeHooks($(nameLit), HookKind.TxAfterCreate, afterScope) }
+                    }
                 }
             }
-        }
-    )
+        )
+    } else {
+        quote(
+            extend Tx {
+                public func batchSave(entities: Array<$(cn)>): Unit {
+                    if (entities.size == 0) { return }
+                    for (_bi_ in 0..entities.size) {
+                        let e = entities[_bi_]
+                        let scope = Scope<$(cn)>(e)
+                        scope.db = Some(this)
+                        if (this.ref.isSome()) { this.ref.getOrThrow().executeHooks($(nameLit), HookKind.TxBeforeCreate, scope) }
+                        if (scope.aborted) { throw scope.error.getOrThrow() }
+                    }
+                    let (sql, params) = $(batchInsertSQLFuncName)(entities)
+                    let result = this.execute(sql, params)
+                    let baseId = result.lastInsertId
+                    for (_bi_ in 0..entities.size) {
+                        entities[_bi_].id = baseId + _bi_
+                        let afterScope = Scope<$(cn)>(entities[_bi_])
+                        afterScope.db = Some(this)
+                        if (this.ref.isSome()) { this.ref.getOrThrow().executeHooks($(nameLit), HookKind.TxAfterCreate, afterScope) }
+                    }
+                }
+            }
+        )
+    }
 }
 
 func buildUpdateSQLString(fields: ArrayList<FieldInfo>, tableName: String): String {
@@ -963,6 +1022,8 @@ public macro Refine(input: Tokens): Tokens {
     }
 
     let fields = extractFields(classDecl)
+    let idFieldType = detectIdFieldType(fields)
+    let isStringId = (idFieldType == "String")
     let fieldMessages = getChildMessages("Field")
     let mergedFields = mergeFieldOverrides(fields, fieldMessages)
     let rels = detectRelations(fields)
@@ -1044,10 +1105,10 @@ public macro Refine(input: Tokens): Tokens {
 
     let colsStruct = buildColsStruct(className, classDecl)
     let relClass = buildRelClass(className, mergedRels)
-    let insertSQLFunc = buildInsertSQLFunc(className, fields, tableName)
-    let txSaveExtend = buildTxSaveExtend(className)
-    let batchInsertSQLFunc = buildBatchInsertSQLFunc(className, fields, tableName)
-    let txBatchSaveExtend = buildTxBatchSaveExtend(className)
+    let insertSQLFunc = buildInsertSQLFunc(className, fields, tableName, idFieldType)
+    let txSaveExtend = buildTxSaveExtend(className, isStringId)
+    let batchInsertSQLFunc = buildBatchInsertSQLFunc(className, fields, tableName, idFieldType)
+    let txBatchSaveExtend = buildTxBatchSaveExtend(className, isStringId)
     let updateSQLFunc = buildUpdateSQLFunc(className, fields, tableName)
     let txUpdateExtend = buildTxUpdateExtend(className)
     let rowMapper = buildRowMapper(className, classDecl, mergedRels)

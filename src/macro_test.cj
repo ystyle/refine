@@ -36,6 +36,13 @@ class Comment {
 }
 
 @Refine
+class UuidPost {
+    var id: String = ""
+    var title: String = ""
+    var content: String = ""
+}
+
+@Refine
 class PostWithRel {
     var id: Int64 = 0
     var title: String = ""
@@ -55,6 +62,14 @@ class PostWithRel {
 class HookFlag {
     var called: Bool = false
     public init() {}
+}
+
+class TestIdGenerator <: IdGenerator {
+    private var counter: Int64 = 0
+    public func generate(): String {
+        counter = counter + 1
+        "uuid-" + counter.toString()
+    }
 }
 
 class CaptureUpdateResult <: UpdateResult {
@@ -302,6 +317,61 @@ public class MacroSaveTest {
         tx.batchSave(ArrayList<Post>().toArray())
 
         @Expect(conn.stmt.capturedSql, "")
+    }
+
+    // ─── UUID / String Id Tests ────────────────────────
+
+    @TestCase
+    public func testTxSaveUuidPostIncludesIdInInsert(): Unit {
+        clearHooks()
+        let conn = CaptureConnection()
+        let rf = Refine(RMockDS(), SQLiteDialect(), 0)
+        rf.setIdGenerator(TestIdGenerator())
+        let tx = Tx(conn, rf, 0)
+
+        let p = UuidPost()
+        p.title = "Test"
+        p.content = "Content"
+        tx.save(p)
+
+        @Expect(p.id != "", true)
+        @Expect(conn.stmt.capturedSql.contains("INSERT INTO uuidPost (id, title, content)"), true)
+        @Expect(conn.stmt.capturedSql.contains("VALUES (?, ?, ?)"), true)
+    }
+
+    @TestCase
+    public func testTxSaveUuidPostKeepsCustomId(): Unit {
+        clearHooks()
+        let conn = CaptureConnection()
+        let rf = Refine(RMockDS(), SQLiteDialect(), 0)
+        rf.setIdGenerator(TestIdGenerator())
+        let tx = Tx(conn, rf, 0)
+
+        let p = UuidPost()
+        p.id = "my-custom-id"
+        p.title = "Test"
+        p.content = "X"
+        tx.save(p)
+
+        @Expect(p.id, "my-custom-id")
+    }
+
+    @TestCase
+    public func testTxBatchSaveUuidPost(): Unit {
+        clearHooks()
+        let conn = CaptureConnection()
+        let rf = Refine(RMockDS(), SQLiteDialect(), 0)
+        rf.setIdGenerator(TestIdGenerator())
+        let tx = Tx(conn, rf, 0)
+
+        let p1 = UuidPost(); p1.title = "A"; p1.content = "B"
+        let p2 = UuidPost(); p2.title = "C"; p2.content = "D"
+        tx.batchSave([p1, p2])
+
+        @Expect(p1.id != "", true)
+        @Expect(p2.id != "", true)
+        @Expect(p1.id != p2.id, true)
+        @Expect(conn.stmt.capturedSql.contains("INSERT INTO uuidPost (id, title, content) VALUES (?, ?, ?), (?, ?, ?)"), true)
     }
 }
 
