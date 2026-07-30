@@ -9,34 +9,34 @@ import std.unittest.*
 import std.unittest.testmacro.*
 
 @Refine
-class Post {
+public class Post {
     var id: Int64 = 0
     var title: String = ""
     var content: String = ""
 }
 
 @Refine
-class User {
+public class User {
     var id: Int64 = 0
     var name: String = ""
     var email: String = ""
 }
 
 @Refine
-class Tag {
+public class Tag {
     var id: Int64 = 0
     var name: String = ""
 }
 
 @Refine
-class Comment {
+public class Comment {
     var id: Int64 = 0
     var body: String = ""
     var post_id: Int64 = 0
 }
 
 @Refine
-class PostWithRel {
+public class PostWithRel {
     var id: Int64 = 0
     var title: String = ""
     var user_id: Int64 = 0
@@ -437,7 +437,7 @@ public class MacroExistingTest {
 }
 
 @Refine
-class Document {
+public class Document {
     var id: Int64 = 0
     @Field[Text]
     var title: String = ""
@@ -458,7 +458,7 @@ public class FieldAnnotationTest {
 // ─── Soft Delete Entity ────────────────────────────────
 
 @Refine
-class SoftUser {
+public class SoftUser {
     var id: Int64 = 0
     var name: String = ""
     @Field[Integer]

@@ -9,7 +9,7 @@ import refine.macros.*
 // ─── 实体 ───────────────────────────────────────────────
 
 @Refine
-class User {
+public class User {
     var id: Int64 = 0
     var name: String = ""
     var email: String = ""
@@ -22,7 +22,7 @@ class User {
 }
 
 @Refine
-class Profile {
+public class Profile {
     var id: Int64 = 0
     var bio: String = ""
     var avatar: String = ""
@@ -30,7 +30,7 @@ class Profile {
 }
 
 @Refine
-class Post {
+public class Post {
     var id: Int64 = 0
     var title: String = ""
     @Field[Text]
@@ -48,14 +48,14 @@ class Post {
 }
 
 @Refine
-class Comment {
+public class Comment {
     var id: Int64 = 0
     var body: String = ""
     var post_id: Int64 = 0
 }
 
 @Refine
-class Tag {
+public class Tag {
     var id: Int64 = 0
     var name: String = ""
 }
