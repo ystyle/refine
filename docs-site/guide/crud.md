@@ -78,6 +78,43 @@ let sorted = User.query().using(rf)
 // 如需覆盖，使用 Expr.Column() 传入字段名
 ```
 
+### findOne / findAll
+
+实体提供静态快捷方法，无需 `query().using(rf)` 链式：
+
+```cangjie
+// findAll：无条件查全部
+let all = User.findAll(User.query().using(rf))
+
+// findOne：按条件查单条
+let admin = User.findOne(
+    User.query().using(rf)
+        .filter(User.col().email == "admin@example.com")
+)
+```
+
+### 原始 SQL 查询
+
+通过 `rowMapper()` 结合 `Tx.queryAll<T>()` / `Tx.queryOne<T>()` 执行原始 SQL：
+
+```cangjie
+rf.transaction { tx: Tx =>
+    // 查多条
+    let users = tx.queryAll(
+        "SELECT * FROM user WHERE age > ?", [18],
+        User.rowMapper()
+    )
+
+    // 查单条
+    let user: Option<User> = tx.queryOne(
+        "SELECT * FROM user WHERE id = ?", [1],
+        User.rowMapper()
+    )
+}
+```
+
+`Session` 上也提供同样的 `queryAll<T>()` / `queryOne<T>()` 方法。
+
 ### 分页
 
 分页的典型模式：先 `count()` 获取总数，再用 `limit()` + `offset()` 取当前页：

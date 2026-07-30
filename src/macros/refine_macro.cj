@@ -173,7 +173,7 @@ func buildColsStruct(className: String, cd: ClassDecl): Tokens {
         }
     }
     quote(
-        struct $(colsName) { $(colsFields) init() {} }
+        public struct $(colsName) { $(colsFields) init() {} }
     )
 }
 
@@ -193,7 +193,7 @@ func genFieldCols(fieldNames: ArrayList<String>): Tokens {
 
 func buildRelClass(className: String, rels: ArrayList<RelInfo>): Tokens {
     let relClassName = Token(TokenKind.IDENTIFIER, className + "Rel")
-    if (rels.size == 0) { return quote(class $(relClassName) {}) }
+    if (rels.size == 0) { return quote(public class $(relClassName) {}) }
     var body = Tokens()
     var first = true
     for (i in 0..rels.size) {
@@ -261,7 +261,7 @@ func buildRelClass(className: String, rels: ArrayList<RelInfo>): Tokens {
         }
         first = false
     }
-    quote(class $(relClassName) { $(body) })
+    quote(public class $(relClassName) { $(body) })
 }
 
 func buildSaveMethod(className: String): Tokens {
@@ -899,7 +899,7 @@ func buildSchemaClass(className: String, fields: ArrayList<FieldInfo>): Tokens {
         first = false
     }
     quote(
-        class $(schemaName) <: TableSchema {
+        public class $(schemaName) <: TableSchema {
             public func tableName(): String { $(tableNameLit) }
             public func columns(): Array<ColumnDef> { [$(colDefs)] }
             public func indexes(): Array<IndexDef> { [] }
@@ -914,7 +914,7 @@ func buildJunctionSchema(className: String, rel: RelInfo): Tokens {
     let tgtColLit = Token(TokenKind.STRING_LITERAL, lowerTableName(rel.target) + "_id")
     let schemaName = Token(TokenKind.IDENTIFIER, className + "_" + upperFirstLetter(rel.fieldName) + "JunctionSchema")
     quote(
-        class $(schemaName) <: TableSchema {
+        public class $(schemaName) <: TableSchema {
             public func tableName(): String { $(viaLit) }
             public func columns(): Array<ColumnDef> {
                 [ColumnDef($(srcColLit), StorageType.Integer, false, false, false),

@@ -82,6 +82,13 @@ let found: Option<User> = User.query().using(rf)
     .filter(User.col().id == 1)
     .one()
 
+// 或用静态快捷方法
+let admin = User.findOne(
+    User.query().using(rf)
+        .filter(User.col().email == "admin@example.com")
+)
+let all = User.findAll(User.query().using(rf))
+
 // 更新
 let f = found.getOrThrow()
 f.email = "bob@new.com"
