@@ -930,7 +930,7 @@ func buildSchemasFunc(className: String, junctionRelNames: ArrayList<String>): T
     let schemaName = Token(TokenKind.IDENTIFIER, className + "Schema")
     if (junctionRelNames.size == 0) {
         quote(
-            static func schemas(): Array<TableSchema> { [$(schemaName)()] }
+            public static func schemas(): Array<TableSchema> { [$(schemaName)()] }
         )
     } else {
         var arr = Tokens()
@@ -943,7 +943,7 @@ func buildSchemasFunc(className: String, junctionRelNames: ArrayList<String>): T
             arr = arr + Token(TokenKind.LPAREN) + Token(TokenKind.RPAREN)
         }
         quote(
-            static func schemas(): Array<TableSchema> { [$(arr)] }
+            public static func schemas(): Array<TableSchema> { [$(arr)] }
         )
     }
 }
@@ -984,7 +984,7 @@ public macro Refine(input: Tokens): Tokens {
     let nameLit = Token(TokenKind.STRING_LITERAL, className)
     let queryTokens = if (isSoftDelete) {
         quote(
-            static func query(): Query<$(classNameToken)> {
+            public static func query(): Query<$(classNameToken)> {
                 let q = Query<$(classNameToken)>()
                 q.typeName = $(nameLit)
                 q.select($(selectCols))
@@ -996,7 +996,7 @@ public macro Refine(input: Tokens): Tokens {
         )
     } else {
         quote(
-            static func query(): Query<$(classNameToken)> {
+            public static func query(): Query<$(classNameToken)> {
                 let q = Query<$(classNameToken)>()
                 q.typeName = $(nameLit)
                 q.select($(selectCols))
@@ -1010,7 +1010,7 @@ public macro Refine(input: Tokens): Tokens {
 
     let colsName = Token(TokenKind.IDENTIFIER, className + "Cols")
     let colTokens = quote(
-        static func col(): $(colsName) { $(colsName)() }
+        public static func col(): $(colsName) { $(colsName)() }
     )
     classDecl.body.decls.add(FuncDecl(colTokens))
 
