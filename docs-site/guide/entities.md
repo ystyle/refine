@@ -2,95 +2,19 @@
 
 ## 基本结构
 
-使用 `@Refine` 宏标记的类会被识别为实体。主键字段支持 `Int64`（自增）和 `String`（UUID）两种类型。
+使用 `@Refine` 宏标记的类会被识别为实体。id 字段约定为 `Int64` 类型的主键。
 
 ```cangjie
 import refine.*
 import refine.macros.*
 
-// Int64 自增主键（默认）
 @Refine
 class User {
     var id: Int64 = 0
     var name: String = ""
     var email: String = ""
 }
-
-// String UUID 主键
-@Refine
-class Order {
-    var id: String = ""
-    var title: String = ""
-}
 ```
-
-### 主键规则
-
-| id 字段 | @Id 注解 | 行为 |
-|---------|----------|------|
-| `id: Int64` | 无 | **自增主键**。INSERT 不含 id 列，`lastInsertId` 自动写回 |
-| `id: String` | 无 | **UUID 主键**。空 id 自动调用 `IdGenerator.generate()`，INSERT 含 id 列 |
-| `id: Int64` | `@Id[auto, false]` | **手动主键**。不自增，用户自行设值 |
-| 复合（多个字段） | 每字段 `@Id[]` | **复合主键**。UPDATE/DELETE WHERE 使用所有 PK 字段 |
-
-### UUID 主键
-
-```cangjie
-@Refine
-class Order {
-    var id: String = ""
-    var title: String = ""
-}
-
-rf.transaction { tx: Tx =>
-    let o = Order()
-    o.title = "My Order"
-    tx.save(o)
-    // 空 id → 调用 IdGenerator.generate() 自动填充
-    // INSERT INTO "order" (id, title) VALUES (?, ?)
-}
-
-// 也可自定义 id
-rf.transaction { tx: Tx =>
-    let o = Order()
-    o.id = "my-order-001"
-    o.title = "Custom"
-    tx.save(o)
-    // 非空 id → 不覆盖
-}
-```
-
-### @Id 注解
-
-```cangjie
-// Int64 手动 id：不自增，用户设值
-@Refine
-class ManualIdPost {
-    @Id[auto, false]
-    var id: Int64 = 0
-    var title: String = ""
-}
-```
-
-### 复合主键
-
-多个字段用 `@Id[]` 标记组成复合主键：
-
-```cangjie
-@Refine
-class OrderTag {
-    @Id[]
-    var order_id: Int64 = 0
-    @Id[]
-    var tag_id: Int64 = 0
-}
-
-// INSERT INTO orderTag (order_id, tag_id) VALUES (?, ?)
-// UPDATE orderTag SET WHERE order_id = ? AND tag_id = ?
-// DELETE FROM orderTag WHERE order_id = ? AND tag_id = ?
-```
-
-> 复合主键实体暂不支持 `include` 延迟加载，可使用原始 SQL 手动查询关联。
 
 ## 自定义表名
 
