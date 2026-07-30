@@ -3,6 +3,9 @@
   name = "refine"
   description = "A compile-time type-safe ORM for Cangjie"
   version = "0.2.0"
+  license = ["MIT"]
+  authors = ["ystyle"]
+  repository = "https://atomgit.com/ystyle/refine"
   output-type = "static"
 
 [dependencies]
