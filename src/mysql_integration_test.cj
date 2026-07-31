@@ -137,6 +137,68 @@ public class MySQLIntegrationTest {
     }
 
     @TestCase
+    public func testAlterColumnReal(): Unit {
+        match (tryMySQL()) {
+            case Some(rf) =>
+                let m = rf.migrator()
+                let cols = [ColumnDef("id", StorageType.Integer, true, true, false),
+                            ColumnDef("val", StorageType.String, false, false, false)]
+                let schema = ISchema("__test_my_alt", cols, [])
+                m.createTable(schema)
+                m.alterColumn("__test_my_alt",
+                    ColumnDef("val", StorageType.String, false, false, false),
+                    ColumnDef("val", StorageType.Text, false, false, true))
+                rf.transaction { tx: Tx =>
+                    let r = tx.query("SELECT DATA_TYPE, IS_NULLABLE FROM information_schema.COLUMNS WHERE table_schema = DATABASE() AND table_name = ? AND COLUMN_NAME = ?", ["__test_my_alt", "val"])
+                    if (r.next()) {
+                        @Expect(r.get<String>(1), "text")
+                        @Expect(r.get<String>(2), "YES")
+                    } else {
+                        @Expect(true, false)
+                    }
+                }
+                m.dropTable(schema)
+                rf.close()
+            case None => @Expect(true, true)
+        }
+    }
+
+    @TestCase
+    public func testAutoMigrateAltersColumn(): Unit {
+        match (tryMySQL()) {
+            case Some(rf) =>
+                let m = rf.migrator()
+                let oldCols = [ColumnDef("id", StorageType.Integer, true, true, false),
+                               ColumnDef("val", StorageType.String, false, false, false)]
+                let schema = ISchema("__test_my_alt2", oldCols, [])
+                m.createTable(schema)
+                let newCols = [ColumnDef("id", StorageType.Integer, true, true, false),
+                               ColumnDef("val", StorageType.Text, false, false, true),
+                               ColumnDef("extra", StorageType.Integer, false, false, true)]
+                let newSchema = ISchema("__test_my_alt2", newCols, [])
+                m.autoMigrate([newSchema])
+                rf.transaction { tx: Tx =>
+                    let r = tx.query("SELECT DATA_TYPE, IS_NULLABLE FROM information_schema.COLUMNS WHERE table_schema = DATABASE() AND table_name = ? AND COLUMN_NAME = ?", ["__test_my_alt2", "val"])
+                    if (r.next()) {
+                        @Expect(r.get<String>(1), "text")
+                        @Expect(r.get<String>(2), "YES")
+                    } else {
+                        @Expect(true, false)
+                    }
+                    let r2 = tx.query("SELECT COUNT(*) FROM information_schema.COLUMNS WHERE table_schema = DATABASE() AND table_name = ? AND COLUMN_NAME = ?", ["__test_my_alt2", "extra"])
+                    if (r2.next()) {
+                        @Expect(r2.get<Int64>(1), 1)
+                    } else {
+                        @Expect(true, false)
+                    }
+                }
+                m.dropTable(schema)
+                rf.close()
+            case None => @Expect(true, true)
+        }
+    }
+
+    @TestCase
     public func testMigratorDropColumn(): Unit {
         match (tryMySQL()) {
             case Some(rf) =>

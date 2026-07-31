@@ -58,6 +58,68 @@ public class PostgreSQLIntegrationTest {
     }
 
     @TestCase
+    public func testAlterColumnReal(): Unit {
+        match (tryPostgres()) {
+            case Some(rf) =>
+                let m = rf.migrator()
+                let cols = [ColumnDef("id", StorageType.Integer, true, true, false),
+                            ColumnDef("val", StorageType.String, false, false, false)]
+                let schema = PgSchema("__test_pg_alt", cols, [])
+                m.createTable(schema)
+                m.alterColumn("__test_pg_alt",
+                    ColumnDef("val", StorageType.String, false, false, false),
+                    ColumnDef("val", StorageType.Text, false, false, true))
+                rf.transaction { tx: Tx =>
+                    let r = tx.query("SELECT data_type, is_nullable FROM information_schema.columns WHERE table_name = ? AND column_name = ?", ["__test_pg_alt", "val"])
+                    if (r.next()) {
+                        @Expect(r.get<String>(0), "text")
+                        @Expect(r.get<String>(1), "YES")
+                    } else {
+                        @Expect(true, false)
+                    }
+                }
+                m.dropTable(schema)
+                rf.close()
+            case None => @Expect(true, true)
+        }
+    }
+
+    @TestCase
+    public func testAutoMigrateAltersColumn(): Unit {
+        match (tryPostgres()) {
+            case Some(rf) =>
+                let m = rf.migrator()
+                let oldCols = [ColumnDef("id", StorageType.Integer, true, true, false),
+                               ColumnDef("val", StorageType.String, false, false, false)]
+                let schema = PgSchema("__test_pg_alt2", oldCols, [])
+                m.createTable(schema)
+                let newCols = [ColumnDef("id", StorageType.Integer, true, true, false),
+                               ColumnDef("val", StorageType.Text, false, false, true),
+                               ColumnDef("extra", StorageType.Integer, false, false, true)]
+                let newSchema = PgSchema("__test_pg_alt2", newCols, [])
+                m.autoMigrate([newSchema])
+                rf.transaction { tx: Tx =>
+                    let r = tx.query("SELECT data_type, is_nullable FROM information_schema.columns WHERE table_name = ? AND column_name = ?", ["__test_pg_alt2", "val"])
+                    if (r.next()) {
+                        @Expect(r.get<String>(0), "text")
+                        @Expect(r.get<String>(1), "YES")
+                    } else {
+                        @Expect(true, false)
+                    }
+                    let r2 = tx.query("SELECT COUNT(*) FROM information_schema.columns WHERE table_name = ? AND column_name = ?", ["__test_pg_alt2", "extra"])
+                    if (r2.next()) {
+                        @Expect(r2.get<Int64>(0), 1)
+                    } else {
+                        @Expect(true, false)
+                    }
+                }
+                m.dropTable(schema)
+                rf.close()
+            case None => @Expect(true, true)
+        }
+    }
+
+    @TestCase
     public func testMigratorHasTable(): Unit {
         match (tryPostgres()) {
             case Some(rf) =>

@@ -613,6 +613,78 @@ public class MacroSaveTest {
 
         @Expect(conn.stmt.capturedSql.contains("WHERE order_id = ? AND tag_id = ?"), true)
     }
+
+    // ─── Upsert ──────────────────────────────────────
+
+    @TestCase
+    public func testTxUpsertMySQL(): Unit {
+        clearHooks()
+        let conn = CaptureConnection()
+        let rf = Refine(RMockDS(), MySQLDialect(), 1)
+        let tx = Tx(conn, rf, 1)
+
+        let p = Post()
+        p.id = 1
+        p.title = "T"
+        p.content = "C"
+        tx.upsert(p)
+
+        @Expect(conn.stmt.capturedSql.contains("INSERT INTO `post` (`id`, `title`, `content`)"), true)
+        @Expect(conn.stmt.capturedSql.contains("ON DUPLICATE KEY UPDATE"), true)
+        @Expect(conn.stmt.capturedSql.contains("`title` = VALUES(`title`)"), true)
+    }
+
+    @TestCase
+    public func testTxUpsertPostgres(): Unit {
+        clearHooks()
+        let conn = CaptureConnection()
+        let rf = Refine(RMockDS(), PostgreSQLDialect(), 0)
+        let tx = Tx(conn, rf, 0)
+
+        let p = Post()
+        p.id = 1
+        p.title = "T"
+        p.content = "C"
+        tx.upsert(p)
+
+        @Expect(conn.stmt.capturedSql.contains("INSERT INTO \"post\" (\"id\", \"title\", \"content\")"), true)
+        @Expect(conn.stmt.capturedSql.contains("ON CONFLICT (\"id\") DO UPDATE SET"), true)
+        @Expect(conn.stmt.capturedSql.contains("\"title\" = EXCLUDED.\"title\""), true)
+    }
+
+    @TestCase
+    public func testTxUpsertUnsupportedDialect(): Unit {
+        clearHooks()
+        let conn = CaptureConnection()
+        let rf = Refine(RMockDS(), SQLiteDialect(), 0)
+        let tx = Tx(conn, rf, 0)
+
+        let p = Post()
+        p.id = 1
+        p.title = "T"
+        try {
+            tx.upsert(p)
+            @Fail("expected unsupported dialect exception")
+        } catch (_: Exception) {
+            @Expect(conn.stmt.capturedSql, "")
+        }
+    }
+
+    @TestCase
+    public func testTxUpsertStringPkAutoGen(): Unit {
+        clearHooks()
+        let conn = CaptureConnection()
+        let rf = Refine(RMockDS(), MySQLDialect(), 1)
+        rf.setIdGenerator(TestIdGenerator())
+        let tx = Tx(conn, rf, 1)
+
+        let e = UuidPost()
+        e.title = "T"
+        tx.upsert(e)
+
+        @Expect(e.id != "", true)
+        @Expect(conn.stmt.capturedSql.contains("INSERT INTO `uuidPost` (`id`, `title`, `content`)"), true)
+    }
 }
 
 @Test

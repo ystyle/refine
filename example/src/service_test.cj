@@ -247,6 +247,27 @@ class ServiceChecks {
         @Expect(EventRepo.findOne(rf, p).isSome(), true)
     }
 
+    static func upsertInsertAndUpdate(rf: Refine): Unit {
+        initOnce(rf)
+        rf.setIdGenerator(UlidIdGenerator())
+        // 首次 upsert = 插入
+        let ev = Event()
+        ev.id = "evt-upsert-" + UlidIdGenerator().generate()
+        ev.name = "first"
+        ev.payload = "v1"
+        rf.transaction { tx: Tx => tx.upsert(ev) }
+        var p = EventFind()
+        p.id = Some(ev.id)
+        @Expect(EventRepo.findOne(rf, p).isSome(), true)
+        @Expect(EventRepo.findOne(rf, p).getOrThrow().payload, "v1")
+        // 再次 upsert 同 id = 更新（不产生重复行）
+        ev.payload = "v2"
+        rf.transaction { tx: Tx => tx.upsert(ev) }
+        let all = Event.query().using(rf).filter(Event.col().id == ev.id).all()
+        @Expect(all.size, 1)
+        @Expect(all[0].payload, "v2")
+    }
+
     static func ulidUpdateDelete(rf: Refine): Unit {
         rf.setIdGenerator(UlidIdGenerator())
         let ev = Event()
@@ -321,6 +342,9 @@ public class MySQLServiceTest {
 
     @TestCase
     public func testUlidUpdateDelete(): Unit { ServiceChecks.ulidUpdateDelete(rf) }
+
+    @TestCase
+    public func testUpsertInsertAndUpdate(): Unit { ServiceChecks.upsertInsertAndUpdate(rf) }
 }
 
 // ─── PostgreSQL 测试类 ──────────────────────────────────
@@ -382,4 +406,7 @@ public class PostgreSQLServiceTest {
 
     @TestCase
     public func testUlidUpdateDelete(): Unit { ServiceChecks.ulidUpdateDelete(rf) }
+
+    @TestCase
+    public func testUpsertInsertAndUpdate(): Unit { ServiceChecks.upsertInsertAndUpdate(rf) }
 }

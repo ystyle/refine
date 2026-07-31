@@ -1,6 +1,6 @@
 package refine
 
-import std.collection.ArrayList
+import std.collection.{ArrayList, HashMap}
 
 public class PostgreSQLMigrator <: Migrator {
     private var db: DB
@@ -61,17 +61,32 @@ public class PostgreSQLMigrator <: Migrator {
         s.close()
     }
 
-    public func alterColumn(_table: String, _old: ColumnDef, _new: ColumnDef): Unit {
-        throw Exception("ALTER COLUMN not supported. Use manual migration.")
+    public func alterColumn(table: String, _old: ColumnDef, new: ColumnDef): Unit {
+        let s = db.session()
+        s.execute("ALTER TABLE \"" + table.toAsciiLower() + "\" ALTER COLUMN \"" + new.name.toAsciiLower() + "\" TYPE " + dialect.dataTypeOf(new.storageType), [])
+        if (new.primaryKey) {
+            // 主键列保持 NOT NULL，不调整
+        } else if (!new.nullable) {
+            s.execute("ALTER TABLE \"" + table.toAsciiLower() + "\" ALTER COLUMN \"" + new.name.toAsciiLower() + "\" SET NOT NULL", [])
+        } else {
+            s.execute("ALTER TABLE \"" + table.toAsciiLower() + "\" ALTER COLUMN \"" + new.name.toAsciiLower() + "\" DROP NOT NULL", [])
+        }
+        s.close()
     }
 
     public func autoMigrate(schemas: Array<TableSchema>): Unit {
         for (schema in schemas) {
             let tableName = schema.tableName()
             if (!hasTable(tableName)) { createTable(schema); continue }
-            let existingCols = getExistingColumnNames(tableName)
+            let existingCols = getExistingColumns(tableName)
             for (col in schema.columns()) {
-                if (!existingCols.contains(col.name)) { addColumn(tableName, col) }
+                match (existingCols.get(col.name)) {
+                    case Some(old) =>
+                        if (old.storageType != col.storageType || old.nullable != col.nullable) {
+                            alterColumn(tableName, old, col)
+                        }
+                    case None => addColumn(tableName, col)
+                }
             }
             let existingIdxs = getExistingIndexNames(tableName)
             for (idx in schema.indexes()) {
@@ -80,13 +95,32 @@ public class PostgreSQLMigrator <: Migrator {
         }
     }
 
-    private func getExistingColumnNames(tableName: String): ArrayList<String> {
+    private func getExistingColumns(tableName: String): HashMap<String, ColumnDef> {
         let s = db.session()
-        let r = s.query("SELECT column_name FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = ?", [tableName.toAsciiLower()])
-        var names = ArrayList<String>()
-        while (r.next()) { names.add(r.get<String>(0)) }
+        let r = s.query("SELECT column_name, data_type, is_nullable FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = ?", [tableName.toAsciiLower()])
+        var map = HashMap<String, ColumnDef>()
+        while (r.next()) {
+            let name = r.get<String>(0)
+            let storage = pgDataTypeToStorage(r.get<String>(1))
+            let nullable = r.get<String>(2) == "YES"
+            map.add(name, ColumnDef(name, storage, false, false, nullable))
+        }
         s.close()
-        names
+        map
+    }
+
+    private func pgDataTypeToStorage(t: String): StorageType {
+        match (t) {
+            case "bigint" | "integer" | "smallint" => StorageType.Integer
+            case "character varying" | "character" => StorageType.String
+            case "text" => StorageType.Text
+            case "jsonb" | "json" => StorageType.Json
+            case "bytea" => StorageType.Bytes
+            case "timestamp without time zone" | "timestamp with time zone" => StorageType.Timestamp
+            case "double precision" | "numeric" | "real" => StorageType.Float
+            case "boolean" => StorageType.`Bool`
+            case _ => StorageType.Text
+        }
     }
 
     private func getExistingIndexNames(tableName: String): ArrayList<String> {

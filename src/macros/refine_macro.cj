@@ -593,6 +593,74 @@ func buildBatchInsertSQLFunc(className: String, fields: ArrayList<FieldInfo>, ta
     )
 }
 
+func buildTxUpsertExtend(className: String, fields: ArrayList<FieldInfo>, tableName: String, pkFields: ArrayList<FieldInfo>): Tokens {
+    let cn = Token(TokenKind.IDENTIFIER, className)
+    let nameLit = Token(TokenKind.STRING_LITERAL, className)
+    let tableNameLit = Token(TokenKind.STRING_LITERAL, tableName)
+    let genTokens = buildClientPkGenTokens(pkFields)
+
+    // 列名：所有非关系字段（含主键）
+    var colNames = ArrayList<String>()
+    for (f in fields) {
+        if (isRelationField(f.typeName)) { continue }
+        colNames.add(f.name)
+    }
+    var colsArr = Tokens()
+    colsArr = colsArr + Token(TokenKind.LSQUARE)
+    var first = true
+    for (c in colNames) {
+        if (!first) { colsArr = colsArr + Token(TokenKind.COMMA) }
+        colsArr = colsArr + Token(TokenKind.STRING_LITERAL, c)
+        first = false
+    }
+    colsArr = colsArr + Token(TokenKind.RSQUARE)
+
+    // 冲突列：主键
+    var pkNames = ArrayList<String>()
+    for (pk in pkFields) { pkNames.add(pk.name) }
+    var pksArr = Tokens()
+    pksArr = pksArr + Token(TokenKind.LSQUARE)
+    first = true
+    for (p in pkNames) {
+        if (!first) { pksArr = pksArr + Token(TokenKind.COMMA) }
+        pksArr = pksArr + Token(TokenKind.STRING_LITERAL, p)
+        first = false
+    }
+    pksArr = pksArr + Token(TokenKind.RSQUARE)
+
+    // 参数：entity.field
+    var paramsTok = Tokens()
+    first = true
+    for (f in fields) {
+        if (isRelationField(f.typeName)) { continue }
+        if (!first) { paramsTok = paramsTok + Token(TokenKind.COMMA) }
+        paramsTok = paramsTok + Token(TokenKind.IDENTIFIER, "entity")
+        paramsTok = paramsTok + Token(TokenKind.DOT)
+        paramsTok = paramsTok + Token(TokenKind.IDENTIFIER, f.name)
+        first = false
+    }
+
+    quote(
+        extend Tx {
+            public func upsert(entity: $(cn)): Unit {
+                $(genTokens)
+                let scope = Scope<$(cn)>(entity)
+                scope.db = Some(this)
+                if (this.ref.isSome()) { this.ref.getOrThrow().executeHooks($(nameLit), HookKind.TxBeforeCreate, scope) }
+                if (scope.aborted) { throw scope.error.getOrThrow() }
+                let d = this.ref.getOrThrow().getDialect()
+                if (!d.hasUpsertSupport()) { throw Exception("upsert not supported by dialect: " + d.name()) }
+                let sql = d.upsertSQL($(tableNameLit), $(colsArr), $(pksArr))
+                let params: Array<Any> = [$(paramsTok)]
+                let _ = this.execute(sql, params)
+                let afterScope = Scope<$(cn)>(entity)
+                afterScope.db = Some(this)
+                if (this.ref.isSome()) { this.ref.getOrThrow().executeHooks($(nameLit), HookKind.TxAfterCreate, afterScope) }
+            }
+        }
+    )
+}
+
 func buildTxBatchSaveExtend(className: String, pkFields: ArrayList<FieldInfo>, hasClientPk: Bool): Tokens {
     let cn = Token(TokenKind.IDENTIFIER, className)
     let batchInsertSQLFuncName = Token(TokenKind.IDENTIFIER, className + "BatchInsertSQL")
@@ -1343,6 +1411,7 @@ public macro Refine(input: Tokens): Tokens {
     let txBatchSaveExtend = buildTxBatchSaveExtend(className, pkFields, hasClientPk)
     let updateSQLFunc = buildUpdateSQLFunc(className, mergedFields, tableName, pkFields)
     let txUpdateExtend = buildTxUpdateExtend(className)
+    let txUpsertExtend = buildTxUpsertExtend(className, mergedFields, tableName, pkFields)
     let rowMapper = buildRowMapper(className, classDecl, mergedRels)
     buildRelationMethods(className, mergedRels, classDecl)
     let schemaClass = buildSchemaClass(className, mergedFields, tableName)
@@ -1360,6 +1429,7 @@ public macro Refine(input: Tokens): Tokens {
             Token(TokenKind.NL) + Token(TokenKind.NL) + txBatchSaveExtend +
             Token(TokenKind.NL) + Token(TokenKind.NL) + updateSQLFunc +
             Token(TokenKind.NL) + Token(TokenKind.NL) + txUpdateExtend +
+            Token(TokenKind.NL) + Token(TokenKind.NL) + txUpsertExtend +
             Token(TokenKind.NL) + Token(TokenKind.NL) + deleteSQLFunc +
             Token(TokenKind.NL) + Token(TokenKind.NL) + softDeleteSQLFunc +
             Token(TokenKind.NL) + Token(TokenKind.NL) + txDeleteExtend +
@@ -1378,6 +1448,7 @@ public macro Refine(input: Tokens): Tokens {
             Token(TokenKind.NL) + Token(TokenKind.NL) + txBatchSaveExtend +
             Token(TokenKind.NL) + Token(TokenKind.NL) + updateSQLFunc +
             Token(TokenKind.NL) + Token(TokenKind.NL) + txUpdateExtend +
+            Token(TokenKind.NL) + Token(TokenKind.NL) + txUpsertExtend +
             Token(TokenKind.NL) + Token(TokenKind.NL) + deleteSQLFunc +
             Token(TokenKind.NL) + Token(TokenKind.NL) + txDeleteExtend +
             Token(TokenKind.NL) + Token(TokenKind.NL) + rowMapper +
