@@ -138,3 +138,28 @@ class TagRepo {
         Tag.query().using(rf).filter(Tag.col().name == name).one()
     }
 }
+
+struct EventFind {
+    var id: Option<String> = None
+    var name: Option<String> = None
+    init() {}
+}
+
+class EventRepo {
+    static func save(tx: Tx, entity: Event): Unit { tx.save(entity) }
+    static func update(tx: Tx, entity: Event): Unit { tx.update(entity) }
+    static func delete(tx: Tx, entity: Event): Unit { tx.delete(entity) }
+
+    static func find(rf: Refine, p: EventFind): Array<Event> {
+        var q = Event.query().using(rf)
+        match (p.id) { case Some(v) => q = q.filter(Event.col().id == v); case None => () }
+        match (p.name) { case Some(v) => q = q.filter(Event.col().name == v); case None => () }
+        q.all()
+    }
+
+    static func findOne(rf: Refine, p: EventFind): Option<Event> {
+        var q = Event.query().using(rf)
+        match (p.id) { case Some(v) => q = q.filter(Event.col().id == v); case None => () }
+        q.one()
+    }
+}

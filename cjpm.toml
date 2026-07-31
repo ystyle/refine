@@ -10,7 +10,7 @@
 
 [dependencies]
 sonyflake = "1.0.9"
-"opencj::ulid" = "0.1.1"
+"opencj::ulid" = "0.1.2"
 
 [test-dependencies]
 mariadb = {git = "https://gitcode.com/Cangjie-SIG/mariadb-driver.git", branch = "master"}

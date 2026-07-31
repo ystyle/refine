@@ -36,6 +36,42 @@ public class Comment {
 }
 
 @Refine
+public class UuidPost {
+    var id: String = ""
+    var title: String = ""
+    var content: String = ""
+}
+
+@Refine
+public class ManualIdPost {
+    @Id[auto, false]
+    var id: Int64 = 0
+    var title: String = ""
+}
+
+@Refine
+public class OrderTag {
+    @Id[]
+    var order_id: Int64 = 0
+    @Id[]
+    var tag_id: Int64 = 0
+}
+
+@Refine
+public class StringKeyEntity {
+    @Id[]
+    var key: String = ""
+    var name: String = ""
+}
+
+@Refine
+public class CustomAutoPkEntity {
+    @Id[auto, true]
+    var uid: Int64 = 0
+    var label: String = ""
+}
+
+@Refine
 public class PostWithRel {
     var id: Int64 = 0
     var title: String = ""
@@ -55,6 +91,14 @@ public class PostWithRel {
 class HookFlag {
     var called: Bool = false
     public init() {}
+}
+
+class TestIdGenerator <: IdGenerator {
+    private var counter: Int64 = 0
+    public func generate(): String {
+        counter = counter + 1
+        "uuid-" + counter.toString()
+    }
 }
 
 class CaptureUpdateResult <: UpdateResult {
@@ -303,6 +347,199 @@ public class MacroSaveTest {
 
         @Expect(conn.stmt.capturedSql, "")
     }
+
+    // ─── UUID / String Id Tests ────────────────────────
+
+    @TestCase
+    public func testTxSaveUuidPostIncludesIdInInsert(): Unit {
+        clearHooks()
+        let conn = CaptureConnection()
+        let rf = Refine(RMockDS(), SQLiteDialect(), 0)
+        rf.setIdGenerator(TestIdGenerator())
+        let tx = Tx(conn, rf, 0)
+
+        let p = UuidPost()
+        p.title = "Test"
+        p.content = "Content"
+        tx.save(p)
+
+        @Expect(p.id != "", true)
+        @Expect(conn.stmt.capturedSql.contains("INSERT INTO uuidPost (id, title, content)"), true)
+        @Expect(conn.stmt.capturedSql.contains("VALUES (?, ?, ?)"), true)
+    }
+
+    @TestCase
+    public func testTxSaveUuidPostKeepsCustomId(): Unit {
+        clearHooks()
+        let conn = CaptureConnection()
+        let rf = Refine(RMockDS(), SQLiteDialect(), 0)
+        rf.setIdGenerator(TestIdGenerator())
+        let tx = Tx(conn, rf, 0)
+
+        let p = UuidPost()
+        p.id = "my-custom-id"
+        p.title = "Test"
+        p.content = "X"
+        tx.save(p)
+
+        @Expect(p.id, "my-custom-id")
+    }
+
+    @TestCase
+    public func testTxBatchSaveUuidPost(): Unit {
+        clearHooks()
+        let conn = CaptureConnection()
+        let rf = Refine(RMockDS(), SQLiteDialect(), 0)
+        rf.setIdGenerator(TestIdGenerator())
+        let tx = Tx(conn, rf, 0)
+
+        let p1 = UuidPost(); p1.title = "A"; p1.content = "B"
+        let p2 = UuidPost(); p2.title = "C"; p2.content = "D"
+        tx.batchSave([p1, p2])
+
+        @Expect(p1.id != "", true)
+        @Expect(p2.id != "", true)
+        @Expect(p1.id != p2.id, true)
+        @Expect(conn.stmt.capturedSql.contains("INSERT INTO uuidPost (id, title, content) VALUES (?, ?, ?), (?, ?, ?)"), true)
+    }
+
+    @TestCase
+    public func testTxSaveStringKeyEntityAutoGen(): Unit {
+        clearHooks()
+        let conn = CaptureConnection()
+        let rf = Refine(RMockDS(), SQLiteDialect(), 0)
+        rf.setIdGenerator(TestIdGenerator())
+        let tx = Tx(conn, rf, 0)
+
+        let e = StringKeyEntity()
+        e.name = "abc"
+        tx.save(e)
+
+        @Expect(e.key != "", true)
+        @Expect(conn.stmt.capturedSql.contains("INSERT INTO stringKeyEntity (key, name)"), true)
+    }
+
+    @TestCase
+    public func testTxBatchSaveStringKeyEntityAutoGen(): Unit {
+        clearHooks()
+        let conn = CaptureConnection()
+        let rf = Refine(RMockDS(), SQLiteDialect(), 0)
+        rf.setIdGenerator(TestIdGenerator())
+        let tx = Tx(conn, rf, 0)
+
+        let e1 = StringKeyEntity(); e1.name = "a"
+        let e2 = StringKeyEntity(); e2.name = "b"
+        tx.batchSave([e1, e2])
+
+        @Expect(e1.key != "", true)
+        @Expect(e2.key != "", true)
+        @Expect(e1.key != e2.key, true)
+        @Expect(conn.stmt.capturedSql.contains("INSERT INTO stringKeyEntity (key, name)"), true)
+    }
+
+    @TestCase
+    public func testTxSaveCustomAutoPkEntity(): Unit {
+        clearHooks()
+        let conn = CaptureConnection()
+        conn.stmt.mockLastInsertId = 42
+        let rf = Refine(RMockDS(), SQLiteDialect(), 0)
+        let tx = Tx(conn, rf, 0)
+
+        let e = CustomAutoPkEntity()
+        e.label = "x"
+        tx.save(e)
+
+        @Expect(e.uid, 42)
+        @Expect(conn.stmt.capturedSql.contains("INSERT INTO customAutoPkEntity (label)"), true)
+    }
+
+    // ─── @Id / Compound Key Tests ──────────────────────
+
+    @TestCase
+    public func testTxSaveManualIdPostIncludesId(): Unit {
+        clearHooks()
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+
+        let p = ManualIdPost()
+        p.id = 42
+        p.title = "Manual"
+        tx.save(p)
+
+        @Expect(conn.stmt.capturedSql.contains("INSERT INTO manualIdPost (id, title)"), true)
+    }
+
+    @TestCase
+    public func testTxUpdateManualIdPost(): Unit {
+        clearHooks()
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+
+        let p = ManualIdPost()
+        p.id = 1
+        p.title = "Updated"
+        tx.update(p)
+
+        @Expect(conn.stmt.capturedSql.contains("UPDATE manualIdPost SET"), true)
+        @Expect(conn.stmt.capturedSql.contains("WHERE id = ?"), true)
+    }
+
+    @TestCase
+    public func testTxDeleteManualIdPost(): Unit {
+        clearHooks()
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+
+        let p = ManualIdPost()
+        p.id = 1
+        tx.delete(p)
+
+        @Expect(conn.stmt.capturedSql.contains("DELETE FROM manualIdPost"), true)
+        @Expect(conn.stmt.capturedSql.contains("WHERE id = ?"), true)
+    }
+
+    @TestCase
+    public func testTxSaveOrderTagCompoundPk(): Unit {
+        clearHooks()
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+
+        let ot = OrderTag()
+        ot.order_id = 1
+        ot.tag_id = 2
+        tx.save(ot)
+
+        @Expect(conn.stmt.capturedSql.contains("INSERT INTO orderTag (order_id, tag_id)"), true)
+        @Expect(conn.stmt.capturedSql.contains("VALUES (?, ?)"), true)
+    }
+
+    @TestCase
+    public func testTxUpdateOrderTagCompoundPk(): Unit {
+        clearHooks()
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+
+        let ot = OrderTag()
+        ot.order_id = 1
+        ot.tag_id = 2
+        tx.update(ot)
+
+        @Expect(conn.stmt.capturedSql.contains("WHERE order_id = ? AND tag_id = ?"), true)
+    }
+
+    @TestCase
+    public func testTxDeleteOrderTagCompoundPk(): Unit {
+        clearHooks()
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+
+        let ot = OrderTag()
+        ot.order_id = 1
+        ot.tag_id = 2
+        tx.delete(ot)
+
+        @Expect(conn.stmt.capturedSql.contains("WHERE order_id = ? AND tag_id = ?"), true)
+    }
 }
 
 @Test
@@ -414,6 +651,24 @@ public class MacroExistingTest {
         @Expect(cols[0].primaryKey, true)
         @Expect(cols[0].autoIncrement, true)
         @Expect(cols[1].name, "name")
+    }
+
+    @TestCase
+    public func testStringIdSchemaNoAutoIncrement(): Unit {
+        let schema = UuidPostSchema()
+        let cols = schema.columns()
+        @Expect(cols[0].name, "id")
+        @Expect(cols[0].primaryKey, true)
+        @Expect(cols[0].autoIncrement, false)
+    }
+
+    @TestCase
+    public func testStringFieldStorageType(): Unit {
+        let schema = UuidPostSchema()
+        let cols = schema.columns()
+        @Expect(cols[0].storageType, StorageType.String)
+        @Expect(cols[1].storageType, StorageType.String)
+        @Expect(cols[2].storageType, StorageType.String)
     }
 
     @TestCase

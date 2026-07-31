@@ -62,6 +62,60 @@ rf.migrator().autoMigrate(Post.schemas())
 - `@HardDelete` 注解标记的实体即使有 `deleted_at` 也走物理删除
 - `Tx.physicalDelete()` 方法绕过软删除，直接物理删除
 
+### UUID / String 主键
+
+实体 `id: String` 时自动启用 UUID 主键模式：
+
+```cangjie
+@Refine
+class Order {
+    var id: String = ""  // UUID 主键
+    var name: String = ""
+}
+
+tx.save(order)
+// 空 id 时自动 IdGenerator.generate()
+// INSERT INTO \"order\" (id, name) VALUES (?, ?)
+// 支持用户自定义 id：order.id = "my-id" 时不覆盖
+```
+
+- `id: Int64`（默认）→ 自增主键，INSERT 不含 id 列
+- `id: String` → UUID 主键，INSERT 含 id 列，空时自动生成
+- `tx.batchSave` 对 String id 实体预先生成所有 ID 后再组 SQL
+
+### @Id 注解 + `@Id[auto, false]` + 复合主键
+
+`@Id` 注解显式标记主键字段，支持自增开关和复合主键：
+
+```cangjie
+@Refine
+class ManualIdPost {
+    @Id[auto, false]    // Int64 但手动设置 id
+    var id: Int64 = 0
+    var title: String = ""
+}
+
+@Refine
+class OrderTag {
+    @Id[]               // 复合主键
+    var order_id: Int64 = 0
+    @Id[]
+    var tag_id: Int64 = 0
+}
+```
+
+- `@Id[auto, false]` 关闭自增，INSERT 包含 id 列
+- 多个 `@Id[]` 声明复合主键，UPDATE/DELETE WHERE 使用所有 PK 字段
+- 无 `@Id` 时自动检测 `id: Int64` 为自增主键
+
+### aggregateWithCollections 统一 String key
+
+`aggregateWithCollections` 从 `HashMap<Int64, T>` 改为 `HashMap<String, T>`，通过生成的 `EntityKeyFromResult` 函数提取主键字符串：
+
+- `id: Int64` → key = `id.toString()`
+- `id: String` → key = id
+- 复合主键 → key = `pk1:pk2`（冒号拼接）
+
 ---
 
 ## ⬜ 待实现
@@ -75,15 +129,3 @@ rf.migrator().autoMigrate(Post.schemas())
 待设计批量更新 API，可能的方案：
 - 宏生成 `batchUpdateSQL` + `Tx.batchUpdate<T>(entities)`（类似批量插入）
 - 每条 UPDATE 用不同的参数值，但必须复用 `SET col = ? WHERE id = ?` 模板
-
-### UUID 主键 + 用户自定义 ID
-
-> **状态：待确认设计方案是否继续推进。**
-
-核心方案：宏检测 `id` 字段类型，分叉代码生成。
-
-| 特性 | `id: Int64`（现有） | `id: String`（新增） |
-|------|-------------------|---------------------|
-| INSERT | 不含 id 列，依赖自增 | **含 id 列** |
-| 自动生成 | `result.lastInsertId` | **`idGenerator.generate()`**（空时才生成） |
-| 用户自设 | 忽略，走自增 | **支持，不覆盖** |

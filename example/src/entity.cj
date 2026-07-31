@@ -59,3 +59,10 @@ public class Tag {
     var id: Int64 = 0
     var name: String = ""
 }
+
+@Refine
+class Event {
+    var id: String = ""
+    var name: String = ""
+    var payload: String = ""
+}

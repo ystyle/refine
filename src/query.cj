@@ -40,6 +40,7 @@ public class Query<T> {
     var columnOffset: Int64 = 0
     public var typeName: String = ""
     var ref: Option<Refine> = None
+    var keyExtractor: Option<(QueryResult, HashMap<String, Int64>) -> String> = None
 
     public init() {
         this.stmt = Statement()
@@ -238,6 +239,10 @@ public class Query<T> {
         this.mapper = Some(m)
     }
 
+    public func setKeyExtractor(k: (QueryResult, HashMap<String, Int64>) -> String): Unit {
+        this.keyExtractor = Some(k)
+    }
+
     public func all(): Array<T> {
         match (this.mapper) {
             case Some(m) => all(m)
@@ -395,7 +400,7 @@ public class Query<T> {
 
     private func isNullId(result: QueryResult, idx: Int64): Bool {
         try {
-            let _ = result.get<Int64>(idx)
+            let _ = result.get<String>(idx)
             false
         } catch (_: Exception) {
             true
@@ -407,10 +412,11 @@ public class Query<T> {
         columnMap: HashMap<String, Int64>,
         mapper: (QueryResult, HashMap<String, Int64>) -> T
     ): Array<T> {
-        var map = HashMap<Int64, T>()
+        var map = HashMap<String, T>()
         var seen = HashMap<String, Bool>()
+        let extractKey = this.keyExtractor.getOrThrow()
         while (result.next()) {
-            let id = result.get<Int64>(columnMap.get("id").getOrThrow())
+            let id = extractKey(result, columnMap)
             if (!map.contains(id)) {
                 let entity = mapper(result, columnMap)
                 if (typeName != "") {
@@ -434,8 +440,8 @@ public class Query<T> {
                         if (isNullId(result, idx)) {
                         } else {
                             let stripped = stripPrefix(columnMap, prefix)
-                            let targetId = result.get<Int64>(stripped.get("id").getOrThrow())
-                            let seenKey = id.toString() + ":" + name + ":" + targetId.toString()
+                            let targetId = result.get<String>(stripped.get("id").getOrThrow())
+                            let seenKey = id + ":" + name + ":" + targetId
                             if (!seen.contains(seenKey)) {
                                 seen[seenKey] = true
                                 let target = inc.getTargetMapper()(result, stripped)
