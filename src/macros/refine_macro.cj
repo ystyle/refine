@@ -461,6 +461,25 @@ func buildAutoPkAssignTokens(pkFields: ArrayList<FieldInfo>): Tokens {
     body
 }
 
+func buildAutoPkReturningTokens(pkFields: ArrayList<FieldInfo>): Tokens {
+    var body = Tokens()
+    for (pk in pkFields) {
+        if (pk.autoInc) {
+            let fName = Token(TokenKind.IDENTIFIER, pk.name)
+            body = body + quote(
+                entity.$(fName) = qr.get<Int64>(0);
+            )
+        }
+    }
+    body
+}
+
+func buildAutoPkReturningCols(pkFields: ArrayList<FieldInfo>): String {
+    var cols = ArrayList<String>()
+    for (pk in pkFields) { if (pk.autoInc) { cols.add(pk.name) } }
+    String.join(cols.toArray(), delimiter: ", ")
+}
+
 func buildTxSaveExtend(className: String, pkFields: ArrayList<FieldInfo>, hasClientPk: Bool, hasAutoPk: Bool): Tokens {
     let cn = Token(TokenKind.IDENTIFIER, className)
     let insertSQLFuncName = Token(TokenKind.IDENTIFIER, className + "InsertSQL")
@@ -486,6 +505,9 @@ func buildTxSaveExtend(className: String, pkFields: ArrayList<FieldInfo>, hasCli
         )
     } else if (hasAutoPk) {
         let assignTokens = buildAutoPkAssignTokens(pkFields)
+        let returningTokens = buildAutoPkReturningTokens(pkFields)
+        let returningCols = buildAutoPkReturningCols(pkFields)
+        let returningColsLit = Token(TokenKind.STRING_LITERAL, returningCols)
         quote(
             extend Tx {
                 public func save(entity: $(cn)): Unit {
@@ -494,8 +516,14 @@ func buildTxSaveExtend(className: String, pkFields: ArrayList<FieldInfo>, hasCli
                     if (this.ref.isSome()) { this.ref.getOrThrow().executeHooks($(nameLit), HookKind.TxBeforeCreate, scope) }
                     if (scope.aborted) { throw scope.error.getOrThrow() }
                     let (sql, params) = $(insertSQLFuncName)(entity)
-                    let result = this.execute(sql, params)
-                    $(assignTokens)
+                    if (this.ref.isSome() && this.ref.getOrThrow().getDialect().hasReturningSupport()) {
+                        let qr = this.query(sql + " RETURNING " + $(returningColsLit), params)
+                        if (qr.next()) { $(returningTokens) }
+                        qr.close()
+                    } else {
+                        let result = this.execute(sql, params)
+                        $(assignTokens)
+                    }
                     let afterScope = Scope<$(cn)>(entity)
                     afterScope.db = Some(this)
                     if (this.ref.isSome()) { this.ref.getOrThrow().executeHooks($(nameLit), HookKind.TxAfterCreate, afterScope) }

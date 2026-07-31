@@ -72,6 +72,20 @@ public class CustomAutoPkEntity {
 }
 
 @Refine
+public class PgPost {
+    var id: Int64 = 0
+    var title: String = ""
+    var content: String = ""
+}
+
+@Refine
+public class PgEvent {
+    var id: String = ""
+    var name: String = ""
+    var payload: String = ""
+}
+
+@Refine
 public class PostWithRel {
     var id: Int64 = 0
     var title: String = ""

@@ -9,7 +9,7 @@ public class PostgreSQLDialect <: Dialect {
     public func name(): String { "postgresql" }
 
     public func quoteIdentifier(name: String): String {
-        "\"" + name + "\""
+        "\"" + name.toAsciiLower() + "\""
     }
 
     public func render(stmt: Statement): (String, Array<Any>) {
@@ -174,7 +174,7 @@ public class PostgreSQLDialect <: Dialect {
 
     public func hasJSONSupport(): Bool { true }
 
-    public func migrator(db: DB): Migrator { throw Exception("PostgreSQL migration not yet implemented") }
+    public func migrator(db: DB): Migrator { PostgreSQLMigrator(db) }
 
     public func initialize(db: DB): Unit {}
 
