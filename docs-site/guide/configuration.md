@@ -15,6 +15,34 @@ mariadb://host:port                     // MariaDB/MySQL
 postgres://host:port                    // PostgreSQL（驱动名 postgres / postgresql）
 ```
 
+## MySQL / MariaDB
+
+MySQL 支持需要引入驱动依赖（实现 `std.database.sql` 接口）：
+
+```toml
+[dependencies]
+mariadb = { git = "https://gitcode.com/Cangjie-SIG/mariadb-driver.git", branch = "master" }
+```
+
+连接示例：
+
+```cangjie
+let rf = Refine.open("mariadb://127.0.0.1:3306", [
+    ("username", "root"),
+    ("password", "secret"),
+    ("database", "myapp")
+])
+```
+
+支持的连接选项：
+
+| 选项 | 说明 |
+|---|---|
+| `username` / `password` | 认证 |
+| `database` | 数据库名 |
+
+> **注意**：MySQL 驱动参数/列索引为 1 起始，Refine 已自动适配（`paramOffset = 1`），无需额外配置。表名大小写行为取决于 MySQL 服务器的 `lower_case_table_names` 设置，建议使用小写表名。
+
 ## PostgreSQL
 
 PostgreSQL 支持需要引入驱动依赖（纯仓颉实现，实现 `std.database.sql` 接口）：
