@@ -35,6 +35,6 @@ try {
 |---|---|
 | `QueryException` | Query 未设置 mapper、未设置 executor、SQL 执行失败 |
 | `ConnectionException` | 驱动未找到、连接失败 |
-| `MigrationException` | ALTER COLUMN 在不支持该操作的方言上调用 |
+| `MigrationException` | 迁移操作错误（如 SQLite 上调用 alterColumn） |
 | `HookException` | 钩子函数内部异常 |
 | `ConfigException` | 数据库配置未找到 |

@@ -41,6 +41,26 @@ rf.transaction { tx: Tx =>
 - 支持 `TxBeforeCreate` / `TxAfterCreate` 钩子（每个实体独立触发）
 - 空数组直接返回，不执行 SQL
 
+### Upsert
+
+`tx.upsert(entity)` 按主键插入或更新（存在冲突时更新，无冲突时插入）：
+
+```cangjie
+rf.transaction { tx: Tx =>
+    let user = User()
+    user.id = 1
+    user.name = "Alice"
+    user.email = "alice@example.com"
+    tx.upsert(user)
+    // MySQL:        INSERT ... ON DUPLICATE KEY UPDATE name = VALUES(name), ...
+    // PostgreSQL:   INSERT ... ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, ...
+}
+```
+
+- 冲突判定列为主键；String 主键（UUID/ULID）为空时自动生成
+- SQLite 不支持 upsert，调用时抛出异常
+- 再次 upsert 相同主键不会产生重复行，更新非主键字段
+
 ### 钩子校验
 
 注册 `BeforeCreate` 钩子在插入前校验：

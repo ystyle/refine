@@ -2,7 +2,11 @@
 
 ## 自动迁移
 
-`Migrator.autoMigrate()` 检查表是否存在，不存在则创建，存在但缺少列则添加列：
+`Migrator.autoMigrate()` 对比实体 Schema 与数据库现状，自动同步表结构：
+
+- 表不存在 → `CREATE TABLE`
+- 表存在但缺列 → `ADD COLUMN`
+- 表存在且列类型 / NULL 约束变化 → `ALTER COLUMN`（MySQL `MODIFY COLUMN` / PostgreSQL `ALTER COLUMN TYPE` + `SET/DROP NOT NULL`；SQLite 不支持列变更）
 
 ```cangjie
 rf.migrator().autoMigrate([
@@ -12,6 +16,8 @@ rf.migrator().autoMigrate([
     TagSchema()
 ])
 ```
+
+> **注意**：主键 / 自增 / 索引定义的变化不会自动迁移（避免危险操作），需手动处理。
 
 ### 多对多中间表
 
@@ -85,6 +91,7 @@ class MySchema <: TableSchema {
 |---|---|---|---|
 | 标识符引用 | `"name"` | `` `name` `` | `"name"`（小写化） |
 | 自增主键 | `INTEGER PRIMARY KEY AUTOINCREMENT` | `AUTO_INCREMENT` | `BIGSERIAL PRIMARY KEY` |
+| 列变更 (alterColumn) | 不支持 | `MODIFY COLUMN` | `ALTER COLUMN TYPE` |
 | upsert | 不支持 | `ON DUPLICATE KEY UPDATE` | `ON CONFLICT DO UPDATE SET` |
 | JSON | 不支持 | `JSON` | `JSONB` |
 | RETURNING | 不支持 | 不支持 | 支持 |

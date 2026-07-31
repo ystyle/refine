@@ -61,4 +61,24 @@ MariaDB 驱动使用 1-based 参数索引。`Tx` 根据 `paramOffset` 自动适�
 tx.save(entity)     // TxBeforeCreate → INSERT → TxAfterCreate
 tx.update(entity)   // TxBeforeUpdate → UPDATE → TxAfterUpdate
 tx.delete(entity)   // TxBeforeDelete → DELETE → TxAfterDelete
+tx.upsert(entity)   // TxBeforeCreate → INSERT ... ON CONFLICT DO UPDATE → TxAfterCreate
 ```
+
+## Upsert
+
+`Tx.upsert(entity)` 插入或更新（存在主键冲突时更新）：
+
+```cangjie
+rf.transaction { tx: Tx =>
+    let user = User()
+    user.id = 1
+    user.name = "Alice"
+    tx.upsert(user)
+    // MySQL: INSERT INTO users (id, name, email) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE ...
+    // PostgreSQL: INSERT INTO users (id, name, email) VALUES (...) ON CONFLICT (id) DO UPDATE SET ...
+}
+```
+
+- 冲突判定列为主键；String 主键为空时自动生成（同 `save`）
+- SQLite 方言不支持 upsert，调用时抛出异常
+- 触发 `TxBeforeCreate` / `TxAfterCreate` 钩子
