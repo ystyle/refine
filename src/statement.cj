@@ -12,6 +12,9 @@ public enum Clause {
     | LimitClause(Int64)
     | OffsetClause(Int64)
     | JoinClause(String, String, Expr)
+    | UpdateClause(String, Array<String>, Array<Any>)
+    | DeleteClause(String)
+    | LockClause
 }
 
 public struct Statement {

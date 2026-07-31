@@ -77,7 +77,7 @@ public class DB {
 
 public class Session {
     private var connection: Connection
-    private var paramOffset: Int64 = 0
+    var paramOffset: Int64 = 0
     public var ref: Option<Refine> = None
 
     public init(connection: Connection) {
@@ -197,14 +197,20 @@ public class Tx {
             case None => SQLiteDialect()
         }
     }
+
+    public func getParamOffset(): Int64 { paramOffset }
 }
 
 public interface ExecutionContext {
     func query(sql: String, params: Array<Any>): QueryResult
     func execute(sql: String, params: Array<Any>): UpdateResult
+    func getDialect(): Dialect
+    func getParamOffset(): Int64
 }
 
-extend Session <: ExecutionContext {}
+extend Session <: ExecutionContext {
+    public func getParamOffset(): Int64 { paramOffset }
+}
 extend Tx <: ExecutionContext {}
 
 extend Tx {

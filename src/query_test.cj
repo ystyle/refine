@@ -562,4 +562,67 @@ public class QueryTest {
         let (sql, _) = dialect.render(q.stmt)
         @Expect(sql.contains("\"users\".\"id\""), true)
     }
+
+    // ─── updateWhere / deleteWhere / forUpdate 渲染 ───
+
+    @TestCase
+    public func testUpdateWhereRendersSQL(): Unit {
+        let q = Query<Int64>()
+        q.from("users")
+        q.filter(Col<Int64>("age") > 18)
+        let stmt = Statement()
+        stmt.addClause(UpdateClause("users", ["name", "email"], ["bob", "bob@t.com"]))
+        stmt.addClause(WhereClause([Col<Int64>("age") > 18]))
+        let dialect = MySQLDialect()
+        let (sql, params) = dialect.render(stmt)
+        @Expect(sql, "UPDATE `users` SET `name` = ?, `email` = ? WHERE `age` > ?")
+        @Expect(params.size, 3)
+    }
+
+    @TestCase
+    public func testDeleteWhereRendersSQL(): Unit {
+        let stmt = Statement()
+        stmt.addClause(DeleteClause("users"))
+        stmt.addClause(WhereClause([Col<Int64>("age") > 18]))
+        let dialect = MySQLDialect()
+        let (sql, _) = dialect.render(stmt)
+        @Expect(sql, "DELETE FROM `users` WHERE `age` > ?")
+    }
+
+    @TestCase
+    public func testForUpdateRendersMySQL(): Unit {
+        let q = Query<Int64>()
+        q.select([Expr.Column("id")])
+        q.from("users")
+        q.filter(Col<Int64>("age") > 18)
+        q.forUpdate()
+        let dialect = MySQLDialect()
+        let (sql, _) = dialect.render(q.stmt)
+        @Expect(sql, "SELECT `id` FROM `users` WHERE `age` > ? FOR UPDATE")
+    }
+
+    @TestCase
+    public func testForUpdateIgnoredSQLite(): Unit {
+        let q = Query<Int64>()
+        q.select([Expr.Column("id")])
+        q.from("users")
+        q.forUpdate()
+        let dialect = SQLiteDialect()
+        let (sql, _) = dialect.render(q.stmt)
+        @Expect(sql, "SELECT \"id\" FROM \"users\"")
+    }
+
+    @TestCase
+    public func testAggregateRendersSQL(): Unit {
+        let q = Query<Int64>()
+        q.from("posts")
+        q.filter(Col<Int64>("user_id") == 1)
+        let stmt = Statement()
+        stmt.addClause(SelectClause([Raw("SUM(id)")]))
+        stmt.addClause(FromClause("posts"))
+        stmt.addClause(WhereClause([Col<Int64>("user_id") == 1]))
+        let dialect = MySQLDialect()
+        let (sql, _) = dialect.render(stmt)
+        @Expect(sql, "SELECT SUM(id) FROM `posts` WHERE `user_id` = ?")
+    }
 }

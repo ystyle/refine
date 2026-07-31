@@ -247,6 +247,70 @@ class ServiceChecks {
         @Expect(EventRepo.findOne(rf, p).isSome(), true)
     }
 
+    static func aggregateFunctions(rf: Refine): Unit {
+        initOnce(rf)
+        let name = "Agg_" + uid()
+        let author = UserService.register(rf, name, name + "@t.com")
+        for (i in 0..5) { PostService.create(rf, "A" + i.toString(), "B", author.id) }
+        let total = Post.query().using(rf).filter(Post.col().user_id == author.id).sum(Post.col().id)
+        @Expect(total > 0, true)
+        let maxId = Post.query().using(rf).filter(Post.col().user_id == author.id).max(Post.col().id)
+        @Expect(maxId > 0, true)
+        let cnt = Post.query().using(rf).filter(Post.col().user_id == author.id).count()
+        @Expect(cnt, 5)
+    }
+
+    static func pageQuery(rf: Refine): Unit {
+        initOnce(rf)
+        let name = "Page_" + uid()
+        let author = UserService.register(rf, name, name + "@t.com")
+        for (i in 0..7) { PostService.create(rf, "P" + i.toString(), "B", author.id) }
+        let pg = Post.query().using(rf)
+            .filter(Post.col().user_id == author.id)
+            .order([Post.col().id.asc()])
+            .page(2, 3)
+        @Expect(pg.total, 7)
+        @Expect(pg.items.size, 3)
+        @Expect(pg.totalPages(), 3)
+        @Expect(pg.hasNext(), true)
+        let last = Post.query().using(rf)
+            .filter(Post.col().user_id == author.id)
+            .page(3, 3)
+        @Expect(last.items.size, 1)
+    }
+
+    static func updateWhereDeleteWhere(rf: Refine): Unit {
+        initOnce(rf)
+        let name = "Uw_" + uid()
+        let author = UserService.register(rf, name, name + "@t.com")
+        for (i in 0..3) { PostService.create(rf, "U" + i.toString(), "B", author.id) }
+        let updated = Post.query().using(rf)
+            .filter(Post.col().user_id == author.id)
+            .updateWhere(["title"], ["UPDATED"])
+        @Expect(updated, 3)
+        let all = Post.query().using(rf).filter(Post.col().user_id == author.id).all()
+        for (p in all) { @Expect(p.title, "UPDATED") }
+        let deleted = Post.query().using(rf)
+            .filter(Post.col().user_id == author.id)
+            .deleteWhere()
+        @Expect(deleted, 3)
+        @Expect(Post.query().using(rf).filter(Post.col().user_id == author.id).count(), 0)
+    }
+
+    static func forUpdateQuery(rf: Refine): Unit {
+        initOnce(rf)
+        let name = "Lock_" + uid()
+        let author = UserService.register(rf, name, name + "@t.com")
+        PostService.create(rf, "L1", "B", author.id)
+        rf.transaction { tx: Tx =>
+            let found = Post.query().using(tx)
+                .filter(Post.col().user_id == author.id)
+                .forUpdate()
+                .all()
+            @Expect(found.size, 1)
+        }
+    }
+
     static func batchUpdateDifferentValues(rf: Refine): Unit {
         initOnce(rf)
         let name = "BatchUpd_" + uid()
@@ -365,6 +429,18 @@ public class MySQLServiceTest {
 
     @TestCase
     public func testBatchUpdateDifferentValues(): Unit { ServiceChecks.batchUpdateDifferentValues(rf) }
+
+    @TestCase
+    public func testAggregateFunctions(): Unit { ServiceChecks.aggregateFunctions(rf) }
+
+    @TestCase
+    public func testPageQuery(): Unit { ServiceChecks.pageQuery(rf) }
+
+    @TestCase
+    public func testUpdateWhereDeleteWhere(): Unit { ServiceChecks.updateWhereDeleteWhere(rf) }
+
+    @TestCase
+    public func testForUpdateQuery(): Unit { ServiceChecks.forUpdateQuery(rf) }
 }
 
 // ─── PostgreSQL 测试类 ──────────────────────────────────
@@ -432,4 +508,16 @@ public class PostgreSQLServiceTest {
 
     @TestCase
     public func testBatchUpdateDifferentValues(): Unit { ServiceChecks.batchUpdateDifferentValues(rf) }
+
+    @TestCase
+    public func testAggregateFunctions(): Unit { ServiceChecks.aggregateFunctions(rf) }
+
+    @TestCase
+    public func testPageQuery(): Unit { ServiceChecks.pageQuery(rf) }
+
+    @TestCase
+    public func testUpdateWhereDeleteWhere(): Unit { ServiceChecks.updateWhereDeleteWhere(rf) }
+
+    @TestCase
+    public func testForUpdateQuery(): Unit { ServiceChecks.forUpdateQuery(rf) }
 }

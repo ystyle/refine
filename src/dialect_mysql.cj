@@ -22,6 +22,9 @@ public class MySQLDialect <: Dialect {
         var orderBy = ArrayList<String>()
         var limit = ArrayList<String>()
         var hasSelect = false
+        var updateSQL = ""
+        var deleteSQL = ""
+        var hasLock = false
         for (i in 0..stmt.clauses.size) {
             let clause = stmt.clauses[i]
             match (clause) {
@@ -45,18 +48,38 @@ public class MySQLDialect <: Dialect {
                     limit.add("OFFSET " + n.toString())
                 case JoinClause(table, alias, on) =>
                     joins.add("LEFT JOIN " + quoteIdentifier(table) + " " + quoteIdentifier(alias) + " ON " + renderExpr(on))
+                case UpdateClause(table, setCols, setVals) =>
+                    var setParts = ArrayList<String>()
+                    for (_si_ in 0..setCols.size) {
+                        setParts.add(quoteIdentifier(setCols[_si_]) + " = ?")
+                        params.add(setVals[_si_])
+                    }
+                    updateSQL = "UPDATE " + quoteIdentifier(table) + " SET " + String.join(setParts.toArray(), delimiter: ", ")
+                case DeleteClause(table) =>
+                    deleteSQL = "DELETE FROM " + quoteIdentifier(table)
+                case LockClause =>
+                    hasLock = true
             }
         }
         var parts = ArrayList<String>()
-        if (!hasSelect) { parts.add("SELECT *") }
-        else { for (s in select) { parts.add(s) } }
-        for (s in from) { parts.add(s) }
-        for (s in joins) { parts.add(s) }
-        for (s in whereClause) { parts.add(s) }
-        for (s in groupBy) { parts.add(s) }
-        for (s in having) { parts.add(s) }
-        for (s in orderBy) { parts.add(s) }
-        for (s in limit) { parts.add(s) }
+        if (updateSQL != "") {
+            parts.add(updateSQL)
+            for (s in whereClause) { parts.add(s) }
+        } else if (deleteSQL != "") {
+            parts.add(deleteSQL)
+            for (s in whereClause) { parts.add(s) }
+        } else {
+            if (!hasSelect) { parts.add("SELECT *") }
+            else { for (s in select) { parts.add(s) } }
+            for (s in from) { parts.add(s) }
+            for (s in joins) { parts.add(s) }
+            for (s in whereClause) { parts.add(s) }
+            for (s in groupBy) { parts.add(s) }
+            for (s in having) { parts.add(s) }
+            for (s in orderBy) { parts.add(s) }
+            for (s in limit) { parts.add(s) }
+            if (hasLock) { parts.add("FOR UPDATE") }
+        }
         (String.join(parts.toArray(), delimiter: " "), params.toArray())
     }
 

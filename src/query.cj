@@ -99,6 +99,104 @@ public class Query<T> {
         this
     }
 
+    public func forUpdate(): Query<T> {
+        stmt.addClause(LockClause)
+        this
+    }
+
+    public func page(page: Int64, size: Int64): Page<T> {
+        if (page < 1) { throw QueryException("page must be >= 1") }
+        if (size < 1) { throw QueryException("size must be >= 1") }
+        let exec = requireExecutor()
+        let dialect = getDialect()
+        let total = countWith(exec, dialect)
+        let pager = Statement()
+        for (clause in stmt.clauses) {
+            match (clause) {
+                case LimitClause(_) | OffsetClause(_) => ()
+                case _ => pager.addClause(clause)
+            }
+        }
+        pager.addClause(LimitClause(size))
+        pager.addClause(OffsetClause((page - 1) * size))
+        let (sql, params) = dialect.render(pager)
+        Logger.logSQL(sql, params)
+        let result = exec.query(sql, params)
+        let columnMap = buildColumnMap(result.columnInfos, columnOffset)
+        var entities = ArrayList<T>()
+        while (result.next()) {
+            entities.add(this.mapper.getOrThrow()(result, columnMap))
+        }
+        closeExecutor(exec)
+        Page(entities.toArray(), total, page, size)
+    }
+
+    public func updateWhere(setCols: Array<String>, setVals: Array<Any>): Int64 {
+        if (setCols.size != setVals.size) { throw QueryException("setCols and setVals must have same size") }
+        if (setCols.size == 0) { throw QueryException("no columns to update") }
+        let table = requireTable()
+        let updater = Statement()
+        updater.addClause(UpdateClause(table, setCols, setVals))
+        for (clause in stmt.clauses) {
+            match (clause) {
+                case WhereClause(_) | JoinClause(_, _, _) => updater.addClause(clause)
+                case _ => ()
+            }
+        }
+        let exec = requireExecutor()
+        let dialect = getDialect()
+        let (sql, params) = dialect.render(updater)
+        Logger.logSQL(sql, params)
+        let result = exec.execute(sql, params)
+        closeExecutor(exec)
+        result.rowCount
+    }
+
+    public func deleteWhere(): Int64 {
+        let table = requireTable()
+        let deleter = Statement()
+        deleter.addClause(DeleteClause(table))
+        for (clause in stmt.clauses) {
+            match (clause) {
+                case WhereClause(_) | JoinClause(_, _, _) => deleter.addClause(clause)
+                case _ => ()
+            }
+        }
+        let exec = requireExecutor()
+        let dialect = getDialect()
+        let (sql, params) = dialect.render(deleter)
+        Logger.logSQL(sql, params)
+        let result = exec.execute(sql, params)
+        closeExecutor(exec)
+        result.rowCount
+    }
+
+    private func requireTable(): String {
+        for (clause in stmt.clauses) {
+            match (clause) {
+                case FromClause(t) => return t
+                case _ => ()
+            }
+        }
+        throw QueryException("No table set. Call from() before updateWhere/deleteWhere.")
+    }
+
+    private func runQuery(target: Statement): Array<T> {
+        let exec = requireExecutor()
+        let dialect = getDialect()
+        let (sql, params) = dialect.render(target)
+        Logger.logSQL(sql, params)
+        let result = exec.query(sql, params)
+        let columnMap = buildColumnMap(result.columnInfos, columnOffset)
+        var entities = ArrayList<T>()
+        while (result.next()) {
+            let entity = this.mapper.getOrThrow()(result, columnMap)
+            entities.add(entity)
+        }
+        closeExecutor(exec)
+        entities.toArray()
+    }
+
     public func include(rel: IRelation): Query<T> {
         included.add(rel)
         let (kind, _, _, _, _, _) = rel.resolve()
@@ -119,6 +217,8 @@ public class Query<T> {
 
     public func using(exec: ExecutionContext): Query<T> {
         this.executor = exec
+        this.queryDialect = Some(exec.getDialect())
+        this.columnOffset = exec.getParamOffset()
         this
     }
 
@@ -336,6 +436,13 @@ public class Query<T> {
 
     public func count(): Int64 {
         let exec = requireExecutor()
+        let dialect = getDialect()
+        let cnt = countWith(exec, dialect)
+        closeExecutor(exec)
+        cnt
+    }
+
+    private func countWith(exec: ExecutionContext, dialect: Dialect): Int64 {
         let countStmt = Statement()
         countStmt.addClause(SelectClause([Raw("COUNT(*)")]))
         for (clause in stmt.clauses) {
@@ -346,7 +453,6 @@ public class Query<T> {
                 case _ => ()
             }
         }
-        let dialect = getDialect()
         let (sql, params) = dialect.render(countStmt)
         Logger.logSQL(sql, params)
         let start = MonoTime.now()
@@ -357,12 +463,55 @@ public class Query<T> {
         if (result.next()) {
             cnt = result.get<Int64>(0 + columnOffset)
         }
-        closeExecutor(exec)
         cnt
     }
 
     public func exists(): Bool {
         count() > 0
+    }
+
+    public func sum(col: Col<Int64>): Int64 { aggregateInt("SUM", col) }
+    public func sum(col: Col<Float64>): Float64 { aggregateFloat("SUM", col) }
+    public func avg(col: Col<Int64>): Float64 { aggregateFloat("AVG", col) }
+    public func avg(col: Col<Float64>): Float64 { aggregateFloat("AVG", col) }
+    public func min(col: Col<Int64>): Int64 { aggregateInt("MIN", col) }
+    public func max(col: Col<Int64>): Int64 { aggregateInt("MAX", col) }
+
+    private func aggregateInt(fn: String, col: Col<Int64>): Int64 {
+        aggregate(fn, col.name, 0, { r, o => r.getOrNull<Int64>(0 + o) })
+    }
+
+    private func aggregateFloat(fn: String, col: Col<Int64>): Float64 {
+        aggregate(fn, col.name, 0.0, { r, o => r.getOrNull<Float64>(0 + o) })
+    }
+
+    private func aggregateFloat(fn: String, col: Col<Float64>): Float64 {
+        aggregate(fn, col.name, 0.0, { r, o => r.getOrNull<Float64>(0 + o) })
+    }
+
+    private func aggregate<R>(fn: String, colName: String, zero: R, read: (QueryResult, Int64) -> ?R): R {
+        let exec = requireExecutor()
+        let aggStmt = Statement()
+        aggStmt.addClause(SelectClause([Raw(fn + "(" + colName + ")")]))
+        for (clause in stmt.clauses) {
+            match (clause) {
+                case FromClause(_) | WhereClause(_) | JoinClause(_, _, _) => aggStmt.addClause(clause)
+                case _ => ()
+            }
+        }
+        let dialect = getDialect()
+        let (sql, params) = dialect.render(aggStmt)
+        Logger.logSQL(sql, params)
+        let result = exec.query(sql, params)
+        var value = zero
+        if (result.next()) {
+            match (read(result, columnOffset)) {
+                case Some(v) => value = v
+                case None => ()
+            }
+        }
+        closeExecutor(exec)
+        value
     }
 
     private func requireExecutor(): ExecutionContext {
