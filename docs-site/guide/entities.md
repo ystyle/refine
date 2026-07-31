@@ -16,6 +16,29 @@ class User {
 }
 ```
 
+## String 主键（UUID / ULID）
+
+`id: String` 时启用 String 主键模式：INSERT 包含 id 列，`Tx.save` / `Tx.batchSave` 时 id 为空则自动调用 `Refine` 的 ID 生成器（默认 Sonyflake，可通过 `setIdGenerator(UlidIdGenerator())` 等切换），并回写实体。适合分布式无冲突 ID 场景：
+
+```cangjie
+@Refine
+class Event {
+    var id: String = ""    // String 主键，空时自动生成
+    var name: String = ""
+    var payload: String = ""
+}
+
+rf.setIdGenerator(UlidIdGenerator())
+rf.transaction { tx: Tx =>
+    let ev = Event()
+    ev.name = "deploy"
+    tx.save(ev)
+    // ev.id 已填充，形如 "01KYVGFGPFCJEZRKBBHJ2Q59QW"
+}
+```
+
+相关配置见 [Refine API - getIdGenerator/setIdGenerator](../api/refine.md)。
+
 ## 自定义表名
 
 默认表名是类名的驼峰转小写（`User` → `user`, `BlogPost` → `blogpost`）。使用 `@Table` 覆盖：

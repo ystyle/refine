@@ -107,17 +107,24 @@ let rf = Refine.open("sqlite:test.db")
 let gen = rf.getIdGenerator()
 let id = gen.generate()  // "183729475612348416"
 
-// 切换为随机 ID 生成器
+// 切换为随机 UUID v4 生成器
 rf.setIdGenerator(RandomIdGenerator())
 let id2 = rf.getIdGenerator().generate()  // "4a7b2c81-93d6-4e2f-b50a-1c8d3e9f0a2b"
+
+// 切换为 ULID 生成器（26 字符 Crockford Base32，时间有序）
+rf.setIdGenerator(UlidIdGenerator())
+let id3 = rf.getIdGenerator().generate()  // "01KYVGFGPFCJEZRKBBHJ2Q59QW"
 ```
 
 内置实现：
 
 | 类 | 说明 |
 |---|---|
-| `SonyflakeIdGenerator` | 基于 Sonyflake 算法的分布式 ID，64bit 整数转字符串 |
-| `RandomIdGenerator` | 随机 UUID 格式 ID（用于测试/开发） |
+| `SonyflakeIdGenerator` | 基于 Sonyflake 算法的分布式 ID，64bit 整数转字符串（默认） |
+| `RandomIdGenerator` | 随机 UUID v4 格式 ID |
+| `UlidIdGenerator` | ULID（Universally Unique Lexicographically Sortable Identifier），26 字符 Crockford Base32，128bit：48 位毫秒时间戳（大端，保证字典序）+ 80 位随机 |
+
+ID 生成时机：`String` 主键实体在 `Tx.save` / `Tx.batchSave` 时，id 为空则自动调用生成器，并回写实体。
 
 实现自定义：
 

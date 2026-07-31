@@ -30,12 +30,13 @@ rf.transaction { tx: Tx =>
 
     tx.batchSave([u1, u2])
     // INSERT INTO user (name, email) VALUES (?, ?), (?, ?)
-    // u1.id = lastInsertId, u2.id = lastInsertId + 1
+    // 自增主键不回写，需要 id 时用 query() 查回
 }
 ```
 
 - 所有参数扁平化收集到单条 SQL，避免 N 次 INSERT
-- ID 写回：`result.lastInsertId` 为第一条 ID，后续按 `baseId + i` 推算（适用自增主键）
+- **自增主键（Int64 id）不回写**：多值 INSERT 后 `lastInsertId` 只代表第一条，且 id 不保证连续，需取 id 时用 `Entity.query().filter(...)` 查回
+- **String 主键（UUID/ULID）回写**：插入前预生成所有 ID，批量插入后实体已携带完整 id
 - 支持 `TxBeforeCreate` / `TxAfterCreate` 钩子（每个实体独立触发）
 - 空数组直接返回，不执行 SQL
 
