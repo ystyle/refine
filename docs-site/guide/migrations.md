@@ -83,8 +83,24 @@ class MySchema <: TableSchema {
 
 | 操作 | SQLite | MySQL | PostgreSQL |
 |---|---|---|---|
-| 标识符引用 | `"name"` | `` `name` `` | `"name"` |
-| 自增 | `AUTOINCREMENT` | `AUTO_INCREMENT` | — |
+| 标识符引用 | `"name"` | `` `name` `` | `"name"`（小写化） |
+| 自增主键 | `INTEGER PRIMARY KEY AUTOINCREMENT` | `AUTO_INCREMENT` | `BIGSERIAL PRIMARY KEY` |
 | upsert | 不支持 | `ON DUPLICATE KEY UPDATE` | `ON CONFLICT DO UPDATE SET` |
 | JSON | 不支持 | `JSON` | `JSONB` |
 | RETURNING | 不支持 | 不支持 | 支持 |
+
+### PostgreSQL 自增主键回写
+
+PostgreSQL 无 `lastInsertId`（驱动恒返回 0），Refine 在 `Tx.save` 时自动检测方言的 `hasReturningSupport()`，改用 `INSERT ... RETURNING id` 回读并写回实体：
+
+```cangjie
+rf.transaction { tx: Tx =>
+    let u = User()
+    u.name = "Alice"
+    tx.save(u)
+    // PostgreSQL: INSERT INTO users (name, email) VALUES (?, ?) RETURNING id
+    // u.id 已填充
+}
+```
+
+批量插入（`batchSave`）在自增主键下不回写 id（与 MySQL 一致）；String 主键（UUID/ULID）预生成后批量插入并回写。

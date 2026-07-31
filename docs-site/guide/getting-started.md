@@ -46,6 +46,17 @@ let rf = Refine.open("mariadb://127.0.0.1:3306", [
 ])
 ```
 
+也支持 PostgreSQL（需在 `cjpm.toml` 引入驱动 `pgsql`，见 [配置](../guide/configuration.md#postgresql)）：
+
+```cangjie
+let rf = Refine.open("postgres://127.0.0.1:5432", [
+    ("username", "postgres"),
+    ("password", "secret"),
+    ("database", "myapp"),
+    ("sslmode", "disable")
+])
+```
+
 ## 创建表
 
 ```cangjie

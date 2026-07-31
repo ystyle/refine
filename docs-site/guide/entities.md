@@ -73,6 +73,11 @@ class User {
 }
 ```
 
+> **PostgreSQL 注意**：
+> - 标识符统一按小写处理（未加引号的 SQL 会被 PostgreSQL 折叠为小写，Refine 已保证查询/建表/CRUD 三方一致）
+> - 若类名映射的表名是 PostgreSQL 保留字（如 `User` → `user`、`Order` → `order`），必须用 `@Table` 指定其他表名，例如 `@Table["users"]`
+> - 关系（`@Ref`/`@Rel`）的目标表名会跟随目标实体的 `@Table` 覆盖
+
 ## 字段类型映射
 
 | Cangjie 类型 | StorageType | SQLite | MySQL | PostgreSQL |

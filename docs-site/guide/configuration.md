@@ -12,8 +12,38 @@ import refine.*
 sqlite::memory:                         // SQLite 内存数据库
 sqlite:/path/to/db.sqlite              // SQLite 文件数据库
 mariadb://host:port                     // MariaDB/MySQL
-postgresql://host:port/database         // PostgreSQL
+postgres://host:port                    // PostgreSQL（驱动名 postgres / postgresql）
 ```
+
+## PostgreSQL
+
+PostgreSQL 支持需要引入驱动依赖（纯仓颉实现，实现 `std.database.sql` 接口）：
+
+```toml
+[dependencies]
+pgsql = { git = "https://atomgit.com/aibrary/pgsql-driver.git", branch = "main" }
+```
+
+连接示例：
+
+```cangjie
+let rf = Refine.open("postgres://127.0.0.1:5432", [
+    ("username", "postgres"),
+    ("password", "secret"),
+    ("database", "myapp"),
+    ("sslmode", "disable")   // 驱动当前不支持 SSL，需显式禁用
+])
+```
+
+支持的连接选项：
+
+| 选项 | 说明 |
+|---|---|
+| `username` / `password` | 认证（支持 SCRAM-SHA-256 / MD5 / 明文） |
+| `database` | 数据库名 |
+| `sslmode` | `disable`（默认不强制；`required`/`verify_ca`/`verify_full` 当前不支持） |
+
+> **注意**：PostgreSQL 将未加引号的标识符折叠为小写。Refine 在 PostgreSQL 下统一按小写标识符处理（查询、建表、CRUD 一致），实体类名/字段名中的大写字母会映射为小写表名/列名。若表名是 PostgreSQL 保留字（如 `user`、`order`），需用 `@Table` 指定其他表名，参见 [实体定义 - 自定义表名](../guide/entities.md)。
 
 ## DatabaseConfig
 

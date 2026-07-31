@@ -157,4 +157,15 @@ extractDriver("mariadb://host:3306/db")  // "mariadb"
 // 从驱动名检测方言
 detectDialect("mysql").name()  // "mysql"
 detectDialect("sqlite").name() // "sqlite"
+detectDialect("postgres").name() // "postgresql"
 ```
+
+## 支持的数据源
+
+| 驱动名（URL 前缀） | 方言 | 驱动来源 |
+|---|---|---|
+| `sqlite` | SQLite | 标准库 `std.database.sql` |
+| `mariadb` / `mysql` | MySQL | `mariadb` 驱动（git 依赖） |
+| `postgres` / `postgresql` | PostgreSQL | `pgsql` 驱动（git 依赖） |
+
+PostgreSQL 连接示例见 [配置指南 - PostgreSQL](../guide/configuration.md#postgresql)。
