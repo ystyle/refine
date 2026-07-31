@@ -26,9 +26,9 @@ public class ServiceTest {
             tx.execute("CREATE TABLE IF NOT EXISTS post_tags (post_id BIGINT NOT NULL, tag_id BIGINT NOT NULL)", [])
         }
         rf.migrator().autoMigrate([
-            UserSchema(), ProfileSchema(), PostSchema(), CommentSchema(), TagSchema()
+            UserSchema(), ProfileSchema(), PostSchema(), CommentSchema(), TagSchema(), EventSchema()
         ])
-        rf.hook<User>("User", HookKind.BeforeCreate) { scope: Scope<User> =>
+        rf.hook<User>("User", HookKind.TxBeforeCreate) { scope: Scope<User> =>
             if (scope.entity.name == "") {
                 scope.abort(Exception("name required"))
             }
@@ -212,5 +212,68 @@ public class ServiceTest {
         @Expect(!PostService.existsById(rf, -999), true)
         @Expect(PostService.countAll(rf) >= 0, true)
         @Expect(UserRepo.countAll(rf) > 0, true)
+    }
+
+    // ─── ULID / String Id ─────────────────────────────
+
+    static func isValidUlid(id: String): Bool {
+        if (id.size != 26) { return false }
+        let alphabet = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
+        for (i in 0..id.size) {
+            var found = false
+            for (c in alphabet) {
+                if (id[i] == c) { found = true; break }
+            }
+            if (!found) { return false }
+        }
+        true
+    }
+
+    @TestCase
+    public func testUlidSaveAutoGenerate(): Unit {
+        initOnce()
+        rf.setIdGenerator(UlidIdGenerator())
+        let ev = Event()
+        ev.name = "deploy"
+        ev.payload = "v1.2.3"
+        rf.transaction { tx: Tx => EventRepo.save(tx, ev) }
+        @Expect(isValidUlid(ev.id), true)
+        var p = EventFind()
+        p.id = Some(ev.id)
+        let found = EventRepo.findOne(rf, p)
+        @Expect(found.isSome(), true)
+        @Expect(found.getOrThrow().name, "deploy")
+        @Expect(found.getOrThrow().payload, "v1.2.3")
+    }
+
+    @TestCase
+    public func testUlidSaveCustomId(): Unit {
+        initOnce()
+        rf.setIdGenerator(UlidIdGenerator())
+        let customId = "evt-custom-" + UlidIdGenerator().generate()
+        let ev = Event()
+        ev.id = customId
+        ev.name = "manual"
+        rf.transaction { tx: Tx => EventRepo.save(tx, ev) }
+        @Expect(ev.id, customId)
+        var p = EventFind()
+        p.id = Some(customId)
+        @Expect(EventRepo.findOne(rf, p).isSome(), true)
+    }
+
+    @TestCase
+    public func testUlidUpdateDelete(): Unit {
+        initOnce()
+        rf.setIdGenerator(UlidIdGenerator())
+        let ev = Event()
+        ev.name = "before"
+        rf.transaction { tx: Tx => EventRepo.save(tx, ev) }
+        ev.name = "after"
+        rf.transaction { tx: Tx => EventRepo.update(tx, ev) }
+        var p = EventFind()
+        p.id = Some(ev.id)
+        @Expect(EventRepo.findOne(rf, p).getOrThrow().name, "after")
+        rf.transaction { tx: Tx => EventRepo.delete(tx, ev) }
+        @Expect(EventRepo.findOne(rf, p).isNone(), true)
     }
 }
