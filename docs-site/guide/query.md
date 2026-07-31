@@ -30,7 +30,7 @@ rf.transaction { tx: Tx =>
 }
 
 // 通过 DB
-User.query().using(DB.open("sqlite:test.db"))
+User.query().using(DB.open("mariadb://127.0.0.1:3306"))
 ```
 
 ## 查询条件

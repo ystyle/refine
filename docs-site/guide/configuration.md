@@ -9,9 +9,8 @@ import refine.*
 ## 连接字符串格式
 
 ```
-sqlite::memory:                         // SQLite 内存数据库
-sqlite:/path/to/db.sqlite              // SQLite 文件数据库
 mariadb://host:port                     // MariaDB/MySQL
+// SQLite: 方言渲染已实现，真实驱动暂缺，暂不可用
 postgres://host:port                    // PostgreSQL（驱动名 postgres / postgresql）
 ```
 
@@ -112,7 +111,7 @@ DatabaseRegistry.closeAll()
 ## DB 连接池
 
 ```cangjie
-let db = DB.open("sqlite::memory:")
+let db = DB.open("mariadb://127.0.0.1:3306")
 db.maxPoolSize = 20
 db.connectionTimeout = 5000  // 毫秒
 db.idleTimeout = 60000       // 毫秒

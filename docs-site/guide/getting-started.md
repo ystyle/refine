@@ -33,12 +33,7 @@ class User {
 ## 数据库连接
 
 ```cangjie
-let rf = Refine.open("sqlite::memory:")
-```
-
-也支持 MySQL / MariaDB：
-
-```cangjie
+// SQLite 方言渲染已支持，但暂无可用驱动；以下以 MySQL 为例
 let rf = Refine.open("mariadb://127.0.0.1:3306", [
     ("username", "root"),
     ("password", "secret"),

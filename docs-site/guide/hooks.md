@@ -100,7 +100,7 @@ Tx.delete(entity):
 
 ```cangjie
 // 实例级注册（推荐，通过 rf.hook）
-let rf = Refine.open("sqlite::memory:")
+let rf = Refine.open("mariadb://127.0.0.1:3306", [("username", "root"), ("password", "secret"), ("database", "myapp")])
 rf.hook<User>("User", HookKind.AfterFind) { scope: Scope<User> =>
     scope.entity.password = ""
 }

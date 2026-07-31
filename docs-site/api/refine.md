@@ -5,8 +5,8 @@ ORM 核心入口。管理数据库连接、事务、会话、钩子。
 ## 创建实例
 
 ```cangjie
-// 最简单的形式（SQLite 内存数据库）
-let rf = Refine.open("sqlite::memory:")
+// 最简单的形式（SQLite 内存数据库，需 SQLite 驱动，暂缺）
+// let rf = Refine.open("sqlite::memory:")
 
 // 带连接参数（MariaDB 示例）
 let rf = Refine.open("mariadb://127.0.0.1:3306", [
@@ -113,7 +113,7 @@ dialect.name()  // "sqlite" / "mysql" / "postgresql"
 获取或设置 ID 生成器。默认用 Sonyflake 分布式 ID 生成器，可通过接口替换：
 
 ```cangjie
-let rf = Refine.open("sqlite:test.db")
+let rf = Refine.open("mariadb://127.0.0.1:3306", [("username", "root"), ("password", "secret"), ("database", "myapp")])
 let gen = rf.getIdGenerator()
 let id = gen.generate()  // "183729475612348416"
 
@@ -174,7 +174,7 @@ detectDialect("postgres").name() // "postgresql"
 
 | 驱动名（URL 前缀） | 方言 | 驱动来源 |
 |---|---|---|
-| `sqlite` | SQLite | 标准库 `std.database.sql` |
+| `sqlite` | SQLite | ⚠️ 方言渲染已实现，真实驱动暂缺（未接入） |
 | `mariadb` / `mysql` | MySQL | `mariadb` 驱动（git 依赖） |
 | `postgres` / `postgresql` | PostgreSQL | `pgsql` 驱动（git 依赖） |
 
