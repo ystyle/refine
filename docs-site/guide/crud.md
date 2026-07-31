@@ -183,6 +183,30 @@ rf.transaction { tx: Tx =>
 }
 ```
 
+### 批量更新
+
+`tx.batchUpdate(entities)` 用**单条 SQL** 更新多行不同值：
+
+```cangjie
+rf.transaction { tx: Tx =>
+    let u1 = User()
+    u1.id = 1
+    u1.name = "Alice2"
+    let u2 = User()
+    u2.id = 2
+    u2.name = "Bob2"
+
+    tx.batchUpdate([u1, u2])
+    // UPDATE users SET name = CASE id WHEN ? THEN ? WHEN ? THEN ? END WHERE id IN (?, ?)
+}
+```
+
+- 单条 SQL 跨方言（MySQL / PostgreSQL / SQLite），CASE WHEN 是标准语法
+- 复合主键支持：`CASE WHEN pk1 = ? AND pk2 = ? THEN ? ... WHERE (pk1, pk2) IN ((?, ?), ...)`
+- 空数组直接返回；全主键表（无更新列）抛出异常
+- 触发 `TxBeforeUpdate` / `TxAfterUpdate` 钩子（每个实体独立触发）
+- 参数量为 2 × 列数 × 行数 + 主键数，大批量时注意 SQL 长度（业界同款方案，参考 GORM）
+
 ## Delete
 
 ```cangjie

@@ -45,9 +45,11 @@ User.col().id.desc()  // Ordered(Column("id"), "DESC")
 ### anyOf() / notAnyOf()
 
 ```cangjie
-User.col().id.anyOf([1, 2, 3])        // IN 查询
-User.col().id.notAnyOf([4, 5])        // NOT IN 查询
+User.col().id.anyOf([1, 2, 3])        // 等价 IN 查询（展开为 id = 1 OR id = 2 OR id = 3）
+User.col().id.notAnyOf([4, 5])        // 等价 NOT IN（展开为 id != 4 AND id != 5）
 ```
+
+空数组时 `anyOf` 生成 `1 = 0`（恒不匹配），`notAnyOf` 生成 `1 = 1`（恒匹配）。
 
 ## extend Col\<String\>
 

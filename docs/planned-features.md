@@ -123,10 +123,16 @@ class OrderTag {
 
 ### 批量更新
 
-> **状态：未确认方案。**
+`Tx.batchUpdate(entities)` 已实现（CASE WHEN 单条 SQL，跨方言）：
 
-当前只有单条 `tx.update(entity)`，批量需 for 循环 N 次 UPDATE。
+```cangjie
+rf.transaction { tx: Tx =>
+    tx.batchUpdate([u1, u2])
+    // UPDATE users SET name = CASE id WHEN ? THEN ? WHEN ? THEN ? END WHERE id IN (?, ?)
+}
+```
 
-待设计批量更新 API，可能的方案：
-- 宏生成 `batchUpdateSQL` + `Tx.batchUpdate<T>(entities)`（类似批量插入）
-- 每条 UPDATE 用不同的参数值，但必须复用 `SET col = ? WHERE id = ?` 模板
+- 单条 SQL 更新多行不同值，CASE WHEN 标准语法三方言通用
+- 复合主键支持（CASE 多列条件 + 行值 IN）
+- PostgreSQL 下对 CASE 的 THEN 参数按字段类型标注（`?::BIGINT`），解决参数类型推断
+- 全主键表抛异常；空数组直接返回；TxBefore/AfterUpdate 钩子逐实体触发

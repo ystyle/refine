@@ -62,6 +62,7 @@ tx.save(entity)     // TxBeforeCreate → INSERT → TxAfterCreate
 tx.update(entity)   // TxBeforeUpdate → UPDATE → TxAfterUpdate
 tx.delete(entity)   // TxBeforeDelete → DELETE → TxAfterDelete
 tx.upsert(entity)   // TxBeforeCreate → INSERT ... ON CONFLICT DO UPDATE → TxAfterCreate
+tx.batchUpdate(list) // TxBeforeUpdate × N → 单条 CASE WHEN UPDATE → TxAfterUpdate × N
 ```
 
 ## Upsert
