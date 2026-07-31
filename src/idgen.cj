@@ -2,6 +2,7 @@ package refine
 
 import std.random.Random
 import sonyflake.*
+import opencj::ulid.*
 
 public interface IdGenerator {
     func generate(): String
@@ -45,5 +46,13 @@ public class SonyflakeIdGenerator <: IdGenerator {
 
     public func generate(): String {
         this.sf.NextID().toString()
+    }
+}
+
+public class UlidIdGenerator <: IdGenerator {
+    public init() {}
+
+    public func generate(): String {
+        nextId()
     }
 }
