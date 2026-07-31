@@ -15,9 +15,19 @@ let rf = Refine.open("mariadb://127.0.0.1:3306", [
     ("database", "myapp")
 ])
 
+// PostgreSQL（需引入 pgsql 驱动，详见配置指南）
+let rf = Refine.open("postgres://127.0.0.1:5432", [
+    ("username", "postgres"),
+    ("password", "secret"),
+    ("database", "myapp"),
+    ("sslmode", "disable")
+])
+
 // 直接构造（用于测试）
 let rf = Refine(datasource, dialect, paramOffset)
 ```
+
+支持的连接形式见 [配置指南 - 连接字符串格式](../guide/configuration.md#连接字符串格式) 与 [PostgreSQL](../guide/configuration.md#postgresql)。
 
 ## 方法
 

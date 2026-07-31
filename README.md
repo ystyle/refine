@@ -84,6 +84,16 @@ Refine 的核心特色：按 **拥有** 和 **引用** 二分，四种关联语�
 | `@Rel[has_many, Target, fk]` | has_many | 拥有多个 | 目标表 | 级联删除 |
 | `@Ref[Target, via: ...]` | ref_many | 引用多个 | 中间表 | 目标保留 |
 
+## 支持数据库
+
+| 数据库 | 连接示例 | 驱动 |
+|---|---|---|
+| SQLite | `Refine.open("sqlite::memory:")` | 标准库内置 |
+| MySQL / MariaDB | `Refine.open("mariadb://127.0.0.1:3306", [("username","root"),("password","secret"),("database","myapp")])` | `mariadb` 驱动（git 依赖） |
+| PostgreSQL | `Refine.open("postgres://127.0.0.1:5432", [("username","postgres"),("password","secret"),("database","myapp"),("sslmode","disable")])` | `pgsql` 驱动（git 依赖，需显式 `sslmode=disable`，驱动暂不支持 SSL） |
+
+PostgreSQL 表名若为保留字（如 `user`、`order`）需用 `@Table` 指定其他表名。
+
 ## 安装
 
 ```toml
