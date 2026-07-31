@@ -322,7 +322,7 @@ public class MacroSaveTest {
     }
 
     @TestCase
-    public func testTxBatchSaveSetsIds(): Unit {
+    public func testTxBatchSaveDoesNotSetAutoIds(): Unit {
         clearHooks()
         let conn = CaptureConnection()
         conn.stmt.mockLastInsertId = 100
@@ -333,8 +333,9 @@ public class MacroSaveTest {
         let p2 = Post(); p2.title = "C"; p2.content = "D"
         tx.batchSave([p1, p2])
 
-        @Expect(p1.id, 100)
-        @Expect(p2.id, 101)
+        @Expect(p1.id, 0)
+        @Expect(p2.id, 0)
+        @Expect(conn.stmt.capturedSql, "INSERT INTO post (title, content) VALUES (?, ?), (?, ?)")
     }
 
     @TestCase

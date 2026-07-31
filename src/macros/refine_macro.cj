@@ -461,19 +461,6 @@ func buildAutoPkAssignTokens(pkFields: ArrayList<FieldInfo>): Tokens {
     body
 }
 
-func buildAutoPkAssignTokensBatch(pkFields: ArrayList<FieldInfo>): Tokens {
-    var body = Tokens()
-    for (pk in pkFields) {
-        if (pk.autoInc) {
-            let fName = Token(TokenKind.IDENTIFIER, pk.name)
-            body = body + quote(
-                entities[_bi_].$(fName) = baseId + _bi_;
-            )
-        }
-    }
-    body
-}
-
 func buildTxSaveExtend(className: String, pkFields: ArrayList<FieldInfo>, hasStringPk: Bool, hasAutoPk: Bool): Tokens {
     let cn = Token(TokenKind.IDENTIFIER, className)
     let insertSQLFuncName = Token(TokenKind.IDENTIFIER, className + "InsertSQL")
@@ -577,7 +564,7 @@ func buildBatchInsertSQLFunc(className: String, fields: ArrayList<FieldInfo>, ta
     )
 }
 
-func buildTxBatchSaveExtend(className: String, pkFields: ArrayList<FieldInfo>, hasStringPk: Bool, hasAutoPk: Bool): Tokens {
+func buildTxBatchSaveExtend(className: String, pkFields: ArrayList<FieldInfo>, hasStringPk: Bool): Tokens {
     let cn = Token(TokenKind.IDENTIFIER, className)
     let batchInsertSQLFuncName = Token(TokenKind.IDENTIFIER, className + "BatchInsertSQL")
     let nameLit = Token(TokenKind.STRING_LITERAL, className)
@@ -601,31 +588,6 @@ func buildTxBatchSaveExtend(className: String, pkFields: ArrayList<FieldInfo>, h
                     let (sql, params) = $(batchInsertSQLFuncName)(entities)
                     let _ = this.execute(sql, params)
                     for (_bi_ in 0..entities.size) {
-                        let afterScope = Scope<$(cn)>(entities[_bi_])
-                        afterScope.db = Some(this)
-                        if (this.ref.isSome()) { this.ref.getOrThrow().executeHooks($(nameLit), HookKind.TxAfterCreate, afterScope) }
-                    }
-                }
-            }
-        )
-    } else if (hasAutoPk) {
-        let assignTokens = buildAutoPkAssignTokensBatch(pkFields)
-        quote(
-            extend Tx {
-                public func batchSave(entities: Array<$(cn)>): Unit {
-                    if (entities.size == 0) { return }
-                    for (_bi_ in 0..entities.size) {
-                        let e = entities[_bi_]
-                        let scope = Scope<$(cn)>(e)
-                        scope.db = Some(this)
-                        if (this.ref.isSome()) { this.ref.getOrThrow().executeHooks($(nameLit), HookKind.TxBeforeCreate, scope) }
-                        if (scope.aborted) { throw scope.error.getOrThrow() }
-                    }
-                    let (sql, params) = $(batchInsertSQLFuncName)(entities)
-                    let result = this.execute(sql, params)
-                    let baseId = result.lastInsertId
-                    for (_bi_ in 0..entities.size) {
-                        $(assignTokens)
                         let afterScope = Scope<$(cn)>(entities[_bi_])
                         afterScope.db = Some(this)
                         if (this.ref.isSome()) { this.ref.getOrThrow().executeHooks($(nameLit), HookKind.TxAfterCreate, afterScope) }
@@ -1342,7 +1304,7 @@ public macro Refine(input: Tokens): Tokens {
     let insertSQLFunc = buildInsertSQLFunc(className, mergedFields, tableName)
     let txSaveExtend = buildTxSaveExtend(className, pkFields, isStringId, hasAutoPk)
     let batchInsertSQLFunc = buildBatchInsertSQLFunc(className, mergedFields, tableName)
-    let txBatchSaveExtend = buildTxBatchSaveExtend(className, pkFields, isStringId, hasAutoPk)
+    let txBatchSaveExtend = buildTxBatchSaveExtend(className, pkFields, isStringId)
     let updateSQLFunc = buildUpdateSQLFunc(className, mergedFields, tableName, pkFields)
     let txUpdateExtend = buildTxUpdateExtend(className)
     let rowMapper = buildRowMapper(className, classDecl, mergedRels)

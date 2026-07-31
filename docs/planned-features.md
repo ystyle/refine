@@ -82,6 +82,7 @@ tx.save(order)
 - `id: Int64`（默认）→ 自增主键，INSERT 不含 id 列
 - `id: String` → UUID 主键，INSERT 含 id 列，空时自动生成
 - `tx.batchSave` 对 String id 实体预先生成所有 ID 后再组 SQL
+- `tx.batchSave` 对自增主键实体**不回写 id**（多值 INSERT 只能拿到第一条 lastInsertId，且 id 不保证连续；需要 id 时用 `query().filter(...)` 查回）
 
 ### @Id 注解 + `@Id[auto, false]` + 复合主键
 
