@@ -9,6 +9,7 @@ import refine.macros.*
 // ─── 实体 ───────────────────────────────────────────────
 
 @Refine
+@Table["users"]
 public class User {
     var id: Int64 = 0
     var name: String = ""

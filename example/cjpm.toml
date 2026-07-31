@@ -7,3 +7,4 @@
 [dependencies]
 refine = { path = ".." }
 mariadb = {git = "https://gitcode.com/Cangjie-SIG/mariadb-driver.git", branch = "master"}
+pgsql = {git = "https://atomgit.com/aibrary/pgsql-driver.git", branch = "main"}

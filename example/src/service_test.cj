@@ -5,52 +5,79 @@ import std.unittest.testmacro.*
 import std.collection.ArrayList
 import refine.*
 import mariadb.cdbc.*
+import pgsql.*
 
-@Test
-public class ServiceTest {
-    static let rf = Refine.open("mariadb://127.0.0.1:3306", [
+// ─── 数据库连接工厂 ──────────────────────────────────────
+
+func openMySQL(): Refine {
+    Refine.open("mariadb://127.0.0.1:3306", [
         ("username", "root"),
         ("password", "45dbe6a6-8d1e-11ef-b01d-cb9c3f8813e2"),
         ("database", "refine_test")
     ])
+}
 
-    static var seq: Int64 = 0
-    static var initialized: Bool = false
+func openPostgres(): Refine {
+    Refine.open("postgres://127.0.0.1:5432", [
+        ("username", "postgres"),
+        ("password", "45dbe6a6-8d1e-11ef-b01d-cb9c3f8813e2"),
+        ("database", "refine_test"),
+        ("sslmode", "disable")
+    ])
+}
 
-    static func initOnce(): Unit {
-        if (initialized) { return }
-        initialized = true
-        // 先创建所有业务表
-        rf.transaction { tx: Tx =>
-            // junction 表需要通过原始 SQL 创建（框架不自动管理 junction 表）
-            tx.execute("CREATE TABLE IF NOT EXISTS post_tags (post_id BIGINT NOT NULL, tag_id BIGINT NOT NULL)", [])
-        }
-        rf.migrator().autoMigrate([
-            UserSchema(), ProfileSchema(), PostSchema(), CommentSchema(), TagSchema(), EventSchema()
-        ])
-        rf.hook<User>("User", HookKind.TxBeforeCreate) { scope: Scope<User> =>
-            if (scope.entity.name == "") {
-                scope.abort(Exception("name required"))
-            }
+// ─── 共享测试基础设施（每库各初始化一次） ─────────────────
+
+var seq: Int64 = 0
+
+func uid(): String { seq++; seq.toString() }
+
+func initOnce(rf: Refine): Unit {
+    let schemas: Array<TableSchema> = [UserSchema(), ProfileSchema(), PostSchema(), CommentSchema(), TagSchema(), EventSchema()]
+    // 每次测试先清空重建，避免残留数据/旧结构干扰
+    let m = rf.migrator()
+    for (schema in schemas) {
+    }
+    rf.transaction { tx: Tx =>
+        tx.execute("DROP TABLE IF EXISTS post_tags", [])
+        // junction 表需要通过原始 SQL 创建（框架不自动管理 junction 表）
+        tx.execute("CREATE TABLE IF NOT EXISTS post_tags (post_id BIGINT NOT NULL, tag_id BIGINT NOT NULL)", [])
+    }
+    m.autoMigrate(schemas)
+    rf.hook<User>("User", HookKind.TxBeforeCreate) { scope: Scope<User> =>
+        if (scope.entity.name == "") {
+            scope.abort(Exception("name required"))
         }
     }
+}
 
-    static func uid(): String { seq++; seq.toString() }
+func isValidUlid(id: String): Bool {
+    if (id.size != 26) { return false }
+    let alphabet = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
+    for (i in 0..id.size) {
+        var found = false
+        for (c in alphabet) {
+            if (id[i] == c) { found = true; break }
+        }
+        if (!found) { return false }
+    }
+    true
+}
+
+// ─── 共享断言（同一套测试在 MySQL / PostgreSQL 各跑一遍） ──
+
+class ServiceChecks {
 
     // ─── UserService ──────────────────────────────────
 
-    @TestCase
-    public func testRegister(): Unit {
-        initOnce()
+    static func register(rf: Refine): Unit {
         let name = "Reg_" + uid()
         let user = UserService.register(rf, name, "reg@t.com")
         @Expect(user.id > 0, true)
         @Expect(user.name, name)
     }
 
-    @TestCase
-    public func testRegisterEmptyName(): Unit {
-        initOnce()
+    static func registerEmptyName(rf: Refine): Unit {
         try {
             UserService.register(rf, "", "bad@t.com")
             @Fail("expected Hook abort")
@@ -59,9 +86,7 @@ public class ServiceTest {
         }
     }
 
-    @TestCase
-    public func testFindByEmail(): Unit {
-        initOnce()
+    static func findByEmail(rf: Refine): Unit {
         let name = "Email_" + uid()
         UserService.register(rf, name, name + "@t.com")
         var p = UserFind()
@@ -71,9 +96,7 @@ public class ServiceTest {
         @Expect(found.getOrThrow().email, name + "@t.com")
     }
 
-    @TestCase
-    public func testSearchByLike(): Unit {
-        initOnce()
+    static func searchByLike(rf: Refine): Unit {
         let suffix = uid()
         let name = "Like_" + suffix
         UserService.register(rf, name, name + "@t.com")
@@ -82,9 +105,7 @@ public class ServiceTest {
         @Expect(UserRepo.find(rf, p).size > 0, true)
     }
 
-    @TestCase
-    public func testUpdateEmail(): Unit {
-        initOnce()
+    static func updateEmail(rf: Refine): Unit {
         let name = "Upd_" + uid()
         UserService.register(rf, name, name + "@t.com")
         var p = UserFind()
@@ -96,9 +117,7 @@ public class ServiceTest {
         @Expect(UserRepo.findOne(rf, p).getOrThrow().email, "new_mail@t.com")
     }
 
-    @TestCase
-    public func testPreloadPosts(): Unit {
-        initOnce()
+    static func preloadPosts(rf: Refine): Unit {
         let name = "Preload_" + uid()
         let user = UserService.register(rf, name, name + "@t.com")
         PostService.create(rf, "P1", "B1", user.id)
@@ -108,9 +127,7 @@ public class ServiceTest {
         @Expect(loaded.getOrThrow().posts.size, 2)
     }
 
-    @TestCase
-    public func testDeleteUser(): Unit {
-        initOnce()
+    static func deleteUser(rf: Refine): Unit {
         let name = "Del_" + uid()
         let user = UserService.register(rf, name, name + "@t.com")
         UserService.deleteUser(rf, user.id)
@@ -119,9 +136,7 @@ public class ServiceTest {
         @Expect(UserRepo.findOne(rf, p).isNone(), true)
     }
 
-    @TestCase
-    public func testNestedRollback(): Unit {
-        initOnce()
+    static func nestedRollback(rf: Refine): Unit {
         let name = "Nest_" + uid()
         UserService.nestedRollback(rf, name)
         var p = UserFind()
@@ -134,9 +149,7 @@ public class ServiceTest {
 
     // ─── PostService ──────────────────────────────────
 
-    @TestCase
-    public func testCreatePost(): Unit {
-        initOnce()
+    static func createPost(rf: Refine): Unit {
         let name = "Auth_" + uid()
         let author = UserService.register(rf, name, name + "@t.com")
         let post = PostService.create(rf, "Hello", "World", author.id)
@@ -144,9 +157,7 @@ public class ServiceTest {
         @Expect(post.title, "Hello")
     }
 
-    @TestCase
-    public func testPreloadDetails(): Unit {
-        initOnce()
+    static func preloadDetails(rf: Refine): Unit {
         let name = "Detail_" + uid()
         let author = UserService.register(rf, name, name + "@t.com")
         let post = PostService.create(rf, "DP", "DB", author.id)
@@ -161,9 +172,7 @@ public class ServiceTest {
         @Expect(loaded.getOrThrow().tags.size, 3)
     }
 
-    @TestCase
-    public func testFindRecent(): Unit {
-        initOnce()
+    static func findRecent(rf: Refine): Unit {
         let name = "Recent_" + uid()
         let author = UserService.register(rf, name, name + "@t.com")
         for (i in 0..5) { PostService.create(rf, "R" + i.toString(), "B", author.id) }
@@ -175,9 +184,7 @@ public class ServiceTest {
         @Expect(PostRepo.find(rf, p).size, 3)
     }
 
-    @TestCase
-    public func testSearchPosts(): Unit {
-        initOnce()
+    static func searchPosts(rf: Refine): Unit {
         let name = "Kw_" + uid()
         let author = UserService.register(rf, name, name + "@t.com")
         PostService.create(rf, "AlphaPost", "BodyA", author.id)
@@ -189,9 +196,7 @@ public class ServiceTest {
 
     // ─── ProfileService ───────────────────────────────
 
-    @TestCase
-    public func testSetProfile(): Unit {
-        initOnce()
+    static func setProfile(rf: Refine): Unit {
         let name = "Pro_" + uid()
         let user = UserService.register(rf, name, name + "@t.com")
         ProfileService.setProfile(rf, user.id, "MyBio", "avatar.png")
@@ -202,9 +207,7 @@ public class ServiceTest {
 
     // ─── Aggregation ──────────────────────────────────
 
-    @TestCase
-    public func testCountExists(): Unit {
-        initOnce()
+    static func countExists(rf: Refine): Unit {
         let name = "Ex_" + uid()
         let user = UserService.register(rf, name, name + "@t.com")
         let post = PostService.create(rf, "Ex", "B", user.id)
@@ -216,22 +219,7 @@ public class ServiceTest {
 
     // ─── ULID / String Id ─────────────────────────────
 
-    static func isValidUlid(id: String): Bool {
-        if (id.size != 26) { return false }
-        let alphabet = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
-        for (i in 0..id.size) {
-            var found = false
-            for (c in alphabet) {
-                if (id[i] == c) { found = true; break }
-            }
-            if (!found) { return false }
-        }
-        true
-    }
-
-    @TestCase
-    public func testUlidSaveAutoGenerate(): Unit {
-        initOnce()
+    static func ulidSaveAutoGenerate(rf: Refine): Unit {
         rf.setIdGenerator(UlidIdGenerator())
         let ev = Event()
         ev.name = "deploy"
@@ -246,9 +234,7 @@ public class ServiceTest {
         @Expect(found.getOrThrow().payload, "v1.2.3")
     }
 
-    @TestCase
-    public func testUlidSaveCustomId(): Unit {
-        initOnce()
+    static func ulidSaveCustomId(rf: Refine): Unit {
         rf.setIdGenerator(UlidIdGenerator())
         let customId = "evt-custom-" + UlidIdGenerator().generate()
         let ev = Event()
@@ -261,9 +247,7 @@ public class ServiceTest {
         @Expect(EventRepo.findOne(rf, p).isSome(), true)
     }
 
-    @TestCase
-    public func testUlidUpdateDelete(): Unit {
-        initOnce()
+    static func ulidUpdateDelete(rf: Refine): Unit {
         rf.setIdGenerator(UlidIdGenerator())
         let ev = Event()
         ev.name = "before"
@@ -276,4 +260,126 @@ public class ServiceTest {
         rf.transaction { tx: Tx => EventRepo.delete(tx, ev) }
         @Expect(EventRepo.findOne(rf, p).isNone(), true)
     }
+}
+
+// ─── MySQL 测试类 ───────────────────────────────────────
+
+@Test
+public class MySQLServiceTest {
+    static let rf = openMySQL()
+
+    @BeforeAll
+    static func setup(): Unit { initOnce(rf) }
+
+    @TestCase
+    public func testRegister(): Unit { ServiceChecks.register(rf) }
+
+    @TestCase
+    public func testRegisterEmptyName(): Unit { ServiceChecks.registerEmptyName(rf) }
+
+    @TestCase
+    public func testFindByEmail(): Unit { ServiceChecks.findByEmail(rf) }
+
+    @TestCase
+    public func testSearchByLike(): Unit { ServiceChecks.searchByLike(rf) }
+
+    @TestCase
+    public func testUpdateEmail(): Unit { ServiceChecks.updateEmail(rf) }
+
+    @TestCase
+    public func testPreloadPosts(): Unit { ServiceChecks.preloadPosts(rf) }
+
+    @TestCase
+    public func testDeleteUser(): Unit { ServiceChecks.deleteUser(rf) }
+
+    @TestCase
+    public func testNestedRollback(): Unit { ServiceChecks.nestedRollback(rf) }
+
+    @TestCase
+    public func testCreatePost(): Unit { ServiceChecks.createPost(rf) }
+
+    @TestCase
+    public func testPreloadDetails(): Unit { ServiceChecks.preloadDetails(rf) }
+
+    @TestCase
+    public func testFindRecent(): Unit { ServiceChecks.findRecent(rf) }
+
+    @TestCase
+    public func testSearchPosts(): Unit { ServiceChecks.searchPosts(rf) }
+
+    @TestCase
+    public func testSetProfile(): Unit { ServiceChecks.setProfile(rf) }
+
+    @TestCase
+    public func testCountExists(): Unit { ServiceChecks.countExists(rf) }
+
+    @TestCase
+    public func testUlidSaveAutoGenerate(): Unit { ServiceChecks.ulidSaveAutoGenerate(rf) }
+
+    @TestCase
+    public func testUlidSaveCustomId(): Unit { ServiceChecks.ulidSaveCustomId(rf) }
+
+    @TestCase
+    public func testUlidUpdateDelete(): Unit { ServiceChecks.ulidUpdateDelete(rf) }
+}
+
+// ─── PostgreSQL 测试类 ──────────────────────────────────
+
+@Test
+public class PostgreSQLServiceTest {
+    static let rf = openPostgres()
+
+    @BeforeAll
+    static func setup(): Unit { initOnce(rf) }
+
+    @TestCase
+    public func testRegister(): Unit { ServiceChecks.register(rf) }
+
+    @TestCase
+    public func testRegisterEmptyName(): Unit { ServiceChecks.registerEmptyName(rf) }
+
+    @TestCase
+    public func testFindByEmail(): Unit { ServiceChecks.findByEmail(rf) }
+
+    @TestCase
+    public func testSearchByLike(): Unit { ServiceChecks.searchByLike(rf) }
+
+    @TestCase
+    public func testUpdateEmail(): Unit { ServiceChecks.updateEmail(rf) }
+
+    @TestCase
+    public func testPreloadPosts(): Unit { ServiceChecks.preloadPosts(rf) }
+
+    @TestCase
+    public func testDeleteUser(): Unit { ServiceChecks.deleteUser(rf) }
+
+    @TestCase
+    public func testNestedRollback(): Unit { ServiceChecks.nestedRollback(rf) }
+
+    @TestCase
+    public func testCreatePost(): Unit { ServiceChecks.createPost(rf) }
+
+    @TestCase
+    public func testPreloadDetails(): Unit { ServiceChecks.preloadDetails(rf) }
+
+    @TestCase
+    public func testFindRecent(): Unit { ServiceChecks.findRecent(rf) }
+
+    @TestCase
+    public func testSearchPosts(): Unit { ServiceChecks.searchPosts(rf) }
+
+    @TestCase
+    public func testSetProfile(): Unit { ServiceChecks.setProfile(rf) }
+
+    @TestCase
+    public func testCountExists(): Unit { ServiceChecks.countExists(rf) }
+
+    @TestCase
+    public func testUlidSaveAutoGenerate(): Unit { ServiceChecks.ulidSaveAutoGenerate(rf) }
+
+    @TestCase
+    public func testUlidSaveCustomId(): Unit { ServiceChecks.ulidSaveCustomId(rf) }
+
+    @TestCase
+    public func testUlidUpdateDelete(): Unit { ServiceChecks.ulidUpdateDelete(rf) }
 }

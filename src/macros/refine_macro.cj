@@ -254,7 +254,8 @@ func buildRelClass(className: String, rels: ArrayList<RelInfo>): Tokens {
         let fieldIdent = Token(TokenKind.IDENTIFIER, r.fieldName)
         let targetType = Token(TokenKind.IDENTIFIER, r.target)
         let nameLit = Token(TokenKind.STRING_LITERAL, r.fieldName)
-        let targetTableLit = Token(TokenKind.STRING_LITERAL, lowerTableName(r.target))
+        let schemaIdent = Token(TokenKind.IDENTIFIER, r.target + "Schema")
+        let targetTableExpr = quote($(schemaIdent)().tableName())
         let mapperIdent = Token(TokenKind.IDENTIFIER, r.fieldName + "Mapper")
         let setterIdent = Token(TokenKind.IDENTIFIER, r.fieldName + "Setter")
         let mapperFuncIdent = Token(TokenKind.IDENTIFIER, r.target + "RowMapper")
@@ -293,22 +294,22 @@ func buildRelClass(className: String, rels: ArrayList<RelInfo>): Tokens {
         if (r.kind == "ref_to") {
             let fkLit = Token(TokenKind.STRING_LITERAL, r.by)
             body = body + quote(
-                public static let $(fieldIdent) = RefTo<$(targetType)>($(nameLit), Col<Any>($(fkLit)), $(fieldsTok), $(targetTableLit), $(mapperIdent), $(setterIdent))
+                public static let $(fieldIdent) = RefTo<$(targetType)>($(nameLit), Col<Any>($(fkLit)), $(fieldsTok), $(targetTableExpr), $(mapperIdent), $(setterIdent))
             )
         } else if (r.kind == "has_one") {
             let fkLit = Token(TokenKind.STRING_LITERAL, r.by)
             body = body + quote(
-                public static let $(fieldIdent) = HasOne<$(targetType)>($(nameLit), $(fkLit), $(fieldsTok), $(targetTableLit), $(mapperIdent), $(setterIdent))
+                public static let $(fieldIdent) = HasOne<$(targetType)>($(nameLit), $(fkLit), $(fieldsTok), $(targetTableExpr), $(mapperIdent), $(setterIdent))
             )
         } else if (r.kind == "has_many") {
             let fkLit = Token(TokenKind.STRING_LITERAL, r.by)
             body = body + quote(
-                public static let $(fieldIdent) = HasMany<$(targetType)>($(nameLit), $(fkLit), $(fieldsTok), $(targetTableLit), $(mapperIdent), $(setterIdent))
+                public static let $(fieldIdent) = HasMany<$(targetType)>($(nameLit), $(fkLit), $(fieldsTok), $(targetTableExpr), $(mapperIdent), $(setterIdent))
             )
         } else {
             let viaLit = Token(TokenKind.STRING_LITERAL, r.via)
             body = body + quote(
-                public static let $(fieldIdent) = RefMany<$(targetType)>($(nameLit), $(viaLit), $(fieldsTok), $(targetTableLit), $(mapperIdent), $(setterIdent))
+                public static let $(fieldIdent) = RefMany<$(targetType)>($(nameLit), $(viaLit), $(fieldsTok), $(targetTableExpr), $(mapperIdent), $(setterIdent))
             )
         }
         first = false
@@ -998,15 +999,16 @@ func buildRelationMethods(className: String, rels: ArrayList<RelInfo>, cd: Class
         let r = rels[i]
         let fieldIdent = Token(TokenKind.IDENTIFIER, r.fieldName)
         let targetType = Token(TokenKind.IDENTIFIER, r.target)
-        let targetTable = lowerTableName(r.target)
         let mapperName = Token(TokenKind.IDENTIFIER, r.target + "RowMapper")
         let prefix = upperFirstLetter(r.fieldName)
-        // Pre-compute SQL strings (must be defined before quote blocks)
-        let refToSQL = Token(TokenKind.STRING_LITERAL, "SELECT * FROM " + targetTable + " WHERE id = ?")
-        let hasManyLoadSQL = Token(TokenKind.STRING_LITERAL, "SELECT * FROM " + targetTable + " WHERE " + r.by + " = ?")
-        let hasManyClearSQL = Token(TokenKind.STRING_LITERAL, "DELETE FROM " + targetTable + " WHERE " + r.by + " = ?")
-        let hasOneLoadSQL = Token(TokenKind.STRING_LITERAL, "SELECT * FROM " + targetTable + " WHERE " + r.by + " = ?")
-        let hasOneRemoveSQL = Token(TokenKind.STRING_LITERAL, "DELETE FROM " + targetTable + " WHERE " + r.by + " = ?")
+        let schemaIdent = Token(TokenKind.IDENTIFIER, r.target + "Schema")
+        let tableNameExpr = quote($(schemaIdent)().tableName())
+        // SQL 中的表名运行时求值（支持 @Table 覆盖），列名保持原样
+        let refToSQL = quote("SELECT * FROM " + $(tableNameExpr) + " WHERE id = ?")
+        let hasManyLoadSQL = quote("SELECT * FROM " + $(tableNameExpr) + " WHERE " + $(Token(TokenKind.STRING_LITERAL, r.by)) + " = ?")
+        let hasManyClearSQL = quote("DELETE FROM " + $(tableNameExpr) + " WHERE " + $(Token(TokenKind.STRING_LITERAL, r.by)) + " = ?")
+        let hasOneLoadSQL = quote("SELECT * FROM " + $(tableNameExpr) + " WHERE " + $(Token(TokenKind.STRING_LITERAL, r.by)) + " = ?")
+        let hasOneRemoveSQL = quote("DELETE FROM " + $(tableNameExpr) + " WHERE " + $(Token(TokenKind.STRING_LITERAL, r.by)) + " = ?")
 
         if (r.kind == "ref_to") {
             let fkField = Token(TokenKind.IDENTIFIER, r.by)
@@ -1026,9 +1028,12 @@ func buildRelationMethods(className: String, rels: ArrayList<RelInfo>, cd: Class
             )))
         } else if (r.kind == "ref_many") {
             let sourceTable = lowerTableName(className)
-            let via = r.via
-            let joinSQL = "SELECT " + targetTable + ".* FROM " + targetTable + " JOIN " + via + " ON " + targetTable + ".id = " + via + "." + targetTable + "_id WHERE " + via + "." + sourceTable + "_id = ?"
-            let joinSQLToken = Token(TokenKind.STRING_LITERAL, joinSQL)
+            let sourceSchemaIdent = Token(TokenKind.IDENTIFIER, className + "Schema")
+            let viaLit = Token(TokenKind.STRING_LITERAL, r.via)
+            let joinSQL = quote(
+                "SELECT " + $(tableNameExpr) + ".* FROM " + $(tableNameExpr) + " JOIN " + $(viaLit) + " ON " + $(tableNameExpr) + ".id = " + $(viaLit) + "." + $(tableNameExpr) + "_id WHERE " + $(viaLit) + "." + $(sourceSchemaIdent)().tableName() + "_id = ?"
+            )
+            let joinSQLToken = joinSQL
             let loadName = Token(TokenKind.IDENTIFIER, "load" + prefix)
             let getFuncName = Token(TokenKind.IDENTIFIER, "get" + prefix)
             cd.body.decls.add(FuncDecl(quote(
@@ -1082,8 +1087,8 @@ func buildRelationMethods(className: String, rels: ArrayList<RelInfo>, cd: Class
             let setName = Token(TokenKind.IDENTIFIER, "set" + prefix)
             let loadName = Token(TokenKind.IDENTIFIER, "load" + prefix)
             let removeName = Token(TokenKind.IDENTIFIER, "remove" + prefix)
-            let loadSQL = Token(TokenKind.STRING_LITERAL, "SELECT * FROM " + targetTable + " WHERE " + r.by + " = ?")
-            let removeSQL = Token(TokenKind.STRING_LITERAL, "DELETE FROM " + targetTable + " WHERE " + r.by + " = ?")
+            let loadSQL = quote("SELECT * FROM " + $(tableNameExpr) + " WHERE " + $(Token(TokenKind.STRING_LITERAL, r.by)) + " = ?")
+            let removeSQL = quote("DELETE FROM " + $(tableNameExpr) + " WHERE " + $(Token(TokenKind.STRING_LITERAL, r.by)) + " = ?")
             cd.body.decls.add(FuncDecl(quote(
                 public func $(setName)(tx: Tx, entity: $(targetType)): $(cn) {
                     entity.$(byField) = this.id; tx.save(entity); this
@@ -1143,10 +1148,10 @@ func buildColumnNamesFunc(className: String, cd: ClassDecl): Tokens {
     )
 }
 
-func buildSchemaClass(className: String, fields: ArrayList<FieldInfo>): Tokens {
+func buildSchemaClass(className: String, fields: ArrayList<FieldInfo>, tableName: String): Tokens {
     let cn = Token(TokenKind.IDENTIFIER, className)
     let schemaName = Token(TokenKind.IDENTIFIER, className + "Schema")
-    let tableNameLit = Token(TokenKind.STRING_LITERAL, lowerTableName(className))
+    let tableNameLit = Token(TokenKind.STRING_LITERAL, tableName)
     var colDefs = Tokens()
     var first = true
     for (i in 0..fields.size) {
@@ -1180,8 +1185,8 @@ func buildSchemaClass(className: String, fields: ArrayList<FieldInfo>): Tokens {
     )
 }
 
-func buildJunctionSchema(className: String, rel: RelInfo): Tokens {
-    let sourceTable = lowerTableName(className)
+func buildJunctionSchema(className: String, rel: RelInfo, tableName: String): Tokens {
+    let sourceTable = tableName
     let viaLit = Token(TokenKind.STRING_LITERAL, rel.via)
     let srcColLit = Token(TokenKind.STRING_LITERAL, sourceTable + "_id")
     let tgtColLit = Token(TokenKind.STRING_LITERAL, lowerTableName(rel.target) + "_id")
@@ -1323,7 +1328,7 @@ public macro Refine(input: Tokens): Tokens {
     for (rel in mergedRels) {
         if (rel.kind == "ref_many") {
             if (junctionRelNames.size > 0) { junctionTokens = junctionTokens + Token(TokenKind.NL) + Token(TokenKind.NL) }
-            junctionTokens = junctionTokens + buildJunctionSchema(className, rel)
+            junctionTokens = junctionTokens + buildJunctionSchema(className, rel, tableName)
             junctionRelNames.add(rel.fieldName)
         }
     }
@@ -1340,7 +1345,7 @@ public macro Refine(input: Tokens): Tokens {
     let txUpdateExtend = buildTxUpdateExtend(className)
     let rowMapper = buildRowMapper(className, classDecl, mergedRels)
     buildRelationMethods(className, mergedRels, classDecl)
-    let schemaClass = buildSchemaClass(className, mergedFields)
+    let schemaClass = buildSchemaClass(className, mergedFields, tableName)
     let columnNamesFunc = buildColumnNamesFunc(className, classDecl)
     var deleteSQLFunc = buildDeleteSQLFunc(className, tableName, pkFields)
     var txDeleteExtend: Tokens
