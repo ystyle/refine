@@ -72,6 +72,15 @@ public class CustomAutoPkEntity {
 }
 
 @Refine
+public class OrderItemTag {
+    @Id[]
+    var order_id: Int64 = 0
+    @Id[]
+    var item_id: Int64 = 0
+    var quantity: Int64 = 0
+}
+
+@Refine
 public class PgPost {
     var id: Int64 = 0
     var title: String = ""
@@ -665,6 +674,93 @@ public class MacroSaveTest {
         try {
             tx.upsert(p)
             @Fail("expected unsupported dialect exception")
+        } catch (_: Exception) {
+            @Expect(conn.stmt.capturedSql, "")
+        }
+    }
+
+    // ─── Batch Update ─────────────────────────────────
+
+    @TestCase
+    public func testTxBatchUpdatePost(): Unit {
+        clearHooks()
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+
+        let p1 = Post()
+        p1.id = 1
+        p1.title = "A"
+        p1.content = "X"
+        let p2 = Post()
+        p2.id = 2
+        p2.title = "B"
+        p2.content = "Y"
+        tx.batchUpdate([p1, p2])
+
+        @Expect(conn.stmt.capturedSql.contains("UPDATE post SET title = CASE id WHEN ? THEN ? WHEN ? THEN ? END, content = CASE id WHEN ? THEN ? WHEN ? THEN ? END WHERE id IN (?, ?)"), true)
+    }
+
+    @TestCase
+    public func testTxBatchUpdateEmpty(): Unit {
+        clearHooks()
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+
+        tx.batchUpdate(ArrayList<Post>().toArray())
+
+        @Expect(conn.stmt.capturedSql, "")
+    }
+
+    @TestCase
+    public func testTxBatchUpdateFiresHooks(): Unit {
+        clearHooks()
+        let conn = CaptureConnection()
+        let rf = Refine(RMockDS(), SQLiteDialect(), 0)
+        let tx = Tx(conn, rf, 0)
+
+        let flag = HookFlag()
+        rf.hook<Post>("Post", HookKind.TxBeforeUpdate) { scope: Scope<Post> =>
+            flag.called = true
+        }
+
+        let p1 = Post(); p1.id = 1; p1.title = "A"
+        let p2 = Post(); p2.id = 2; p2.title = "B"
+        tx.batchUpdate([p1, p2])
+
+        @Expect(flag.called, true)
+    }
+
+    @TestCase
+    public func testTxBatchUpdateCompoundPk(): Unit {
+        clearHooks()
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+
+        let ot1 = OrderItemTag()
+        ot1.order_id = 1
+        ot1.item_id = 2
+        ot1.quantity = 5
+        let ot2 = OrderItemTag()
+        ot2.order_id = 3
+        ot2.item_id = 4
+        ot2.quantity = 6
+        tx.batchUpdate([ot1, ot2])
+
+        @Expect(conn.stmt.capturedSql.contains("UPDATE orderItemTag SET quantity = CASE WHEN order_id = ? AND item_id = ? THEN ? WHEN order_id = ? AND item_id = ? THEN ? END WHERE (order_id, item_id) IN ((?, ?), (?, ?))"), true)
+    }
+
+    @TestCase
+    public func testTxBatchUpdateNoUpdatableColumns(): Unit {
+        clearHooks()
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+
+        let ot1 = OrderTag()
+        ot1.order_id = 1
+        ot1.tag_id = 2
+        try {
+            tx.batchUpdate([ot1])
+            @Fail("expected no updatable columns exception")
         } catch (_: Exception) {
             @Expect(conn.stmt.capturedSql, "")
         }

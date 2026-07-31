@@ -247,6 +247,23 @@ class ServiceChecks {
         @Expect(EventRepo.findOne(rf, p).isSome(), true)
     }
 
+    static func batchUpdateDifferentValues(rf: Refine): Unit {
+        initOnce(rf)
+        let name = "BatchUpd_" + uid()
+        let author = UserService.register(rf, name, name + "@t.com")
+        let p1 = PostService.create(rf, "BU1", "B1", author.id)
+        let p2 = PostService.create(rf, "BU2", "B2", author.id)
+        p1.title = "BU1-UPDATED"
+        p2.title = "BU2-UPDATED"
+        rf.transaction { tx: Tx => tx.batchUpdate([p1, p2]) }
+        let all = Post.query().using(rf).filter(Post.col().id.anyOf([p1.id, p2.id])).all()
+        @Expect(all.size, 2)
+        var titles = ArrayList<String>()
+        for (p in all) { titles.add(p.title) }
+        @Expect(titles.contains("BU1-UPDATED"), true)
+        @Expect(titles.contains("BU2-UPDATED"), true)
+    }
+
     static func upsertInsertAndUpdate(rf: Refine): Unit {
         initOnce(rf)
         rf.setIdGenerator(UlidIdGenerator())
@@ -345,6 +362,9 @@ public class MySQLServiceTest {
 
     @TestCase
     public func testUpsertInsertAndUpdate(): Unit { ServiceChecks.upsertInsertAndUpdate(rf) }
+
+    @TestCase
+    public func testBatchUpdateDifferentValues(): Unit { ServiceChecks.batchUpdateDifferentValues(rf) }
 }
 
 // ─── PostgreSQL 测试类 ──────────────────────────────────
@@ -409,4 +429,7 @@ public class PostgreSQLServiceTest {
 
     @TestCase
     public func testUpsertInsertAndUpdate(): Unit { ServiceChecks.upsertInsertAndUpdate(rf) }
+
+    @TestCase
+    public func testBatchUpdateDifferentValues(): Unit { ServiceChecks.batchUpdateDifferentValues(rf) }
 }

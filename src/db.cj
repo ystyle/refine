@@ -116,7 +116,10 @@ public class Session {
     }
 
     public func getDialect(): Dialect {
-        SQLiteDialect()
+        match (this.ref) {
+            case Some(rf) => rf.getDialect()
+            case None => SQLiteDialect()
+        }
     }
 
     public func close(): Unit {
@@ -186,6 +189,13 @@ public class Tx {
             dispatchSet(stmt, i + paramOffset, params[i])
         }
         stmt.query()
+    }
+
+    public func getDialect(): Dialect {
+        match (this.ref) {
+            case Some(rf) => rf.getDialect()
+            case None => SQLiteDialect()
+        }
     }
 }
 

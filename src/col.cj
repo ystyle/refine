@@ -21,10 +21,20 @@ public struct Col<T> {
     public func desc(): Expr { Ordered(Column(name), "DESC") }
 
     public func anyOf(values: Array<T>): Expr {
-        Binary(Column(name), In, Value(values))
+        if (values.size == 0) { return Raw("1 = 0") }
+        var result = Binary(Column(name), Eq, Value(values[0]))
+        for (i in 1..values.size) {
+            result = Binary(result, Or, Binary(Column(name), Eq, Value(values[i])))
+        }
+        result
     }
     public func notAnyOf(values: Array<T>): Expr {
-        Binary(Column(name), NotIn, Value(values))
+        if (values.size == 0) { return Raw("1 = 1") }
+        var result = Binary(Column(name), Ne, Value(values[0]))
+        for (i in 1..values.size) {
+            result = Binary(result, And, Binary(Column(name), Ne, Value(values[i])))
+        }
+        result
     }
 }
 

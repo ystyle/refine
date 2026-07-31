@@ -159,7 +159,7 @@ public class ColTest {
         let col = Col<Int64>("id")
         let expr = col.anyOf([1, 2, 3])
         match (expr) {
-            case Expr.Binary(_, op, _) => @Expect(op, BinOp.In)
+            case Expr.Binary(_, op, _) => @Expect(op, BinOp.Or)
             case _ => @Fail("expected Binary")
         }
     }
@@ -169,8 +169,18 @@ public class ColTest {
         let col = Col<Int64>("id")
         let expr = col.notAnyOf([1, 2, 3])
         match (expr) {
-            case Expr.Binary(_, op, _) => @Expect(op, BinOp.NotIn)
+            case Expr.Binary(_, op, _) => @Expect(op, BinOp.And)
             case _ => @Fail("expected Binary")
+        }
+    }
+
+    @TestCase
+    public func testColInEmpty(): Unit {
+        let col = Col<Int64>("id")
+        let expr = col.anyOf([])
+        match (expr) {
+            case Expr.Raw(s) => @Expect(s, "1 = 0")
+            case _ => @Fail("expected Raw")
         }
     }
 

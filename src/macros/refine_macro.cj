@@ -661,6 +661,160 @@ func buildTxUpsertExtend(className: String, fields: ArrayList<FieldInfo>, tableN
     )
 }
 
+func pgCastTypeOf(typeName: String): String {
+    match (typeName) {
+        case "Int8" | "Int16" | "Int32" | "Int64" | "UInt8" | "UInt16" | "UInt32" | "UInt64" => "BIGINT"
+        case "Float32" | "Float64" => "DOUBLE PRECISION"
+        case "Bool" => "BOOLEAN"
+        case "String" => "TEXT"
+        case "Array<UInt8>" => "BYTEA"
+        case "DateTime" => "TIMESTAMP"
+        case _ => "TEXT"
+    }
+}
+
+func genPkValueParamsTokens(pkFields: ArrayList<FieldInfo>, target: String): Tokens {
+    var body = Tokens()
+    for (pk in pkFields) {
+        body = body + quote(
+            allParams.add($(Token(TokenKind.IDENTIFIER, target)).$(Token(TokenKind.IDENTIFIER, pk.name)));
+        )
+    }
+    body
+}
+
+func buildBatchUpdateSQLFunc(className: String, fields: ArrayList<FieldInfo>, tableName: String, pkFields: ArrayList<FieldInfo>): Tokens {
+    let funcName = Token(TokenKind.IDENTIFIER, className + "BatchUpdateSQL")
+    let cn = Token(TokenKind.IDENTIFIER, className)
+    let tableNameLit = Token(TokenKind.STRING_LITERAL, tableName)
+    // 每列 PG cast 类型（非 PG 方言忽略）
+    var colCastTypes = ArrayList<String>()
+    for (f in fields) {
+        if (f.isPk || isRelationField(f.typeName)) { continue }
+        colCastTypes.add(pgCastTypeOf(f.typeName))
+    }
+
+    // SET 列：非主键、非关系字段
+    var setCols = ArrayList<String>()
+    for (f in fields) {
+        if (f.isPk || isRelationField(f.typeName)) { continue }
+        setCols.add(f.name)
+    }
+    var pkNames = ArrayList<String>()
+    for (pk in pkFields) { pkNames.add(pk.name) }
+    let singlePk = (pkNames.size == 1)
+    // CASE 开头的 pk 表达式（编译期）：单 pk -> "CASE pk"；复合 -> "CASE WHEN pk1 = ? AND pk2 = ?"
+    var pkCondParts = ArrayList<String>()
+    var pkInParts = ArrayList<String>()
+    for (n in pkNames) { pkCondParts.add(n + " = ?"); pkInParts.add("?") }
+    let pkCond = String.join(pkCondParts.toArray(), delimiter: " AND ")
+    let pkIn = String.join(pkInParts.toArray(), delimiter: ", ")
+    let caseHead = if (singlePk) { "CASE " + pkNames[0] } else { "CASE" }
+    // WHEN 重复子句（运行时按实体数重复）
+    let whenClause = if (singlePk) { "WHEN ? THEN ?" } else { "WHEN " + pkCond + " THEN ?" }
+    // WHERE IN 的每实体占位：单 pk -> "?"；复合 -> "(?, ?)"
+    let inItem = if (singlePk) { "?" } else { "(" + pkIn + ")" }
+    let whereHead = if (singlePk) { " WHERE " + pkNames[0] + " IN (" } else { " WHERE (" + String.join(pkNames.toArray(), delimiter: ", ") + ") IN (" }
+
+    // 列名数组字面量（运行时遍历拼 SET 子句）
+    var colArr = Tokens()
+    colArr = colArr + Token(TokenKind.LSQUARE)
+    var first = true
+    for (c in setCols) {
+        if (!first) { colArr = colArr + Token(TokenKind.COMMA) }
+        colArr = colArr + Token(TokenKind.STRING_LITERAL, c)
+        first = false
+    }
+    colArr = colArr + Token(TokenKind.RSQUARE)
+
+    var castArr = Tokens()
+    castArr = castArr + Token(TokenKind.LSQUARE)
+    first = true
+    for (ct in colCastTypes) {
+        if (!first) { castArr = castArr + Token(TokenKind.COMMA) }
+        castArr = castArr + Token(TokenKind.STRING_LITERAL, ct)
+        first = false
+    }
+    castArr = castArr + Token(TokenKind.RSQUARE)
+
+    // 参数收集：每列每实体 (pk 值..., 新值)，最后 IN 列表 (pk 值...)
+    var addParams = Tokens()
+    for (c in setCols) {
+        let colIdent = Token(TokenKind.IDENTIFIER, c)
+        addParams = addParams + quote(
+            for (_bi_ in 0..entities.size) {
+                $(genPkValueParamsTokens(pkFields, "entities[_bi_]"))
+                allParams.add(entities[_bi_].$(colIdent));
+            }
+        )
+    }
+    addParams = addParams + quote(
+        for (_bi_ in 0..entities.size) {
+            $(genPkValueParamsTokens(pkFields, "entities[_bi_]"))
+        }
+    )
+
+    let caseHeadLit = Token(TokenKind.STRING_LITERAL, caseHead)
+    let whenClauseLit = Token(TokenKind.STRING_LITERAL, whenClause)
+    let inItemLit = Token(TokenKind.STRING_LITERAL, inItem)
+    let whereHeadLit = Token(TokenKind.STRING_LITERAL, whereHead)
+    let castArrTok = castArr
+
+    quote(
+        func $(funcName)(entities: Array<$(cn)>, dialect: Dialect): (String, Array<Any>) {
+            let colNames: Array<String> = $(colArr)
+            if (colNames.size == 0) { throw Exception("no updatable columns for batchUpdate") }
+            let colCastTypes: Array<String> = $(castArrTok)
+            let isPostgres = (dialect.name() == "postgresql")
+            var allParams = ArrayList<Any>()
+            $(addParams)
+            var setParts = ArrayList<String>()
+            for (_ci_ in 0..colNames.size) {
+                var caseParts = ArrayList<String>()
+                caseParts.add($(caseHeadLit))
+                let castSuffix = if (isPostgres) { "::" + colCastTypes[_ci_] } else { "" }
+                for (_k_ in 0..entities.size) {
+                    caseParts.add($(whenClauseLit) + castSuffix)
+                }
+                caseParts.add("END")
+                setParts.add(colNames[_ci_] + " = " + String.join(caseParts.toArray(), delimiter: " "))
+            }
+            var inParts = ArrayList<String>()
+            for (_k_ in 0..entities.size) {
+                inParts.add($(inItemLit))
+            }
+            ("UPDATE " + $(tableNameLit) + " SET " + String.join(setParts.toArray(), delimiter: ", ") + $(whereHeadLit) + String.join(inParts.toArray(), delimiter: ", ") + ")", allParams.toArray())
+        }
+    )
+}
+
+func buildTxBatchUpdateExtend(className: String): Tokens {
+    let cn = Token(TokenKind.IDENTIFIER, className)
+    let batchUpdateSQLFuncName = Token(TokenKind.IDENTIFIER, className + "BatchUpdateSQL")
+    let nameLit = Token(TokenKind.STRING_LITERAL, className)
+    quote(
+        extend Tx {
+            public func batchUpdate(entities: Array<$(cn)>): Unit {
+                if (entities.size == 0) { return }
+                for (_bi_ in 0..entities.size) {
+                    let e = entities[_bi_]
+                    let scope = Scope<$(cn)>(e)
+                    scope.db = Some(this)
+                    if (this.ref.isSome()) { this.ref.getOrThrow().executeHooks($(nameLit), HookKind.TxBeforeUpdate, scope) }
+                    if (scope.aborted) { throw scope.error.getOrThrow() }
+                }
+                let (sql, params) = $(batchUpdateSQLFuncName)(entities, this.getDialect())
+                let _ = this.execute(sql, params)
+                for (_bi_ in 0..entities.size) {
+                    let afterScope = Scope<$(cn)>(entities[_bi_])
+                    afterScope.db = Some(this)
+                    if (this.ref.isSome()) { this.ref.getOrThrow().executeHooks($(nameLit), HookKind.TxAfterUpdate, afterScope) }
+                }
+            }
+        }
+    )
+}
+
 func buildTxBatchSaveExtend(className: String, pkFields: ArrayList<FieldInfo>, hasClientPk: Bool): Tokens {
     let cn = Token(TokenKind.IDENTIFIER, className)
     let batchInsertSQLFuncName = Token(TokenKind.IDENTIFIER, className + "BatchInsertSQL")
@@ -1409,6 +1563,8 @@ public macro Refine(input: Tokens): Tokens {
     let txSaveExtend = buildTxSaveExtend(className, pkFields, hasClientPk, hasAutoPk)
     let batchInsertSQLFunc = buildBatchInsertSQLFunc(className, mergedFields, tableName)
     let txBatchSaveExtend = buildTxBatchSaveExtend(className, pkFields, hasClientPk)
+    let batchUpdateSQLFunc = buildBatchUpdateSQLFunc(className, mergedFields, tableName, pkFields)
+    let txBatchUpdateExtend = buildTxBatchUpdateExtend(className)
     let updateSQLFunc = buildUpdateSQLFunc(className, mergedFields, tableName, pkFields)
     let txUpdateExtend = buildTxUpdateExtend(className)
     let txUpsertExtend = buildTxUpsertExtend(className, mergedFields, tableName, pkFields)
@@ -1427,6 +1583,8 @@ public macro Refine(input: Tokens): Tokens {
             Token(TokenKind.NL) + Token(TokenKind.NL) + txSaveExtend +
             Token(TokenKind.NL) + Token(TokenKind.NL) + batchInsertSQLFunc +
             Token(TokenKind.NL) + Token(TokenKind.NL) + txBatchSaveExtend +
+            Token(TokenKind.NL) + Token(TokenKind.NL) + batchUpdateSQLFunc +
+            Token(TokenKind.NL) + Token(TokenKind.NL) + txBatchUpdateExtend +
             Token(TokenKind.NL) + Token(TokenKind.NL) + updateSQLFunc +
             Token(TokenKind.NL) + Token(TokenKind.NL) + txUpdateExtend +
             Token(TokenKind.NL) + Token(TokenKind.NL) + txUpsertExtend +
@@ -1446,6 +1604,8 @@ public macro Refine(input: Tokens): Tokens {
             Token(TokenKind.NL) + Token(TokenKind.NL) + txSaveExtend +
             Token(TokenKind.NL) + Token(TokenKind.NL) + batchInsertSQLFunc +
             Token(TokenKind.NL) + Token(TokenKind.NL) + txBatchSaveExtend +
+            Token(TokenKind.NL) + Token(TokenKind.NL) + batchUpdateSQLFunc +
+            Token(TokenKind.NL) + Token(TokenKind.NL) + txBatchUpdateExtend +
             Token(TokenKind.NL) + Token(TokenKind.NL) + updateSQLFunc +
             Token(TokenKind.NL) + Token(TokenKind.NL) + txUpdateExtend +
             Token(TokenKind.NL) + Token(TokenKind.NL) + txUpsertExtend +
