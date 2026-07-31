@@ -39,6 +39,27 @@ rf.transaction { tx: Tx =>
 
 相关配置见 [Refine API - getIdGenerator/setIdGenerator](../api/refine.md)。
 
+## Int64 非自增主键（应用侧生成）
+
+`@Id[auto, false]` 关闭自增后，id 为 0 时自动调用 ID 生成器（结果经 `Int64.parse` 转换）并回写。可搭配 `SonyflakeIdGenerator`（趋势递增、索引友好）替代数据库自增，批量插入无需回写 id：
+
+```cangjie
+@Refine
+class Order {
+    @Id[auto, false]    // 不用数据库自增，应用侧生成雪花 ID
+    var id: Int64 = 0
+    var amount: Int64 = 0
+}
+
+rf.setIdGenerator(SonyflakeIdGenerator())
+rf.transaction { tx: Tx =>
+    let o = Order()
+    o.amount = 100
+    tx.save(o)
+    // o.id 已填充雪花 ID
+}
+```
+
 ## 自定义表名
 
 默认表名是类名的驼峰转小写（`User` → `user`, `BlogPost` → `blogpost`）。使用 `@Table` 覆盖：

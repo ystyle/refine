@@ -3,6 +3,7 @@ package refine
 import std.database.sql.{Datasource, Connection, Transaction, QueryResult, UpdateResult, Driver, DriverManager, PooledDatasource}
 import std.collection.HashMap
 import std.collection.ArrayList
+import std.convert.*
 
 public class Refine {
     private var datasource: Datasource
@@ -126,6 +127,10 @@ public func extractDriver(url: String): String {
         case Some(pos) => url[0..pos]
         case None => "sqlite"
     }
+}
+
+public func parseId64(s: String): Int64 {
+    Int64.parse(s)
 }
 
 public func detectDialect(name: String): Dialect {

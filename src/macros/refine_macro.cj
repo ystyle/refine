@@ -153,14 +153,6 @@ func isRelationField(typeName: String): Bool {
     typeName.contains("Option") || typeName.contains("ArrayList") || typeName.contains("Array")
 }
 
-func detectIdFieldType(fields: ArrayList<FieldInfo>): String {
-    for (f in fields) {
-        if (f.isPk && f.typeName == "String") { return "String" }
-        if (f.isPk && f.typeName == "Int64") { return "Int64" }
-    }
-    ""
-}
-
 func getPkFields(fields: ArrayList<FieldInfo>): ArrayList<FieldInfo> {
     let result = ArrayList<FieldInfo>()
     for (f in fields) { if (f.isPk) { result.add(f) } }
@@ -422,26 +414,34 @@ func buildInsertSQLFunc(className: String, fields: ArrayList<FieldInfo>, tableNa
     )
 }
 
-func buildStringPkGenTokens(pkFields: ArrayList<FieldInfo>): Tokens {
+func buildClientPkGenTokens(pkFields: ArrayList<FieldInfo>): Tokens {
     var body = Tokens()
     for (pk in pkFields) {
+        let fName = Token(TokenKind.IDENTIFIER, pk.name)
         if (pk.typeName == "String") {
-            let fName = Token(TokenKind.IDENTIFIER, pk.name)
             body = body + quote(
                 if (entity.$(fName) == "" && this.ref.isSome()) { entity.$(fName) = this.ref.getOrThrow().getIdGenerator().generate() }
+            )
+        } else if (pk.typeName == "Int64" && !pk.autoInc) {
+            body = body + quote(
+                if (entity.$(fName) == 0 && this.ref.isSome()) { entity.$(fName) = parseId64(this.ref.getOrThrow().getIdGenerator().generate()) }
             )
         }
     }
     body
 }
 
-func buildStringPkGenTokensBatch(pkFields: ArrayList<FieldInfo>): Tokens {
+func buildClientPkGenTokensBatch(pkFields: ArrayList<FieldInfo>): Tokens {
     var body = Tokens()
     for (pk in pkFields) {
+        let fName = Token(TokenKind.IDENTIFIER, pk.name)
         if (pk.typeName == "String") {
-            let fName = Token(TokenKind.IDENTIFIER, pk.name)
             body = body + quote(
                 if (entities[_bi_].$(fName) == "" && this.ref.isSome()) { entities[_bi_].$(fName) = this.ref.getOrThrow().getIdGenerator().generate() }
+            )
+        } else if (pk.typeName == "Int64" && !pk.autoInc) {
+            body = body + quote(
+                if (entities[_bi_].$(fName) == 0 && this.ref.isSome()) { entities[_bi_].$(fName) = parseId64(this.ref.getOrThrow().getIdGenerator().generate()) }
             )
         }
     }
@@ -461,13 +461,13 @@ func buildAutoPkAssignTokens(pkFields: ArrayList<FieldInfo>): Tokens {
     body
 }
 
-func buildTxSaveExtend(className: String, pkFields: ArrayList<FieldInfo>, hasStringPk: Bool, hasAutoPk: Bool): Tokens {
+func buildTxSaveExtend(className: String, pkFields: ArrayList<FieldInfo>, hasClientPk: Bool, hasAutoPk: Bool): Tokens {
     let cn = Token(TokenKind.IDENTIFIER, className)
     let insertSQLFuncName = Token(TokenKind.IDENTIFIER, className + "InsertSQL")
     let nameLit = Token(TokenKind.STRING_LITERAL, className)
 
-    if (hasStringPk) {
-        let genTokens = buildStringPkGenTokens(pkFields)
+    if (hasClientPk) {
+        let genTokens = buildClientPkGenTokens(pkFields)
         quote(
             extend Tx {
                 public func save(entity: $(cn)): Unit {
@@ -564,13 +564,13 @@ func buildBatchInsertSQLFunc(className: String, fields: ArrayList<FieldInfo>, ta
     )
 }
 
-func buildTxBatchSaveExtend(className: String, pkFields: ArrayList<FieldInfo>, hasStringPk: Bool): Tokens {
+func buildTxBatchSaveExtend(className: String, pkFields: ArrayList<FieldInfo>, hasClientPk: Bool): Tokens {
     let cn = Token(TokenKind.IDENTIFIER, className)
     let batchInsertSQLFuncName = Token(TokenKind.IDENTIFIER, className + "BatchInsertSQL")
     let nameLit = Token(TokenKind.STRING_LITERAL, className)
 
-    if (hasStringPk) {
-        let genTokens = buildStringPkGenTokensBatch(pkFields)
+    if (hasClientPk) {
+        let genTokens = buildClientPkGenTokensBatch(pkFields)
         quote(
             extend Tx {
                 public func batchSave(entities: Array<$(cn)>): Unit {
@@ -1212,9 +1212,12 @@ public macro Refine(input: Tokens): Tokens {
     var mergedFields = mergeFieldOverrides(fields, fieldMessages)
     let idMessages = getChildMessages("Id")
     mergedFields = applyIdAnnotations(mergedFields, idMessages)
-    let idFieldType = detectIdFieldType(mergedFields)
-    let isStringId = (idFieldType == "String")
     let pkFields = getPkFields(mergedFields)
+    var hasClientPk = false
+    for (i in 0..pkFields.size) {
+        let pk = pkFields.get(i).getOrThrow()
+        if (pk.typeName == "String" || (pk.typeName == "Int64" && !pk.autoInc)) { hasClientPk = true; break }
+    }
     var hasAutoPk = false
     for (i in 0..pkFields.size) { if (pkFields.get(i).getOrThrow().autoInc) { hasAutoPk = true; break } }
     let rels = detectRelations(fields)
@@ -1302,9 +1305,9 @@ public macro Refine(input: Tokens): Tokens {
     let colsStruct = buildColsStruct(className, classDecl)
     let relClass = buildRelClass(className, mergedRels)
     let insertSQLFunc = buildInsertSQLFunc(className, mergedFields, tableName)
-    let txSaveExtend = buildTxSaveExtend(className, pkFields, isStringId, hasAutoPk)
+    let txSaveExtend = buildTxSaveExtend(className, pkFields, hasClientPk, hasAutoPk)
     let batchInsertSQLFunc = buildBatchInsertSQLFunc(className, mergedFields, tableName)
-    let txBatchSaveExtend = buildTxBatchSaveExtend(className, pkFields, isStringId)
+    let txBatchSaveExtend = buildTxBatchSaveExtend(className, pkFields, hasClientPk)
     let updateSQLFunc = buildUpdateSQLFunc(className, mergedFields, tableName, pkFields)
     let txUpdateExtend = buildTxUpdateExtend(className)
     let rowMapper = buildRowMapper(className, classDecl, mergedRels)

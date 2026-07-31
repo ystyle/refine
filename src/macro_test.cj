@@ -101,6 +101,14 @@ class TestIdGenerator <: IdGenerator {
     }
 }
 
+class TestInt64IdGenerator <: IdGenerator {
+    private var counter: Int64 = 0
+    public func generate(): String {
+        counter = counter + 1
+        counter.toString()
+    }
+}
+
 class CaptureUpdateResult <: UpdateResult {
     public prop lastInsertId: Int64 { get() { _lastInsertId } }
     public prop rowCount: Int64 { get() { _rowCount } }
@@ -468,6 +476,56 @@ public class MacroSaveTest {
         tx.save(p)
 
         @Expect(conn.stmt.capturedSql.contains("INSERT INTO manualIdPost (id, title)"), true)
+    }
+
+    @TestCase
+    public func testTxSaveManualIntPkAutoGen(): Unit {
+        clearHooks()
+        let conn = CaptureConnection()
+        let rf = Refine(RMockDS(), SQLiteDialect(), 0)
+        rf.setIdGenerator(TestInt64IdGenerator())
+        let tx = Tx(conn, rf, 0)
+
+        let p = ManualIdPost()
+        p.title = "AutoGen"
+        tx.save(p)
+
+        @Expect(p.id != 0, true)
+        @Expect(conn.stmt.capturedSql.contains("INSERT INTO manualIdPost (id, title)"), true)
+    }
+
+    @TestCase
+    public func testTxBatchSaveManualIntPkAutoGen(): Unit {
+        clearHooks()
+        let conn = CaptureConnection()
+        let rf = Refine(RMockDS(), SQLiteDialect(), 0)
+        rf.setIdGenerator(TestInt64IdGenerator())
+        let tx = Tx(conn, rf, 0)
+
+        let p1 = ManualIdPost(); p1.title = "A"
+        let p2 = ManualIdPost(); p2.title = "B"
+        tx.batchSave([p1, p2])
+
+        @Expect(p1.id != 0, true)
+        @Expect(p2.id != 0, true)
+        @Expect(p1.id != p2.id, true)
+        @Expect(conn.stmt.capturedSql.contains("INSERT INTO manualIdPost (id, title)"), true)
+    }
+
+    @TestCase
+    public func testTxSaveManualIntPkKeepsCustomId(): Unit {
+        clearHooks()
+        let conn = CaptureConnection()
+        let rf = Refine(RMockDS(), SQLiteDialect(), 0)
+        rf.setIdGenerator(TestInt64IdGenerator())
+        let tx = Tx(conn, rf, 0)
+
+        let p = ManualIdPost()
+        p.id = 42
+        p.title = "Custom"
+        tx.save(p)
+
+        @Expect(p.id, 42)
     }
 
     @TestCase

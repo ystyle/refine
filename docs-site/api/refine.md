@@ -124,7 +124,10 @@ let id3 = rf.getIdGenerator().generate()  // "01KYVGFGPFCJEZRKBBHJ2Q59QW"
 | `RandomIdGenerator` | 随机 UUID v4 格式 ID |
 | `UlidIdGenerator` | ULID（Universally Unique Lexicographically Sortable Identifier），26 字符 Crockford Base32，128bit：48 位毫秒时间戳（大端，保证字典序）+ 80 位随机 |
 
-ID 生成时机：`String` 主键实体在 `Tx.save` / `Tx.batchSave` 时，id 为空则自动调用生成器，并回写实体。
+ID 生成时机：
+
+- `String` 主键实体：`Tx.save` / `Tx.batchSave` 时 id 为空则自动调用生成器，并回写实体
+- `Int64` 主键实体（`@Id[auto, false]` 关闭自增）：id 为 0 时自动调用生成器（`generate()` 结果经 `Int64.parse` 转换），并回写实体——适合用 Sonyflake 等趋势递增 ID 替代数据库自增（批量插入无需回写，无连续 id 假设）
 
 实现自定义：
 

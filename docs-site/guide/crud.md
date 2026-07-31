@@ -37,6 +37,7 @@ rf.transaction { tx: Tx =>
 - 所有参数扁平化收集到单条 SQL，避免 N 次 INSERT
 - **自增主键（Int64 id）不回写**：多值 INSERT 后 `lastInsertId` 只代表第一条，且 id 不保证连续，需取 id 时用 `Entity.query().filter(...)` 查回
 - **String 主键（UUID/ULID）回写**：插入前预生成所有 ID，批量插入后实体已携带完整 id
+- **Int64 非自增主键（`@Id[auto, false]`）回写**：插入前按需生成（id 为 0 时），可搭配 Sonyflake 雪花 ID 替代数据库自增
 - 支持 `TxBeforeCreate` / `TxAfterCreate` 钩子（每个实体独立触发）
 - 空数组直接返回，不执行 SQL
 
