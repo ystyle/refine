@@ -58,6 +58,20 @@ class OrderTag {
 }
 
 @Refine
+class StringKeyEntity {
+    @Id[]
+    var key: String = ""
+    var name: String = ""
+}
+
+@Refine
+class CustomAutoPkEntity {
+    @Id[auto, true]
+    var uid: Int64 = 0
+    var label: String = ""
+}
+
+@Refine
 class PostWithRel {
     var id: Int64 = 0
     var title: String = ""
@@ -389,6 +403,56 @@ public class MacroSaveTest {
         @Expect(conn.stmt.capturedSql.contains("INSERT INTO uuidPost (id, title, content) VALUES (?, ?, ?), (?, ?, ?)"), true)
     }
 
+    @TestCase
+    public func testTxSaveStringKeyEntityAutoGen(): Unit {
+        clearHooks()
+        let conn = CaptureConnection()
+        let rf = Refine(RMockDS(), SQLiteDialect(), 0)
+        rf.setIdGenerator(TestIdGenerator())
+        let tx = Tx(conn, rf, 0)
+
+        let e = StringKeyEntity()
+        e.name = "abc"
+        tx.save(e)
+
+        @Expect(e.key != "", true)
+        @Expect(conn.stmt.capturedSql.contains("INSERT INTO stringKeyEntity (key, name)"), true)
+    }
+
+    @TestCase
+    public func testTxBatchSaveStringKeyEntityAutoGen(): Unit {
+        clearHooks()
+        let conn = CaptureConnection()
+        let rf = Refine(RMockDS(), SQLiteDialect(), 0)
+        rf.setIdGenerator(TestIdGenerator())
+        let tx = Tx(conn, rf, 0)
+
+        let e1 = StringKeyEntity(); e1.name = "a"
+        let e2 = StringKeyEntity(); e2.name = "b"
+        tx.batchSave([e1, e2])
+
+        @Expect(e1.key != "", true)
+        @Expect(e2.key != "", true)
+        @Expect(e1.key != e2.key, true)
+        @Expect(conn.stmt.capturedSql.contains("INSERT INTO stringKeyEntity (key, name)"), true)
+    }
+
+    @TestCase
+    public func testTxSaveCustomAutoPkEntity(): Unit {
+        clearHooks()
+        let conn = CaptureConnection()
+        conn.stmt.mockLastInsertId = 42
+        let rf = Refine(RMockDS(), SQLiteDialect(), 0)
+        let tx = Tx(conn, rf, 0)
+
+        let e = CustomAutoPkEntity()
+        e.label = "x"
+        tx.save(e)
+
+        @Expect(e.uid, 42)
+        @Expect(conn.stmt.capturedSql.contains("INSERT INTO customAutoPkEntity (label)"), true)
+    }
+
     // ─── @Id / Compound Key Tests ──────────────────────
 
     @TestCase
@@ -587,6 +651,24 @@ public class MacroExistingTest {
         @Expect(cols[0].primaryKey, true)
         @Expect(cols[0].autoIncrement, true)
         @Expect(cols[1].name, "name")
+    }
+
+    @TestCase
+    public func testStringIdSchemaNoAutoIncrement(): Unit {
+        let schema = UuidPostSchema()
+        let cols = schema.columns()
+        @Expect(cols[0].name, "id")
+        @Expect(cols[0].primaryKey, true)
+        @Expect(cols[0].autoIncrement, false)
+    }
+
+    @TestCase
+    public func testStringFieldStorageType(): Unit {
+        let schema = UuidPostSchema()
+        let cols = schema.columns()
+        @Expect(cols[0].storageType, StorageType.String)
+        @Expect(cols[1].storageType, StorageType.String)
+        @Expect(cols[2].storageType, StorageType.String)
     }
 
     @TestCase

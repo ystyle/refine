@@ -211,7 +211,7 @@ func typeNameToStorageType(typeName: String): String {
         "StorageType.Integer"
     } else if (typeName == "Float32" || typeName == "Float64") { "StorageType.Float"
     } else if (typeName == "Bool") { "StorageType.`Bool`"
-    } else if (typeName == "String") { "StorageType.Text"
+    } else if (typeName == "String") { "StorageType.String"
     } else if (typeName == "Array<UInt8>") { "StorageType.Bytes"
     } else { "StorageType.Text" }
 }
@@ -422,16 +422,69 @@ func buildInsertSQLFunc(className: String, fields: ArrayList<FieldInfo>, tableNa
     )
 }
 
-func buildTxSaveExtend(className: String, hasStringPk: Bool, hasAutoPk: Bool): Tokens {
+func buildStringPkGenTokens(pkFields: ArrayList<FieldInfo>): Tokens {
+    var body = Tokens()
+    for (pk in pkFields) {
+        if (pk.typeName == "String") {
+            let fName = Token(TokenKind.IDENTIFIER, pk.name)
+            body = body + quote(
+                if (entity.$(fName) == "" && this.ref.isSome()) { entity.$(fName) = this.ref.getOrThrow().getIdGenerator().generate() }
+            )
+        }
+    }
+    body
+}
+
+func buildStringPkGenTokensBatch(pkFields: ArrayList<FieldInfo>): Tokens {
+    var body = Tokens()
+    for (pk in pkFields) {
+        if (pk.typeName == "String") {
+            let fName = Token(TokenKind.IDENTIFIER, pk.name)
+            body = body + quote(
+                if (entities[_bi_].$(fName) == "" && this.ref.isSome()) { entities[_bi_].$(fName) = this.ref.getOrThrow().getIdGenerator().generate() }
+            )
+        }
+    }
+    body
+}
+
+func buildAutoPkAssignTokens(pkFields: ArrayList<FieldInfo>): Tokens {
+    var body = Tokens()
+    for (pk in pkFields) {
+        if (pk.autoInc) {
+            let fName = Token(TokenKind.IDENTIFIER, pk.name)
+            body = body + quote(
+                entity.$(fName) = result.lastInsertId;
+            )
+        }
+    }
+    body
+}
+
+func buildAutoPkAssignTokensBatch(pkFields: ArrayList<FieldInfo>): Tokens {
+    var body = Tokens()
+    for (pk in pkFields) {
+        if (pk.autoInc) {
+            let fName = Token(TokenKind.IDENTIFIER, pk.name)
+            body = body + quote(
+                entities[_bi_].$(fName) = baseId + _bi_;
+            )
+        }
+    }
+    body
+}
+
+func buildTxSaveExtend(className: String, pkFields: ArrayList<FieldInfo>, hasStringPk: Bool, hasAutoPk: Bool): Tokens {
     let cn = Token(TokenKind.IDENTIFIER, className)
     let insertSQLFuncName = Token(TokenKind.IDENTIFIER, className + "InsertSQL")
     let nameLit = Token(TokenKind.STRING_LITERAL, className)
 
     if (hasStringPk) {
+        let genTokens = buildStringPkGenTokens(pkFields)
         quote(
             extend Tx {
                 public func save(entity: $(cn)): Unit {
-                    if (entity.id == "" && this.ref.isSome()) { entity.id = this.ref.getOrThrow().getIdGenerator().generate() }
+                    $(genTokens)
                     let scope = Scope<$(cn)>(entity)
                     scope.db = Some(this)
                     if (this.ref.isSome()) { this.ref.getOrThrow().executeHooks($(nameLit), HookKind.TxBeforeCreate, scope) }
@@ -445,6 +498,7 @@ func buildTxSaveExtend(className: String, hasStringPk: Bool, hasAutoPk: Bool): T
             }
         )
     } else if (hasAutoPk) {
+        let assignTokens = buildAutoPkAssignTokens(pkFields)
         quote(
             extend Tx {
                 public func save(entity: $(cn)): Unit {
@@ -454,7 +508,7 @@ func buildTxSaveExtend(className: String, hasStringPk: Bool, hasAutoPk: Bool): T
                     if (scope.aborted) { throw scope.error.getOrThrow() }
                     let (sql, params) = $(insertSQLFuncName)(entity)
                     let result = this.execute(sql, params)
-                    entity.id = result.lastInsertId
+                    $(assignTokens)
                     let afterScope = Scope<$(cn)>(entity)
                     afterScope.db = Some(this)
                     if (this.ref.isSome()) { this.ref.getOrThrow().executeHooks($(nameLit), HookKind.TxAfterCreate, afterScope) }
@@ -523,18 +577,19 @@ func buildBatchInsertSQLFunc(className: String, fields: ArrayList<FieldInfo>, ta
     )
 }
 
-func buildTxBatchSaveExtend(className: String, hasStringPk: Bool, hasAutoPk: Bool): Tokens {
+func buildTxBatchSaveExtend(className: String, pkFields: ArrayList<FieldInfo>, hasStringPk: Bool, hasAutoPk: Bool): Tokens {
     let cn = Token(TokenKind.IDENTIFIER, className)
     let batchInsertSQLFuncName = Token(TokenKind.IDENTIFIER, className + "BatchInsertSQL")
     let nameLit = Token(TokenKind.STRING_LITERAL, className)
 
     if (hasStringPk) {
+        let genTokens = buildStringPkGenTokensBatch(pkFields)
         quote(
             extend Tx {
                 public func batchSave(entities: Array<$(cn)>): Unit {
                     if (entities.size == 0) { return }
                     for (_bi_ in 0..entities.size) {
-                        if (entities[_bi_].id == "" && this.ref.isSome()) { entities[_bi_].id = this.ref.getOrThrow().getIdGenerator().generate() }
+                        $(genTokens)
                     }
                     for (_bi_ in 0..entities.size) {
                         let e = entities[_bi_]
@@ -554,6 +609,7 @@ func buildTxBatchSaveExtend(className: String, hasStringPk: Bool, hasAutoPk: Boo
             }
         )
     } else if (hasAutoPk) {
+        let assignTokens = buildAutoPkAssignTokensBatch(pkFields)
         quote(
             extend Tx {
                 public func batchSave(entities: Array<$(cn)>): Unit {
@@ -569,7 +625,7 @@ func buildTxBatchSaveExtend(className: String, hasStringPk: Bool, hasAutoPk: Boo
                     let result = this.execute(sql, params)
                     let baseId = result.lastInsertId
                     for (_bi_ in 0..entities.size) {
-                        entities[_bi_].id = baseId + _bi_
+                        $(assignTokens)
                         let afterScope = Scope<$(cn)>(entities[_bi_])
                         afterScope.db = Some(this)
                         if (this.ref.isSome()) { this.ref.getOrThrow().executeHooks($(nameLit), HookKind.TxAfterCreate, afterScope) }
@@ -1109,7 +1165,8 @@ func buildSchemaClass(className: String, fields: ArrayList<FieldInfo>): Tokens {
         if (!first) { colDefs = colDefs + Token(TokenKind.COMMA) + Token(TokenKind.NL) }
         let nameLit = Token(TokenKind.STRING_LITERAL, f.name)
         let st = if (f.storageOverride != "") { "StorageType." + f.storageOverride } else { typeNameToStorageType(f.typeName) }
-        let isId = if (f.name == "id") { "true" } else { "false" }
+        let isPk = if (f.isPk) { "true" } else { "false" }
+        let isAutoInc = if (f.autoInc) { "true" } else { "false" }
         colDefs = colDefs + Token(TokenKind.IDENTIFIER, "ColumnDef") + Token(TokenKind.LPAREN) + nameLit + Token(TokenKind.COMMA)
         if (f.storageOverride == "Bool" || (f.storageOverride == "" && f.typeName == "Bool")) {
             colDefs = colDefs + Token(TokenKind.IDENTIFIER, "StorageType") + Token(TokenKind.DOT)
@@ -1119,8 +1176,8 @@ func buildSchemaClass(className: String, fields: ArrayList<FieldInfo>): Tokens {
             colDefs = colDefs + Token(TokenKind.IDENTIFIER, stParts[0]) + Token(TokenKind.DOT)
             colDefs = colDefs + Token(TokenKind.IDENTIFIER, stParts[1])
         }
-        colDefs = colDefs + Token(TokenKind.COMMA) + Token(TokenKind.IDENTIFIER, isId) + Token(TokenKind.COMMA)
-        colDefs = colDefs + Token(TokenKind.IDENTIFIER, isId) + Token(TokenKind.COMMA)
+        colDefs = colDefs + Token(TokenKind.COMMA) + Token(TokenKind.IDENTIFIER, isPk) + Token(TokenKind.COMMA)
+        colDefs = colDefs + Token(TokenKind.IDENTIFIER, isAutoInc) + Token(TokenKind.COMMA)
         colDefs = colDefs + Token(TokenKind.IDENTIFIER, "false") + Token(TokenKind.RPAREN)
         first = false
     }
@@ -1283,9 +1340,9 @@ public macro Refine(input: Tokens): Tokens {
     let colsStruct = buildColsStruct(className, classDecl)
     let relClass = buildRelClass(className, mergedRels)
     let insertSQLFunc = buildInsertSQLFunc(className, mergedFields, tableName)
-    let txSaveExtend = buildTxSaveExtend(className, isStringId, hasAutoPk)
+    let txSaveExtend = buildTxSaveExtend(className, pkFields, isStringId, hasAutoPk)
     let batchInsertSQLFunc = buildBatchInsertSQLFunc(className, mergedFields, tableName)
-    let txBatchSaveExtend = buildTxBatchSaveExtend(className, isStringId, hasAutoPk)
+    let txBatchSaveExtend = buildTxBatchSaveExtend(className, pkFields, isStringId, hasAutoPk)
     let updateSQLFunc = buildUpdateSQLFunc(className, mergedFields, tableName, pkFields)
     let txUpdateExtend = buildTxUpdateExtend(className)
     let rowMapper = buildRowMapper(className, classDecl, mergedRels)
