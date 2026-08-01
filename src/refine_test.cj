@@ -1,7 +1,7 @@
 package refine
 
 import std.database.sql.*
-import std.collection.HashMap
+import std.collection.{HashMap, ArrayList}
 import std.unittest.*
 import std.unittest.testmacro.*
 import std.database.sql.Statement as SqlStatement
@@ -25,6 +25,66 @@ class RMockConn <: Connection {
     public func createTransaction(): Transaction { MockTransaction() }
     public func getMetaData(): HashMap<String, String> { HashMap() }
     public func prepareStatement(sql: String): SqlStatement { MockStatement() }
+}
+
+class RMockTrackingDS <: Datasource {
+    public var created = ArrayList<Connection>()
+    public func connect(): Connection {
+        let c = RMockConn()
+        created.add(c)
+        c
+    }
+    public func close(): Unit {}
+    public func isClosed(): Bool { false }
+    public func setOption(_key: String, _value: String): Unit {}
+}
+
+class RMockFailingTx <: Transaction {
+    public mut prop accessMode: TransactionAccessMode {
+        get() { _accessMode }
+        set(v) { _accessMode = v }
+    }
+    public mut prop deferrableMode: TransactionDeferrableMode {
+        get() { _deferrableMode }
+        set(v) { _deferrableMode = v }
+    }
+    public mut prop isoLevel: TransactionIsoLevel {
+        get() { _isoLevel }
+        set(v) { _isoLevel = v }
+    }
+    private var _accessMode: TransactionAccessMode = TransactionAccessMode.ReadWrite
+    private var _deferrableMode: TransactionDeferrableMode = TransactionDeferrableMode.NotDeferrable
+    private var _isoLevel: TransactionIsoLevel = TransactionIsoLevel.Serializable
+    public func begin(): Unit { throw Exception("begin failed") }
+    public func commit(): Unit {}
+    public func release(_: String): Unit {}
+    public func rollback(): Unit {}
+    public func rollback(_: String): Unit {}
+    public func save(_: String): Unit {}
+}
+
+class RMockFailingConn <: Connection {
+    public var closed = false
+
+    public func close(): Unit { closed = true }
+    public func isClosed(): Bool { closed }
+    public prop state: ConnectionState { get() { ConnectionState.Connected } }
+
+    public func createTransaction(): Transaction { RMockFailingTx() }
+    public func getMetaData(): HashMap<String, String> { HashMap() }
+    public func prepareStatement(sql: String): SqlStatement { MockStatement() }
+}
+
+class RMockFailingDS <: Datasource {
+    public var created = ArrayList<Connection>()
+    public func connect(): Connection {
+        let c = RMockFailingConn()
+        created.add(c)
+        c
+    }
+    public func close(): Unit {}
+    public func isClosed(): Bool { false }
+    public func setOption(_key: String, _value: String): Unit {}
 }
 
 // ─── Tests ──────────────────────────────────────────────
@@ -79,6 +139,40 @@ public class RefineTest {
             @Fail("expected RefineException for SQLite")
         } catch (e: RefineException) {
             @Expect(e.message.contains("isolation"), true)
+        }
+        r.close()
+    }
+
+    @TestCase
+    public func testTransactionIsolationClosesConnection(): Unit {
+        let ds = RMockTrackingDS()
+        let r = Refine(ds, SQLiteDialect(), 0)
+        try {
+            r.transaction(IsolationLevel.Serializable) { tx: Tx => 42 }
+            @Fail("expected RefineException for SQLite")
+        } catch (e: RefineException) {
+            @Expect(e.message.contains("isolation"), true)
+        }
+        @Expect(ds.created.size, 1)
+        if (ds.created.size > 0) {
+            @Expect(ds.created.get(0).getOrThrow().isClosed(), true)
+        }
+        r.close()
+    }
+
+    @TestCase
+    public func testTransactionBeginFailureClosesConnection(): Unit {
+        let ds = RMockFailingDS()
+        let r = Refine(ds, SQLiteDialect(), 0)
+        try {
+            r.transaction { tx: Tx => 42 }
+            @Fail("expected Exception")
+        } catch (_: Exception) {
+            @Expect(true, true)
+        }
+        @Expect(ds.created.size, 1)
+        if (ds.created.size > 0) {
+            @Expect(ds.created.get(0).getOrThrow().isClosed(), true)
         }
         r.close()
     }
