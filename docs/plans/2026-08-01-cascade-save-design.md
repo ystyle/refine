@@ -21,6 +21,25 @@
 - **has 系（拥有）**：子对象是父的一部分，生命周期跟随父。
 - **ref 系（引用）**：被引对象独立存在，ORM 完全不管其行数据；ref_to 只管 fk 字段值，ref_many 只管中间表。
 
+## 1.5 ref_many 关联管理 API（GORM v2 风格六件套）
+
+当前 ref_many 只有 `loadX(tx)`（JOIN 查询）与 `getX()`（返回字段值），中间表操作需手写 SQL。本批新增实体方法六件套（须在事务内调用，均要求 `tx: Tx` 参数）：
+
+| 方法 | 签名 | 行为 |
+|---|---|---|
+| `appendX` | `appendTags(tx, tag: Tag): Post` / `appendTags(tx, tags: Array<Tag>): Post` | 追加关联（INSERT 中间表） |
+| `replaceX` | `replaceTags(tx, tags: Array<Tag>): Post` | 全量替换（清旧中间表 + 插新） |
+| `deleteX` | `deleteTags(tx, tag: Tag): Post` / `deleteTags(tx, tags: Array<Tag>): Post` | 移除指定关联（DELETE 中间表对应行） |
+| `clearX` | `clearTags(tx): Post` | 清空全部关联 |
+| `countX` | `countTags(tx): Int64` | 中间表计数 |
+| `loadX` | `loadTags(tx): Array<Tag>`（已有） | 查询关联 |
+
+- 单对象/数组双重重载（append / delete）
+- 全部返回链式 `this`（除 count 返回 Int64、load 返回数组），与现有 `addX`/`clearX` 链式风格一致
+- 目标对象 id 为空（新对象）时：append/delete 抛异常（「先保存目标对象以获取 id」），防静默丢关联
+- 中间表写入必须原子：方法强制 `tx` 参数，不在内部开事务
+- 级联保存的 ref_many 重建逻辑复用本套方法的中间表操作（INSERT/DELETE），两者并存
+
 ### ref_to fk 维护细节
 
 `@Ref[User, user_id]` 声明在 Post 上，fk 字段是 `user_id`。级联时：
@@ -132,9 +151,20 @@ delete 顺序：
 - 乐观锁：级联 update 子对象带 version 校验
 - 软删：子实体有 deleted_at → 级联软删
 
+### ref_many 六件套测试
+
+- `appendX`：单对象追加 + 数组批量追加，中间表 INSERT 正确
+- `replaceX`：先清旧再插新，结果与列表一致
+- `deleteX`：单对象 + 数组删除，DELETE 中间表对应行
+- `clearX`：清空中间表
+- `countX`：计数正确
+- 目标 id 为空（新对象）时 append/delete 抛异常
+- 双库各跑一遍（MySQL / PG），与现有 ServiceChecks 模式一致
+
 ## 8. 不做的（YAGNI）
 
 - 列表差集全量同步（update 时列表移除不自动删库）
 - 批处理级联（batchSave/batchUpdate 不级联）
 - ref_to 被引对象的任何行操作（save/update/delete 源表）
 - 级联保存时的显式配置项（`@Cascade` 注解等）——本设计为固定语义，符合 has/ref 区分
+- ref_many 六件套之外的 GORM 特性（如 Association 链式上下文、带条件 count、预加载配置）
