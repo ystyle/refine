@@ -83,3 +83,17 @@ rf.transaction { tx: Tx =>
 - 冲突判定列为主键；String 主键为空时自动生成（同 `save`）
 - SQLite 方言不支持 upsert，调用时抛出异常
 - 触发 `TxBeforeCreate` / `TxAfterCreate` 钩子
+
+## 隔离级别
+
+事务隔离级别由 `Refine.transaction(level)` 在事务开始前设置：
+
+```cangjie
+rf.transaction(IsolationLevel.Serializable) { tx: Tx =>
+    // 当前事务使用 Serializable 隔离级别
+}
+```
+
+- `IsolationLevel` 枚举：`ReadUncommitted` / `ReadCommitted` / `RepeatableRead` / `Serializable`
+- 通过驱动原生属性生效，MySQL / PostgreSQL 均支持；SQLite 不支持，调用抛异常
+- 不带隔离级别的 `transaction { }` 使用数据库默认隔离级别

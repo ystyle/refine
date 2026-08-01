@@ -61,6 +61,22 @@ let result = rf.transaction { tx: Tx =>
 - 抛出异常 → `rollback()` + 继续传播异常
 - 连接在事务结束后自动 `close()`
 
+#### transaction(level, action)
+
+带隔离级别的事务重载，语义与 `transaction { }` 相同，仅事务开始前额外设置隔离级别：
+
+```cangjie
+let result = rf.transaction(IsolationLevel.Serializable) { tx: Tx =>
+    tx.save(something)
+    42  // 返回值
+}
+```
+
+- `IsolationLevel` 枚举：`ReadUncommitted` / `ReadCommitted` / `RepeatableRead` / `Serializable`
+- 设置通过驱动原生属性生效，MySQL / PostgreSQL 均支持
+- SQLite 不支持设置隔离级别，调用抛异常
+- 不带隔离级别的 `transaction { }` 保持数据库默认
+
 ### hook()
 
 注册生命周期钩子。

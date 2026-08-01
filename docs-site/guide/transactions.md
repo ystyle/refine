@@ -69,3 +69,18 @@ rf.transaction { tx: Tx =>
     // Alice 仍然存在
 }
 ```
+
+## 事务隔离级别
+
+`transaction(level, action)` 重载可指定隔离级别：
+
+```cangjie
+rf.transaction(IsolationLevel.Serializable) { tx: Tx =>
+    // 事务内所有操作在 Serializable 隔离级别下执行
+}
+```
+
+- `IsolationLevel` 枚举：`ReadUncommitted` / `ReadCommitted` / `RepeatableRead` / `Serializable`
+- 不带隔离级别的 `transaction { }` 保持数据库默认
+- 设置通过驱动原生属性生效，MySQL / PostgreSQL 均支持
+- SQLite 不支持设置隔离级别，调用抛异常

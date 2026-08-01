@@ -86,6 +86,7 @@ class User {
 | `Float64` / `Float32` | `Float` | `REAL` | `DOUBLE` | `DOUBLE PRECISION` |
 | `String` | `Text` | `TEXT` | `VARCHAR(255)` | `VARCHAR(255)` |
 | `Bool` | `Bool` | `INTEGER` | `TINYINT(1)` | `BOOLEAN` |
+| `DateTime` | `Timestamp` | `TEXT` | `DATETIME(6)` | `TIMESTAMP` |
 
 ## 自定义存储类型
 
@@ -190,6 +191,54 @@ class Tag {
 ```
 
 - `has_one` / `has_many`：被关联物外键指向你的 id（外键在目标表），你拥有其生命周期
+
+## 审计字段（created_at / updated_at）
+
+实体声明 `created_at` / `updated_at`（`DateTime` 类型）字段即自动启用审计，与软删除的字段名约定一致，零配置：
+
+```cangjie
+import std.time.DateTime
+
+@Refine
+class Note {
+    var id: Int64 = 0
+    var content: String = ""
+    var created_at: DateTime = DateTime.now()
+    var updated_at: DateTime = DateTime.now()
+}
+```
+
+行为说明：
+
+- `Tx.save` / `Tx.batchSave`：插入时自动注入 `created_at` 与 `updated_at`（`DateTime.now()`）
+- `Tx.update` / `Tx.batchUpdate` / `Tx.upsert` 冲突更新侧：自动刷新 `updated_at`，`created_at` 保持不变
+- 注入发生在钩子之前，`TxBeforeCreate` / `TxBeforeUpdate` 钩子中可见已填好的值
+- 若需自定义时间，在钩子中覆盖即可
+- **注意**：`updateWhere` / `deleteWhere`（条件批量操作）不经过实体映射层，不自动填充，由用户自行处理
+
+## 乐观锁（@Version）
+
+`@Version` 注解标记实体的 `Int64` 版本字段，`Tx.update` 时自动校验版本冲突：
+
+```cangjie
+@Refine
+class Note {
+    var id: Int64 = 0
+    var content: String = ""
+    @Version
+    var version: Int64 = 0
+}
+```
+
+行为说明：
+
+- 字段必须为 `Int64`，且每个实体至多一个 `@Version` 字段（违反则编译报错）
+- `Tx.save` / `Tx.batchSave` / `Tx.upsert` 插入时 version 为 0 自动置 1
+- `Tx.update`：SQL 的 WHERE 追加 `AND version = ?`，更新成功则 version 自动 +1（内存与数据库同步）；若匹配行数为 0（版本过期或行被删）抛 `OptimisticLockException`
+- `Tx.batchUpdate`：version 参与 CASE 更新（值取 version+1），执行后若匹配行数不足抛 `OptimisticLockException`
+- `Tx.upsert` 冲突更新侧：version 自动 +1
+- **注意**：`updateWhere` / `deleteWhere` 不校验 version
+- **注意**：`tx.update` 前若查询了实体，建议在同一个事务内完成读-改-写，避免长时间持有旧 version
 
 ## 软删除
 

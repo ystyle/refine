@@ -39,6 +39,7 @@ rf.transaction { tx: Tx =>
 - **String 主键（UUID/ULID）回写**：插入前预生成所有 ID，批量插入后实体已携带完整 id
 - **Int64 非自增主键（`@Id[auto, false]`）回写**：插入前按需生成（id 为 0 时），可搭配 Sonyflake 雪花 ID 替代数据库自增
 - 支持 `TxBeforeCreate` / `TxAfterCreate` 钩子（每个实体独立触发）
+- 含审计字段（`created_at` / `updated_at`）的实体插入时自动填充，详见 [实体定义 - 审计字段](./entities.md#审计字段-created-at-updated-at)
 - 空数组直接返回，不执行 SQL
 
 ### Upsert
@@ -214,6 +215,8 @@ rf.transaction { tx: Tx =>
 }
 ```
 
+> **乐观锁**：若实体含 `@Version` 字段，`tx.update` 自动在 WHERE 追加版本校验并递增 version，版本过期（或行被删）时抛 `OptimisticLockException`，详见 [实体定义 - 乐观锁](./entities.md#乐观锁-version)。建议在同一个事务内完成读-改-写。
+
 ### 批量更新
 
 `tx.batchUpdate(entities)` 用**单条 SQL** 更新多行不同值：
@@ -236,6 +239,8 @@ rf.transaction { tx: Tx =>
 - 复合主键支持：`CASE WHEN pk1 = ? AND pk2 = ? THEN ? ... WHERE (pk1, pk2) IN ((?, ?), ...)`
 - 空数组直接返回；全主键表（无更新列）抛出异常
 - 触发 `TxBeforeUpdate` / `TxAfterUpdate` 钩子（每个实体独立触发）
+- 含审计字段的实体自动刷新 `updated_at`，详见 [实体定义 - 审计字段](./entities.md#审计字段-created-at-updated-at)
+- 含 `@Version` 字段的实体，version 以 CASE 参与更新（值取 version+1），匹配行数不足时抛 `OptimisticLockException`，详见 [实体定义 - 乐观锁](./entities.md#乐观锁-version)
 - 参数量为 2 × 列数 × 行数 + 主键数，大批量时注意 SQL 长度（业界同款方案，参考 GORM）
 
 ### 条件更新
