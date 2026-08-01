@@ -1382,7 +1382,8 @@ func buildRowMapper(className: String, cd: ClassDecl, rels: ArrayList<RelInfo>, 
             let tmpName = Token(TokenKind.IDENTIFIER, "tmp")
             let targetType = Token(TokenKind.IDENTIFIER, r.target)
             let backingIdent = Token(TokenKind.IDENTIFIER, "_" + r.fieldName)
-            // ref_to 的 fk 字段在当前实体上，类型已知；has_one 的 fk 在目标表，保持 Int64
+            // ref_to 的 fk 字段在当前实体上，类型可推导（支持 String-pk 目标）；
+            // has_one 的 fk 在目标表、目标 pk 类型宏层无法跨类内省，保持 Int64（has_one→String-pk 目标暂不支持）
             let idTypeTok = if (r.kind == "ref_to" && getDeclFieldType(cd, r.by) == "String") {
                 Token(TokenKind.IDENTIFIER, "String")
             } else {
@@ -1763,11 +1764,13 @@ func buildCascadeMethods(className: String, rels: ArrayList<RelInfo>, fields: Ar
                         if (this.$(modifiedTok)) {
                             for ($(childTok) in this.$(fieldTok)) {
                                 $(childTok).$(byTok) = this.id
-                                let anyId: Any = $(childTok).id
-                                match (anyId) {
-                                    case v: Int64 => if (v != 0) { tx.update($(childTok)) } else { tx.save($(childTok)) }
-                                    case v: String => if (v != "") { tx.update($(childTok)) } else { tx.save($(childTok)) }
-                                    case _ => tx.save($(childTok))
+                                if (!visitedContains(visited, $(childTok))) {
+                                    let anyId: Any = $(childTok).id
+                                    match (anyId) {
+                                        case v: Int64 => if (v != 0) { tx.update($(childTok)) } else { tx.save($(childTok)) }
+                                        case v: String => if (v != "") { tx.update($(childTok)) } else { tx.save($(childTok)) }
+                                        case _ => tx.save($(childTok))
+                                    }
                                 }
                             }
                         }
@@ -1779,11 +1782,13 @@ func buildCascadeMethods(className: String, rels: ArrayList<RelInfo>, fields: Ar
                             match (this.$(fieldTok)) {
                                 case Some($(subTok)) =>
                                     $(subTok).$(byTok) = this.id
-                                    let anyId: Any = $(subTok).id
-                                    match (anyId) {
-                                        case v: Int64 => if (v != 0) { tx.update($(subTok)) } else { tx.save($(subTok)) }
-                                        case v: String => if (v != "") { tx.update($(subTok)) } else { tx.save($(subTok)) }
-                                        case _ => tx.save($(subTok))
+                                    if (!visitedContains(visited, $(subTok))) {
+                                        let anyId: Any = $(subTok).id
+                                        match (anyId) {
+                                            case v: Int64 => if (v != 0) { tx.update($(subTok)) } else { tx.save($(subTok)) }
+                                            case v: String => if (v != "") { tx.update($(subTok)) } else { tx.save($(subTok)) }
+                                            case _ => tx.save($(subTok))
+                                        }
                                     }
                                 case None => ()
                             }
@@ -1815,19 +1820,20 @@ func buildCascadeMethods(className: String, rels: ArrayList<RelInfo>, fields: Ar
     )))
 
     // cascadeDelete：先递归删子（has 系）→ 清中间表（ref_many）
+    // 不依赖内存关联列表：has 系子对象通过 loadX(tx) 从库查询（含孙对象递归），再 tx.delete 逐个删
     var deleteBody = Tokens()
     for (pass in 0..2) {
         for (r in rels) {
             let isHas = (r.kind == "has_many" || r.kind == "has_one")
             let wantHas = (pass == 0)
             if (isHas != wantHas) { continue }
-            let fieldTok = Token(TokenKind.IDENTIFIER, r.fieldName)
+            let loadName = Token(TokenKind.IDENTIFIER, "load" + upperFirstLetter(r.fieldName))
             if (r.kind == "has_many" || r.kind == "has_one") {
                 if (deleteBody.size > 0) { deleteBody = deleteBody + Token(TokenKind.NL) + Token(TokenKind.NL) }
                 if (r.kind == "has_many") {
                     let childTok = Token(TokenKind.IDENTIFIER, "child")
                     deleteBody = deleteBody + quote(
-                        for ($(childTok) in this.$(fieldTok)) {
+                        for ($(childTok) in this.$(loadName)(tx)) {
                             $(childTok).cascadeDelete(tx, visited)
                             tx.delete($(childTok))
                         }
@@ -1835,7 +1841,7 @@ func buildCascadeMethods(className: String, rels: ArrayList<RelInfo>, fields: Ar
                 } else {
                     let subTok = Token(TokenKind.IDENTIFIER, "sub")
                     deleteBody = deleteBody + quote(
-                        match (this.$(fieldTok)) {
+                        match (this.$(loadName)(tx)) {
                             case Some($(subTok)) => $(subTok).cascadeDelete(tx, visited); tx.delete($(subTok))
                             case None => ()
                         }

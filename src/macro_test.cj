@@ -179,6 +179,16 @@ public class UserWithRel {
     var profile: Option<ProfileWithRel> = None
 }
 
+@Refine
+public class CategoryWithRel {
+    var id: Int64 = 0
+    var name: String = ""
+    var parent_id: Int64 = 0
+
+    @Rel[has_many, CategoryWithRel, parent_id]
+    var children: ArrayList<CategoryWithRel> = ArrayList<CategoryWithRel>()
+}
+
 class HookFlag {
     var called: Bool = false
     public init() {}
@@ -218,6 +228,7 @@ class CaptureStatement <: SqlStatement {
     public var mockLastInsertId: Int64 = 0
     public var mockRowCount: Int64 = 0
     public var queryResult: QueryResult = MockQueryResult()
+    public var queryResultQueue: ArrayList<QueryResult> = ArrayList<QueryResult>()
     public var capturedSetValues: ArrayList<Any> = ArrayList<Any>()
 
     public func close(): Unit {}
@@ -225,8 +236,15 @@ class CaptureStatement <: SqlStatement {
     public prop parameterColumnInfos: Array<ColumnInfo> { get() { _parameterColumnInfos } }
     private var _parameterColumnInfos: Array<ColumnInfo> = []
 
-    public func query(): QueryResult { queryResult }
-    public func query(_params: Array<SqlDbType>): QueryResult { queryResult }
+    public func query(): QueryResult { dequeueQueryResult() }
+    public func query(_params: Array<SqlDbType>): QueryResult { dequeueQueryResult() }
+
+    private func dequeueQueryResult(): QueryResult {
+        if (queryResultQueue.size > 0) {
+            return queryResultQueue.remove(at: 0)
+        }
+        queryResult
+    }
 
     public func set<T>(index: Int, value: T): Unit {
         capturedSetValues.add(value)
@@ -1907,21 +1925,143 @@ public class CascadeTraversalTest {
     }
 
     @TestCase
-    public func testCascadeDeleteChildrenThenJunction(): Unit {
+    public func testCascadePostSaveSkipsVisitedChild(): Unit {
         let conn = CaptureConnection()
         let tx = Tx(conn)
         let p = PostWithRel()
         p.id = 5
         let c = Comment()
-        c.id = 9
-        p.comments.add(c)
-        let t = Tag()
-        t.id = 7
-        p.tags.add(t)
+        c.body = "x"
+        let list = ArrayList<Comment>()
+        list.add(c)
+        p.comments = list
+        let visited = ArrayList<Object>()
+        visited.add(c)
+        p.cascadePostSave(tx, visited)
+        @Expect(conn.stmt.capturedSqlHistory.size, 0)
+        @Expect(c.post_id, 5)
+    }
+
+    @TestCase
+    public func testCascadePostSaveHasOneSkipsVisitedChild(): Unit {
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        let u = UserWithRel()
+        u.id = 3
+        let pr = ProfileWithRel()
+        pr.bio = "b"
+        u.profile = Some(pr)
+        let visited = ArrayList<Object>()
+        visited.add(pr)
+        u.cascadePostSave(tx, visited)
+        @Expect(conn.stmt.capturedSqlHistory.size, 0)
+        @Expect(pr.user_id, 3)
+    }
+
+    @TestCase
+    public func testCascadeCycleSaveNoDuplicateInsert(): Unit {
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        let a = CategoryWithRel()
+        a.id = 1
+        let b = CategoryWithRel()
+        let la = ArrayList<CategoryWithRel>()
+        la.add(b)
+        a.children = la
+        let lb = ArrayList<CategoryWithRel>()
+        lb.add(a)
+        b.children = lb
+        let visited = ArrayList<Object>()
+        a.cascadePostSave(tx, visited)
+        b.cascadePostSave(tx, visited)
+        a.cascadePostSave(tx, visited)
+        @Expect(conn.stmt.capturedSqlHistory.size, 1)
+        @Expect(conn.stmt.capturedSqlHistory[0], "INSERT INTO categoryWithRel (name, parent_id) VALUES (?, ?)")
+        @Expect(capturedInt64(conn.stmt.capturedSetValues, 1), 1)
+    }
+
+    @TestCase
+    public func testCascadeDiamondSaveNoDuplicateSharedChild(): Unit {
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        let p = CategoryWithRel()
+        p.id = 1
+        let c1 = CategoryWithRel()
+        let c2 = CategoryWithRel()
+        let d = CategoryWithRel()
+        let lp = ArrayList<CategoryWithRel>()
+        lp.add(c1)
+        lp.add(c2)
+        p.children = lp
+        let l1 = ArrayList<CategoryWithRel>()
+        l1.add(d)
+        c1.children = l1
+        let l2 = ArrayList<CategoryWithRel>()
+        l2.add(d)
+        c2.children = l2
+        let visited = ArrayList<Object>()
+        p.cascadePostSave(tx, visited)
+        c1.cascadePostSave(tx, visited)
+        d.cascadePostSave(tx, visited)
+        c2.cascadePostSave(tx, visited)
+        @Expect(conn.stmt.capturedSqlHistory.size, 3)
+        @Expect(conn.stmt.capturedSqlHistory[0], "INSERT INTO categoryWithRel (name, parent_id) VALUES (?, ?)")
+        @Expect(conn.stmt.capturedSqlHistory[1], "INSERT INTO categoryWithRel (name, parent_id) VALUES (?, ?)")
+        @Expect(conn.stmt.capturedSqlHistory[2], "INSERT INTO categoryWithRel (name, parent_id) VALUES (?, ?)")
+    }
+
+    @TestCase
+    public func testCascadeDeleteChildrenThenJunction(): Unit {
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        let p = PostWithRel()
+        p.id = 5
+        let cols: Array<ColumnInfo> = [MapperMockColumnInfo("id", false), MapperMockColumnInfo("body", false), MapperMockColumnInfo("post_id", false)]
+        conn.stmt.queryResult = MapperMockQueryResult(cols, [Array<Any>(3, {i => if (i == 0) { 9 } else if (i == 1) { "hi" } else { 5 }})])
         p.cascadeDelete(tx, ArrayList<Object>())
+        @Expect(conn.stmt.capturedSqlHistory.size, 3)
+        @Expect(conn.stmt.capturedSqlHistory[0], "SELECT * FROM comment WHERE post_id = ?")
+        @Expect(conn.stmt.capturedSqlHistory[1], "DELETE FROM comment WHERE id = ?")
+        @Expect(conn.stmt.capturedSqlHistory[2], "DELETE FROM post_tags WHERE postWithRel_id = ?")
+        @Expect(capturedInt64(conn.stmt.capturedSetValues, 0), 5)
+        @Expect(capturedInt64(conn.stmt.capturedSetValues, 1), 9)
+    }
+
+    @TestCase
+    public func testCascadeDeleteHasOneViaQuery(): Unit {
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        let u = UserWithRel()
+        u.id = 3
+        let cols: Array<ColumnInfo> = [MapperMockColumnInfo("id", false), MapperMockColumnInfo("bio", false), MapperMockColumnInfo("user_id", false)]
+        conn.stmt.queryResult = MapperMockQueryResult(cols, [Array<Any>(3, {i => if (i == 0) { 7 } else if (i == 1) { "b" } else { 3 }})])
+        u.cascadeDelete(tx, ArrayList<Object>())
         @Expect(conn.stmt.capturedSqlHistory.size, 2)
-        @Expect(conn.stmt.capturedSqlHistory[0], "DELETE FROM comment WHERE id = ?")
-        @Expect(conn.stmt.capturedSqlHistory[1], "DELETE FROM post_tags WHERE postWithRel_id = ?")
+        @Expect(conn.stmt.capturedSqlHistory[0], "SELECT * FROM profileWithRel WHERE user_id = ?")
+        @Expect(conn.stmt.capturedSqlHistory[1], "DELETE FROM profileWithRel WHERE id = ?")
+        @Expect(capturedInt64(conn.stmt.capturedSetValues, 0), 3)
+        @Expect(capturedInt64(conn.stmt.capturedSetValues, 1), 7)
+    }
+
+    @TestCase
+    public func testCascadeDeleteRecursiveGrandchildren(): Unit {
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        let cols: Array<ColumnInfo> = [MapperMockColumnInfo("id", false), MapperMockColumnInfo("name", false), MapperMockColumnInfo("parent_id", false)]
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(cols, [Array<Any>(3, {i => if (i == 0) { 9 } else if (i == 1) { "c" } else { 5 }})]))
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(cols, [Array<Any>(3, {i => if (i == 0) { 12 } else if (i == 1) { "g" } else { 9 }})]))
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(cols, []))
+        let root = CategoryWithRel()
+        root.id = 5
+        root.cascadeDelete(tx, ArrayList<Object>())
+        @Expect(conn.stmt.capturedSqlHistory.size, 5)
+        @Expect(conn.stmt.capturedSqlHistory[0], "SELECT * FROM categoryWithRel WHERE parent_id = ?")
+        @Expect(conn.stmt.capturedSqlHistory[1], "SELECT * FROM categoryWithRel WHERE parent_id = ?")
+        @Expect(conn.stmt.capturedSqlHistory[2], "SELECT * FROM categoryWithRel WHERE parent_id = ?")
+        @Expect(conn.stmt.capturedSqlHistory[3], "DELETE FROM categoryWithRel WHERE id = ?")
+        @Expect(conn.stmt.capturedSqlHistory[4], "DELETE FROM categoryWithRel WHERE id = ?")
+        @Expect(capturedInt64(conn.stmt.capturedSetValues, 3), 12)
+        @Expect(capturedInt64(conn.stmt.capturedSetValues, 4), 9)
     }
 
     @TestCase
@@ -1947,6 +2087,22 @@ public class CascadeTraversalTest {
         c.post = Some(u)
         c.cascadeDelete(tx, ArrayList<Object>())
         @Expect(conn.stmt.capturedSqlHistory.size, 0)
+    }
+
+    @TestCase
+    public func testRowMapperIncludeStringPkRefTo(): Unit {
+        let col1: ColumnInfo = MapperMockColumnInfo("id", false)
+        let col2: ColumnInfo = MapperMockColumnInfo("body", false)
+        let col3: ColumnInfo = MapperMockColumnInfo("post_id", false)
+        let col4: ColumnInfo = MapperMockColumnInfo("post.id", false)
+        let cols: Array<ColumnInfo> = [col1, col2, col3, col4]
+        let row = Array<Any>(4, {i => if (i == 0) { 1 } else if (i == 1) { "hello" } else if (i == 2) { "uuid-9" } else { "uuid-99" }})
+        let result = MapperMockQueryResult(cols, [row])
+        result.next()
+        let cm = buildColumnMap(cols)
+        let e = UuidRefCommentRowMapper(result, cm)
+        @Expect(e.post_id, "uuid-9")
+        @Expect(e.post.getOrThrow().id, "uuid-99")
     }
 }
 
