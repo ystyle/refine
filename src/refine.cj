@@ -55,6 +55,23 @@ public class Refine {
         }
     }
 
+    public func transaction<T>(level: IsolationLevel, action: (Tx) -> T): T {
+        let conn = datasource.connect()
+        let tx = Tx(conn, this, paramOffset)
+        tx.execute(this.dialect.isolationSQL(level), [])
+        tx.begin()
+        try {
+            let result = action(tx)
+            tx.commit()
+            conn.close()
+            return result
+        } catch (e: Exception) {
+            tx.rollback()
+            conn.close()
+            throw e
+        }
+    }
+
     public func getDialect(): Dialect { dialect }
 
     public func getParamOffset(): Int64 { paramOffset }

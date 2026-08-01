@@ -72,6 +72,18 @@ public class RefineTest {
     }
 
     @TestCase
+    public func testTransactionIsolationUnsupported(): Unit {
+        let r = Refine(RMockDS(), SQLiteDialect(), 0)
+        try {
+            r.transaction(IsolationLevel.Serializable) { tx: Tx => 42 }
+            @Fail("expected RefineException for SQLite")
+        } catch (e: RefineException) {
+            @Expect(e.message.contains("isolation"), true)
+        }
+        r.close()
+    }
+
+    @TestCase
     public func testHookRegister(): Unit {
         let r = Refine(RMockDS(), SQLiteDialect(), 0)
         let flag = RFlag()
