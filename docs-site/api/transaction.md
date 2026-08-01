@@ -86,14 +86,4 @@ rf.transaction { tx: Tx =>
 
 ## 隔离级别
 
-事务隔离级别由 `Refine.transaction(level)` 在事务开始前设置：
-
-```cangjie
-rf.transaction(IsolationLevel.Serializable) { tx: Tx =>
-    // 当前事务使用 Serializable 隔离级别
-}
-```
-
-- `IsolationLevel` 枚举：`ReadUncommitted` / `ReadCommitted` / `RepeatableRead` / `Serializable`
-- 通过驱动原生属性生效，MySQL / PostgreSQL 均支持；SQLite 不支持，调用抛异常
-- 不带隔离级别的 `transaction { }` 使用数据库默认隔离级别
+隔离级别在 `Refine.transaction(level, action)` 上设置，见 [Refine API](../api/refine.md) 与 [事务指南](../guide/transactions.md)。

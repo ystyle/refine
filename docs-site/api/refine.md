@@ -66,8 +66,11 @@ let result = rf.transaction { tx: Tx =>
 带隔离级别的事务重载，语义与 `transaction { }` 相同，仅事务开始前额外设置隔离级别：
 
 ```cangjie
+let user = User()
+user.name = "Alice"
+
 let result = rf.transaction(IsolationLevel.Serializable) { tx: Tx =>
-    tx.save(something)
+    tx.save(user)
     42  // 返回值
 }
 ```
