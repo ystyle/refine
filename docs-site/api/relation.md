@@ -109,6 +109,28 @@ LEFT JOIN tags tags ON tags_junction.tag_id = tags.id
 
 中间表约束：`via` 表名对应的中间表必须包含 `sourceTable_id` 和 `targetTable_id` 两列。
 
+### 关联管理方法（六件套）
+
+`@Refine` 宏为每个 `ref_many` 字段生成一套直接操作中间表的实例方法（以 `Post.tags` 为例，方法名 = 动词 + 字段名首字母大写）：
+
+| 方法 | 返回 | 行为 |
+|---|---|---|
+| `appendTags(tx: Tx, t: Tag): Post` | 链式 `this` | `INSERT` 中间表一行 |
+| `appendTags(tx: Tx, arr: Array<Tag>): Post` | 链式 `this` | 批量 `INSERT` |
+| `replaceTags(tx: Tx, arr: Array<Tag>): Post` | 链式 `this` | 清空后重建（`DELETE` 全部 + 批量 `INSERT`） |
+| `deleteTags(tx: Tx, t: Tag): Post` | 链式 `this` | `DELETE` 中间表对应行 |
+| `deleteTags(tx: Tx, arr: Array<Tag>): Post` | 链式 `this` | 批量 `DELETE` |
+| `clearTags(tx: Tx): Post` | 链式 `this` | `DELETE` 中间表全部行 |
+| `countTags(tx: Tx): Int64` | `Int64` | `SELECT COUNT(*)` |
+| `loadTags(tx: Tx): ArrayList<Tag>` | 列表 | JOIN 加载全部关联 |
+
+约定：
+
+- 所有方法**必须传 `tx`**（在事务内执行）
+- 目标 id 为空（Int64 `id == 0` / String `id == ""`）时 `append` / `delete` 抛 `Exception`（`"ref_many <field>: target <Target> has empty id, save it first"`）
+- 除 `countX` / `loadX` 外均返回 `this` 支持链式
+- 直接操作中间表，不修改实体关联列表（与 `loadX`/`getX` 互不干扰）
+
 ## 字段覆盖
 
 `include()` 的第二个参数可以覆盖关联目标返回的字段：

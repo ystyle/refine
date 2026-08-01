@@ -15,6 +15,8 @@ rf.transaction { tx: Tx =>
 // save 后 user.id 自动填充为数据库自增 ID
 ```
 
+> **级联**：`tx.save` 会沿已标记修改的关联字段级联保存子对象（has_many / has_one）并回填 fk，`ref_many` 会重建中间表；`ref_to` 只维护 fk 不动被引对象。详见 [关联 - 级联保存](./relations.md#级联保存)。
+
 ### 批量插入
 
 批量插入多条记录，生成单条 `INSERT ... VALUES (?, ?), (?, ?), ...` SQL：
@@ -41,6 +43,7 @@ rf.transaction { tx: Tx =>
 - 支持 `TxBeforeCreate` / `TxAfterCreate` 钩子（每个实体独立触发）
 - 含审计字段（`created_at` / `updated_at`）的实体插入时自动填充，详见 [实体定义 - 审计字段](./entities.md#审计字段-created-at-updated-at)
 - 空数组直接返回，不执行 SQL
+- **不级联**：`batchSave` 只插入给定实体，不沿关联字段递归（不会级联保存子对象、不会重建 `ref_many` 中间表），需要级联时请逐个 `tx.save()`，详见 [关联 - 级联保存](./relations.md#级联保存)
 
 ### Upsert
 
@@ -217,6 +220,8 @@ rf.transaction { tx: Tx =>
 
 > **乐观锁**：若实体含 `@Version` 字段，`tx.update` 自动在 WHERE 追加版本校验并递增 version，版本过期（或行被删）时抛 [OptimisticLockException](../api/error.md#optimisticlockexception)，详见 [实体定义 - 乐观锁](./entities.md#乐观锁-version)。建议在同一个事务内完成读-改-写。
 
+> **级联**：`tx.update` 会沿已标记修改的关联字段级联更新子对象（子有 id → update、无 id → save），`ref_many` 会按关联列表重建中间表；列表移除不自动删库。详见 [关联 - 级联保存](./relations.md#级联保存)。
+
 ### 批量更新
 
 `tx.batchUpdate(entities)` 用**单条 SQL** 更新多行不同值：
@@ -242,6 +247,7 @@ rf.transaction { tx: Tx =>
 - 含审计字段的实体自动刷新 `updated_at`，详见 [实体定义 - 审计字段](./entities.md#审计字段-created-at-updated-at)
 - 含 `@Version` 字段的实体，version 以 CASE 参与更新（值取 version+1），匹配行数不足时抛 [OptimisticLockException](../api/error.md#optimisticlockexception)，详见 [实体定义 - 乐观锁](./entities.md#乐观锁-version)
 - 参数量为 2 × 列数 × 行数 + 主键数，大批量时注意 SQL 长度（业界同款方案，参考 GORM）
+- **不级联**：`batchUpdate` 只更新给定实体本身，不沿关联字段递归（子对象、`ref_many` 中间表均不处理），需要级联时请逐个 `tx.update()`，详见 [关联 - 级联保存](./relations.md#级联保存)
 
 ### 条件更新
 
@@ -269,6 +275,8 @@ rf.transaction { tx: Tx =>
     tx.delete(user)
 }
 ```
+
+> **级联删除**：`tx.delete` 沿 has 系关联从库查询子对象并级联删除（子对象遵循自身软删/硬删策略），`ref_many` 清空中间表，`ref_to` 不动被引对象。不依赖内存关联列表。详见 [关联 - 级联保存](./relations.md#级联保存)。
 
 ### 条件删除
 
