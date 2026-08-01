@@ -91,6 +91,37 @@ public class PostgreSQLDialectTest {
         @Expect(checkInt(params[1], 18))
     }
 
+    // 回归：单 WhereClause 多谓词（q.filter([a, b]) 数组过滤）必须 AND 拼接，与 SQLite/MySQL 对齐
+    @TestCase
+    public func testRenderFilterArray(): Unit {
+        let dialect = PostgreSQLDialect()
+        let q = Query<Int64>()
+        q.from("users")
+        q.filter([
+            Binary(Column("name"), Eq, Value("Alice")),
+            Binary(Column("age"), Gt, Value(18))
+        ])
+        let (sql, params) = dialect.render(q.stmt)
+        @Expect(sql, "SELECT * FROM \"users\" WHERE \"name\" = $1 AND \"age\" > $2")
+        @Expect(params.size, 2)
+    }
+
+    // 回归：HAVING 多谓词必须 AND 拼接（对齐 renderAndList）
+    @TestCase
+    public func testRenderHavingMultiplePredicates(): Unit {
+        let dialect = PostgreSQLDialect()
+        let q = Query<Int64>()
+        q.from("employees")
+        q.groupBy([Column("dept")])
+        q.having([
+            Binary(FuncCall("COUNT", [Column("id")]), Gt, Value(5)),
+            Binary(Column("dept"), Ne, Value("sales"))
+        ])
+        let (sql, params) = dialect.render(q.stmt)
+        @Expect(sql, "SELECT * FROM \"employees\" GROUP BY \"dept\" HAVING COUNT(\"id\") > $1 AND \"dept\" <> $2")
+        @Expect(params.size, 2)
+    }
+
     @TestCase
     public func testRenderOrderByLimit(): Unit {
         let dialect = PostgreSQLDialect()

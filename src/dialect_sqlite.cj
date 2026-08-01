@@ -38,13 +38,13 @@ public class SQLiteDialect <: Dialect {
                 case WhereClause(predicates) =>
                     let prefix = if (whereAdded) { "AND " } else { "WHERE " }
                     whereAdded = true
-                    whereClause.add(prefix + renderExprList(predicates))
+                    whereClause.add(prefix + renderAndList(predicates))
                 case OrderByClause(fields) =>
                     orderBy.add("ORDER BY " + renderExprList(fields))
                 case GroupByClause(fields) =>
                     groupBy.add("GROUP BY " + renderExprList(fields))
                 case HavingClause(predicates) =>
-                    having.add("HAVING " + renderExprList(predicates))
+                    having.add("HAVING " + renderAndList(predicates))
                 case LimitClause(n) =>
                     limit.add("LIMIT " + n.toString())
                 case OffsetClause(n) =>
@@ -117,6 +117,15 @@ public class SQLiteDialect <: Dialect {
             parts.add(renderExpr(e))
         }
         String.join(parts.toArray(), delimiter: ", ")
+    }
+
+    private func renderAndList(exprs: Array<Expr>): String {
+        if (exprs.size == 0) { return "" }
+        var parts = ArrayList<String>()
+        for (e in exprs) {
+            parts.add(renderExpr(e))
+        }
+        String.join(parts.toArray(), delimiter: " AND ")
     }
 
     private func renderOp(op: BinOp): String {

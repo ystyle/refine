@@ -57,6 +57,38 @@ public class MySQLDialectTest {
         @Expect(params.size, 2)
     }
 
+    // 回归：单 WhereClause 多谓词（q.filter([a, b]) 数组过滤）必须 AND 拼接，
+    // 修复前渲染成 `WHERE a = ? , b = ?` 非法 SQL
+    @TestCase
+    public func testRenderFilterArray(): Unit {
+        let dialect = MySQLDialect()
+        let q = Query<Int64>()
+        q.from("users")
+        q.filter([
+            Binary(Column("name"), Eq, Value("Alice")),
+            Binary(Column("age"), Gt, Value(18))
+        ])
+        let (sql, params) = dialect.render(q.stmt)
+        @Expect(sql, "SELECT * FROM `users` WHERE `name` = ? AND `age` > ?")
+        @Expect(params.size, 2)
+    }
+
+    // 回归：HAVING 多谓词语义与 WHERE 相同（对分组过滤），必须 AND 拼接（对齐 PG renderAndList）
+    @TestCase
+    public func testRenderHavingMultiplePredicates(): Unit {
+        let dialect = MySQLDialect()
+        let q = Query<Int64>()
+        q.from("employees")
+        q.groupBy([Column("dept")])
+        q.having([
+            Binary(FuncCall("COUNT", [Column("id")]), Gt, Value(5)),
+            Binary(Column("dept"), Ne, Value("sales"))
+        ])
+        let (sql, params) = dialect.render(q.stmt)
+        @Expect(sql, "SELECT * FROM `employees` GROUP BY `dept` HAVING COUNT(`id`) > ? AND `dept` <> ?")
+        @Expect(params.size, 2)
+    }
+
     @TestCase
     public func testRenderOrderByLimit(): Unit {
         let dialect = MySQLDialect()
