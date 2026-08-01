@@ -183,4 +183,8 @@ public class MySQLDialect <: Dialect {
     public func initialize(db: DB): Unit {}
 
     public func defaultValueOf(st: StorageType): String { "" }
+
+    public func isolationSQL(level: IsolationLevel): String {
+        "SET TRANSACTION ISOLATION LEVEL " + level.toString()
+    }
 }

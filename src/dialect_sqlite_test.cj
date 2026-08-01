@@ -286,4 +286,14 @@ public class DialectTest {
         let (sql, _) = dialect.render(stmt)
         @Expect(sql, "SELECT \"id\" FROM \"t\" WHERE \"a\" = ? ORDER BY \"id\" LIMIT 3 OFFSET 0")
     }
+
+    @TestCase
+    public func testIsolationSQLThrows(): Unit {
+        let dialect = SQLiteDialect()
+        try {
+            dialect.isolationSQL(IsolationLevel.Serializable)
+            @Fail("should have thrown for SQLite")
+        } catch (e: RefineException) {
+        }
+    }
 }

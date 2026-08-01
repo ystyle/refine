@@ -1,5 +1,20 @@
 package refine
 
+public enum IsolationLevel {
+    | ReadUncommitted | ReadCommitted | RepeatableRead | Serializable
+}
+
+extend IsolationLevel <: ToString {
+    public func toString(): String {
+        match (this) {
+            case ReadUncommitted => "READ UNCOMMITTED"
+            case ReadCommitted => "READ COMMITTED"
+            case RepeatableRead => "REPEATABLE READ"
+            case Serializable => "SERIALIZABLE"
+        }
+    }
+}
+
 public interface Dialect {
     func name(): String
     func render(stmt: Statement): (String, Array<Any>)
@@ -12,6 +27,7 @@ public interface Dialect {
     func migrator(db: DB): Migrator
     func initialize(db: DB): Unit
     func defaultValueOf(st: StorageType): String
+    func isolationSQL(level: IsolationLevel): String
 }
 
 public interface SavepointDialect {

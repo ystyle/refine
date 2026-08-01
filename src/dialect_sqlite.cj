@@ -173,4 +173,8 @@ public class SQLiteDialect <: Dialect {
     public func initialize(db: DB): Unit {}
 
     public func defaultValueOf(st: StorageType): String { "" }
+
+    public func isolationSQL(level: IsolationLevel): String {
+        throw RefineException("SQLite does not support transaction isolation levels")
+    }
 }
