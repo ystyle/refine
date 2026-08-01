@@ -1,11 +1,13 @@
 # Refine ORM — 仓颉编译期类型安全 ORM
 
 ## 仓颉语言
+
 - 语法问题使用 `cangjie_docs` 工具查找，不要猜 API 和语法
 - 在提示语法错误时使用 `cangjie-mem` 加载语言级记忆
 - 包名声明使用 `.` 分隔：`package refine`、`package refine.dialect`
 
 ## 要求
+
 - 每次需要失败的用例，需要添加到单元测试里，沉淀下来
 
 ## 项目结构
@@ -38,10 +40,10 @@ src/
 
 ## 环境配置
 
-使用 `cjvs` 管理仓颉版本。通过 `pty_spawn` 创建 zsh PTY 会话，先执行`cjenv` 加载核心库，再 `eval $(cjvs stdx env zsh)` 加载stdx的`LD_LIBRARY_PATH`环境变量，再执行仓颉命令：
+使用 `cjvs` 管理仓颉版本。通过 `pty_spawn` 创建 zsh PTY 会话，先执行`eval $(cjvs env zsh)` 加载核心库，再 `eval $(cjvs stdx env zsh)` 加载stdx的`LD_LIBRARY_PATH`环境变量，再执行仓颉命令：
 
 ```shell
-cjenv                      # 加载核心库环境变量
+eval $(cjvs env zsh)                     # 加载核心库环境变量
 eval $(cjvs stdx env zsh)  # 配置 LD_LIBRARY_PATH stdx 环境变量（含 stdx）
 cjpm build
 
