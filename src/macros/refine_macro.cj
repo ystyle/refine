@@ -309,8 +309,9 @@ func buildColsStruct(className: String, cd: ClassDecl): Tokens {
     for (i in 0..cd.body.decls.size) {
         match (cd.body.decls[i] as VarDecl) {
             case Some(vd) =>
-                if (!first) { colsFields = colsFields + Token(TokenKind.NL) }
                 let fn = vd.identifier.value
+                if (isGeneratedInternalField(fn)) { continue }
+                if (!first) { colsFields = colsFields + Token(TokenKind.NL) }
                 colsFields = colsFields + quote(
                     public let $(vd.identifier): Col<$(vd.declType)> = Col<$(vd.declType)>($(Token(TokenKind.STRING_LITERAL, fn)))
                 )
@@ -1343,6 +1344,7 @@ func buildRowMapper(className: String, cd: ClassDecl, rels: ArrayList<RelInfo>):
             case Some(vd) =>
                 let fieldTypeStr = vd.declType.toTokens().toString()
                 if (isRelationField(fieldTypeStr)) { continue }
+                if (isGeneratedInternalField(vd.identifier.value)) { continue }
                 if (!first) { assignments = assignments + Token(TokenKind.NL) }
                 let fieldNameLit = Token(TokenKind.STRING_LITERAL, vd.identifier.value)
                 assignments = assignments + Token(TokenKind.IDENTIFIER, "entity")
@@ -1623,6 +1625,7 @@ func buildColumnNamesFunc(className: String, cd: ClassDecl): Tokens {
             case Some(vd) =>
                 let fieldTypeStr = vd.declType.toTokens().toString()
                 if (isRelationField(fieldTypeStr)) { continue }
+                if (isGeneratedInternalField(vd.identifier.value)) { continue }
                 if (!first) { columns = columns + Token(TokenKind.COMMA) }
                 let nameLit = Token(TokenKind.STRING_LITERAL, vd.identifier.value)
                 columns = columns + quote(Col<Any>($(nameLit)))
@@ -1714,6 +1717,55 @@ func buildSchemasFunc(className: String, junctionRelNames: ArrayList<String>): T
     }
 }
 
+// --- Relation Field Rewriting ---
+
+func isGeneratedInternalField(name: String): Bool {
+    name.startsWith("_")
+}
+
+func rewriteRelationFields(cd: ClassDecl, rels: ArrayList<RelInfo>): Unit {
+    let relNames = ArrayList<String>()
+    for (r in rels) { relNames.add(r.fieldName) }
+
+    var i = 0
+    while (i < cd.body.decls.size) {
+        match (cd.body.decls[i] as VarDecl) {
+            case Some(vd) =>
+                let fn = vd.identifier.value
+                if (relNames.contains(fn)) {
+                    let backingTok = Token(TokenKind.IDENTIFIER, "_" + fn)
+                    let modifiedTok = Token(TokenKind.IDENTIFIER, "_" + fn + "Modified")
+                    var backingVarTokens: Tokens
+                    try {
+                        let initToks = vd.expr.toTokens()
+                        backingVarTokens = quote(
+                            private var $(backingTok): $(vd.declType) = $(initToks)
+                        )
+                    } catch (e: Exception) {
+                        backingVarTokens = quote(
+                            private var $(backingTok): $(vd.declType)
+                        )
+                    }
+                    cd.body.decls.remove(at: i)
+                    cd.body.decls.add(VarDecl(backingVarTokens), at: i)
+                    cd.body.decls.add(VarDecl(quote(
+                        public var $(modifiedTok): Bool = false
+                    )), at: i + 1)
+                    cd.body.decls.add(PropDecl(quote(
+                        public mut prop $(vd.identifier): $(vd.declType) {
+                            get() { $(backingTok) }
+                            set(v) { $(backingTok) = v; $(modifiedTok) = true }
+                        }
+                    )), at: i + 2)
+                    i += 3
+                } else {
+                    i++
+                }
+            case _ => i++
+        }
+    }
+}
+
 // --- Main Macro ---
 
 public macro Refine(input: Tokens): Tokens {
@@ -1748,6 +1800,8 @@ public macro Refine(input: Tokens): Tokens {
     let refMessages = getChildMessages("Ref")
     let relMessages = getChildMessages("Rel")
     let mergedRels = mergeAnnotationRels(rels, refMessages, relMessages)
+
+    rewriteRelationFields(classDecl, mergedRels)
 
     let keyExtractorFunc = buildKeyExtractor(className, pkFields)
     let keyExtractorFuncName = Token(TokenKind.IDENTIFIER, className + "KeyFromResult")

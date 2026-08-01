@@ -1556,6 +1556,54 @@ public class VersionedEntityTest {
     }
 }
 
+@Test
+public class RelationFieldRewriteTest {
+    @TestCase
+    public func testModifiedFlagsInitiallyFalse(): Unit {
+        let p = PostWithRel()
+        @Expect(p._authorModified, false)
+        @Expect(p._tagsModified, false)
+        @Expect(p._commentsModified, false)
+    }
+
+    @TestCase
+    public func testSetterSetsModifiedFlag(): Unit {
+        let p = PostWithRel()
+        p.author = Some(User())
+        @Expect(p._authorModified, true)
+
+        let p2 = PostWithRel()
+        p2.tags = ArrayList<Tag>()
+        @Expect(p2._tagsModified, true)
+
+        let p3 = PostWithRel()
+        p3.comments = ArrayList<Comment>()
+        @Expect(p3._commentsModified, true)
+    }
+
+    @TestCase
+    public func testRelationPropValueRoundtrip(): Unit {
+        let p = PostWithRel()
+        let u = User()
+        u.id = 42
+        p.author = Some(u)
+        @Expect(p.author.getOrThrow().id, 42)
+
+        let c = Comment()
+        c.id = 7
+        p.comments.add(c)
+        @Expect(p.comments.size, 1)
+        @Expect(p.comments[0].id, 7)
+    }
+
+    @TestCase
+    public func testScalarFieldsUntouched(): Unit {
+        let p = PostWithRel()
+        p.title = "hello"
+        @Expect(p.title, "hello")
+    }
+}
+
 private func containsInt(arr: ArrayList<Any>, target: Int64): Bool {
     for (i in 0..arr.size) {
         match (arr[i]) {
