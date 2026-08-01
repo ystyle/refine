@@ -57,6 +57,23 @@ public class PostgreSQLDialectTest {
         @Expect(checkInt(params[0], 18))
     }
 
+    // 回归：软删实体 query() 自带 deleted_at 过滤 + 用户追加 filter() 会产生多个 WhereClause，
+    // 必须 AND 连接而非重复 WHERE（修复前生成 `... WHERE deleted_at = $1 WHERE user_id = $2` 语法错误）
+    @TestCase
+    public func testRenderMultipleWhereClauses(): Unit {
+        let dialect = PostgreSQLDialect()
+        let stmt = Statement()
+        stmt.addClause(SelectClause([Column("id")]))
+        stmt.addClause(FromClause("soft_posts"))
+        stmt.addClause(WhereClause([Binary(Column("deleted_at"), Eq, Value(0))]))
+        stmt.addClause(WhereClause([Binary(Column("user_id"), Eq, Value(7))]))
+        let (sql, params) = dialect.render(stmt)
+        @Expect(sql, "SELECT \"id\" FROM \"soft_posts\" WHERE \"deleted_at\" = $1 AND \"user_id\" = $2")
+        @Expect(params.size, 2)
+        @Expect(checkInt(params[0], 0))
+        @Expect(checkInt(params[1], 7))
+    }
+
     @TestCase
     public func testRenderMultipleParams(): Unit {
         let dialect = PostgreSQLDialect()

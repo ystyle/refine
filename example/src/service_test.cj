@@ -34,7 +34,7 @@ var seq: Int64 = 0
 func uid(): String { seq++; seq.toString() }
 
 func initOnce(rf: Refine): Unit {
-    let schemas: Array<TableSchema> = [UserSchema(), ProfileSchema(), PostSchema(), CommentSchema(), TagSchema(), EventSchema(), AuditNoteSchema()]
+    let schemas: Array<TableSchema> = [UserSchema(), ProfileSchema(), PostSchema(), CommentSchema(), TagSchema(), SoftPostSchema(), EventSchema(), AuditNoteSchema()]
     // 每次测试先清空重建，避免残留数据/旧结构干扰
     let m = rf.migrator()
     for (schema in schemas) {
@@ -502,8 +502,10 @@ class ServiceChecks {
     static func junctionCount(rf: Refine, postId: Int64): Int64 {
         let s = rf.session()
         let qr = s.query("SELECT COUNT(*) FROM post_tags WHERE post_id = ?", [postId])
-        qr.next()
-        let n = qr.get<Int64>(0 + rf.getParamOffset())
+        var n: Int64 = 0
+        if (qr.next()) {
+            n = qr.get<Int64>(0 + rf.getParamOffset())
+        }
         qr.close()
         s.close()
         n
@@ -740,7 +742,11 @@ class ServiceChecks {
         @Expect(ServiceChecks.junctionCount(rf, p.id), 2)
     }
 
-    static func cascadeCycleSafety(rf: Refine): Unit {
+    // 深链（User→posts→comments）级联递归正确性。
+    // 注意：此用例是 DAG 深链而非环。环安全性（A↔B 互引 / DB 常驻环）由宏层单元测试锁定
+    // （macro_test.cj:2120 testCascadeDeleteDbCycleTerminates、macro_test.cj:2582 testTxSaveCycleNoDuplicateInsertSharedVisited），
+    // 此处验证真实 DB 下深链 save/delete 的递归与 fk 回填不越界。
+    static func cascadeDeepChain(rf: Refine): Unit {
         let suffix = uid()
         let u = User()
         u.name = "CY_" + suffix
@@ -788,6 +794,84 @@ class ServiceChecks {
         @Expect(Comment.query().using(rf).filter(Comment.col().post_id.anyOf([p1.id, p2.id])).count(), 0)
     }
 
+    // 跨父迁移：b.posts = [p]（p 已有 id）→ 级联 update 回填 p.user_id = b.id
+    static func cascadeMovePosts(rf: Refine): Unit {
+        let suffix = uid()
+        let a = User()
+        a.name = "MA_" + suffix
+        a.email = "ma_" + suffix + "@t.com"
+        let b = User()
+        b.name = "MB_" + suffix
+        b.email = "mb_" + suffix + "@t.com"
+        rf.transaction { tx: Tx =>
+            tx.save(a)
+            tx.save(b)
+        }
+        let p = Post()
+        p.title = "CM_P_" + suffix
+        p.body = "B"
+        p.user_id = a.id
+        rf.transaction { tx: Tx => tx.save(p) }
+        @Expect(p.user_id, a.id)
+        // 整体赋值 b.posts = [p] 触发标记 → tx.update(b) 级联 update 回填新父 fk
+        let arr = ArrayList<Post>()
+        arr.add(p)
+        b.posts = arr
+        rf.transaction { tx: Tx => tx.update(b) }
+        @Expect(p.user_id, b.id)
+        // 回读 DB：p 已归属 b，a 名下无此 post
+        let dbPost = Post.query().using(rf).filter(Post.col().id == p.id).one().getOrThrow()
+        @Expect(dbPost.user_id, b.id)
+        @Expect(Post.query().using(rf).filter(Post.col().user_id == b.id).count(), 1)
+        @Expect(Post.query().using(rf).filter(Post.col().user_id == a.id).count(), 0)
+    }
+
+    // 级联软删：has 系子实体带 deleted_at → 父删除时子实体软删（行保留 deleted_at != 0）
+    static func cascadeSoftDelete(rf: Refine): Unit {
+        let suffix = uid()
+        let u = User()
+        u.name = "SD_" + suffix
+        u.email = "sd_" + suffix + "@t.com"
+        let sp1 = SoftPost()
+        sp1.title = "SD_SP1_" + suffix
+        let sp2 = SoftPost()
+        sp2.title = "SD_SP2_" + suffix
+        let sps = ArrayList<SoftPost>()
+        sps.add(sp1)
+        sps.add(sp2)
+        u.softPosts = sps
+        let p = Post()
+        p.title = "SD_P_" + suffix
+        p.body = "B"
+        let ps = ArrayList<Post>()
+        ps.add(p)
+        u.posts = ps
+        // save 后断言软删实体正常落库（deleted_at = 0 可被 ORM 查询）
+        rf.transaction { tx: Tx => tx.save(u) }
+        @Expect(sp1.id > 0, true)
+        @Expect(sp2.id > 0, true)
+        @Expect(SoftPost.query().using(rf).filter(SoftPost.col().user_id == u.id).count(), 2)
+        // 级联删除：物理删实体物理删，软删实体软删
+        rf.transaction { tx: Tx => tx.delete(u) }
+        @Expect(User.query().using(rf).filter(User.col().id == u.id).count(), 0)
+        @Expect(Post.query().using(rf).filter(Post.col().user_id == u.id).count(), 0)
+        // ORM 查询默认过滤 deleted_at = 0 → 软删后查不到
+        @Expect(SoftPost.query().using(rf).filter(SoftPost.col().user_id == u.id).count(), 0)
+        // 原始 SQL 确认行仍存在且已标记删除
+        let s = rf.session()
+        let qr1 = s.query("SELECT COUNT(*) FROM soft_posts WHERE user_id = ?", [u.id])
+        var total: Int64 = 0
+        if (qr1.next()) { total = qr1.get<Int64>(0 + rf.getParamOffset()) }
+        qr1.close()
+        let qr2 = s.query("SELECT COUNT(*) FROM soft_posts WHERE user_id = ? AND deleted_at != 0", [u.id])
+        var softDeleted: Int64 = 0
+        if (qr2.next()) { softDeleted = qr2.get<Int64>(0 + rf.getParamOffset()) }
+        qr2.close()
+        s.close()
+        @Expect(total, 2)
+        @Expect(softDeleted, 2)
+    }
+
     static func cascadeLoadedThenUpdateNoCascade(rf: Refine): Unit {
         let suffix = uid()
         let u = User()
@@ -823,9 +907,17 @@ class ServiceChecks {
         pf.withPosts = true
         let loaded = UserRepo.findOne(rf, pf).getOrThrow()
         loaded.name = "NC_" + suffix + "_upd"
+        // 加固：向已加载列表 in-place add 一个未持久化 post（经 getter 拿到的同一引用，
+        // 不会走 prop setter，_postsModified 仍为 false）。若级联被误触发，
+        // detachedPost(id=0) 会被 saveCascade 落库 → 下方 DB 查询断言失败。
+        let detachedPost = Post()
+        detachedPost.title = "NC_DETACHED_" + suffix
+        detachedPost.body = "B0"
+        loaded.posts.add(detachedPost)
         rf.transaction { tx: Tx => tx.update(loaded) }
         @Expect(User.query().using(rf).filter(User.col().id == u.id).one().getOrThrow().name, loaded.name)
         @Expect(Post.query().using(rf).filter(Post.col().user_id == u.id).count(), postsBefore)
+        @Expect(Post.query().using(rf).filter(Post.col().title == detachedPost.title).count(), 0)
         @Expect(ServiceChecks.junctionCount(rf, p1.id), junctionBefore)
     }
 }
@@ -951,7 +1043,13 @@ public class MySQLServiceTest {
     public func testCascadeLoadedThenUpdateNoCascade(): Unit { ServiceChecks.cascadeLoadedThenUpdateNoCascade(rf) }
 
     @TestCase
-    public func testCascadeCycleSafety(): Unit { ServiceChecks.cascadeCycleSafety(rf) }
+    public func testCascadeDeepChain(): Unit { ServiceChecks.cascadeDeepChain(rf) }
+
+    @TestCase
+    public func testCascadeMovePosts(): Unit { ServiceChecks.cascadeMovePosts(rf) }
+
+    @TestCase
+    public func testCascadeSoftDelete(): Unit { ServiceChecks.cascadeSoftDelete(rf) }
 }
 
 // ─── PostgreSQL 测试类 ──────────────────────────────────
@@ -1075,5 +1173,11 @@ public class PostgreSQLServiceTest {
     public func testCascadeLoadedThenUpdateNoCascade(): Unit { ServiceChecks.cascadeLoadedThenUpdateNoCascade(rf) }
 
     @TestCase
-    public func testCascadeCycleSafety(): Unit { ServiceChecks.cascadeCycleSafety(rf) }
+    public func testCascadeDeepChain(): Unit { ServiceChecks.cascadeDeepChain(rf) }
+
+    @TestCase
+    public func testCascadeMovePosts(): Unit { ServiceChecks.cascadeMovePosts(rf) }
+
+    @TestCase
+    public func testCascadeSoftDelete(): Unit { ServiceChecks.cascadeSoftDelete(rf) }
 }

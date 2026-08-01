@@ -25,6 +25,7 @@ public class MySQLDialect <: Dialect {
         var updateSQL = ""
         var deleteSQL = ""
         var hasLock = false
+        var whereAdded = false
         for (i in 0..stmt.clauses.size) {
             let clause = stmt.clauses[i]
             match (clause) {
@@ -35,7 +36,9 @@ public class MySQLDialect <: Dialect {
                 case FromClause(table) =>
                     from.add("FROM " + quoteIdentifier(table))
                 case WhereClause(predicates) =>
-                    whereClause.add("WHERE " + renderExprList(predicates))
+                    let prefix = if (whereAdded) { "AND " } else { "WHERE " }
+                    whereAdded = true
+                    whereClause.add(prefix + renderExprList(predicates))
                 case OrderByClause(fields) =>
                     orderBy.add("ORDER BY " + renderExprList(fields))
                 case GroupByClause(fields) =>

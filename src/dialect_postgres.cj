@@ -27,6 +27,7 @@ public class PostgreSQLDialect <: Dialect {
         var updateSQL = ""
         var deleteSQL = ""
         var hasLock = false
+        var whereAdded = false
         for (i in 0..stmt.clauses.size) {
             let clause = stmt.clauses[i]
             match (clause) {
@@ -37,7 +38,9 @@ public class PostgreSQLDialect <: Dialect {
                 case FromClause(table) =>
                     from.add("FROM " + quoteIdentifier(table))
                 case WhereClause(predicates) =>
-                    whereClause.add("WHERE " + renderAndList(predicates))
+                    let prefix = if (whereAdded) { "AND " } else { "WHERE " }
+                    whereAdded = true
+                    whereClause.add(prefix + renderAndList(predicates))
                 case OrderByClause(fields) =>
                     orderBy.add("ORDER BY " + renderExprList(fields))
                 case GroupByClause(fields) =>

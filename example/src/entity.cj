@@ -19,8 +19,21 @@ public class User {
     @Rel[has_many, Post, user_id]
     var posts: ArrayList<Post> = ArrayList<Post>()
 
+    @Rel[has_many, SoftPost, user_id]
+    var softPosts: ArrayList<SoftPost> = ArrayList<SoftPost>()
+
     @Rel[has_one, Profile, user_id]
     var profile: Option<Profile> = None
+}
+
+@Refine
+@Table["soft_posts"]
+public class SoftPost {
+    var id: Int64 = 0
+    var title: String = ""
+    var user_id: Int64 = 0
+    @Field[Integer]
+    var deleted_at: Int64 = 0
 }
 
 @Refine
