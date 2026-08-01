@@ -45,12 +45,16 @@
 `@Ref[User, user_id]` 声明在 Post 上，fk 字段是 `user_id`。级联时：
 
 ```
-entity.author = Some(u) 且 u.id != 0  → entity.user_id = u.id
-entity.author = None                 → entity.user_id = 0（数值）/ ""（String）
-entity.author = Some(u) 且 u.id == 0 → 报错？还是回填后不管？
+entity.author = Some(u) 且 u.id != 0  → entity.user_id = u.id（回填）
+entity.author = Some(u) 且 u.id == 0  → entity.user_id = 0 / ""（视为清空）
+entity.author = None                 → entity.user_id = 0 / ""（清空）
 ```
 
-**决策**：`Some(u)` 且 `u.id != 0` → 回填 `user_id`。`Some(u)` 且 `u.id == 0` → 抛出异常「ref_to 关联对象必须先手动保存以获得 id」（ORM 不代为 insert 源表）。`None` → fk 清零。
+**决策**：`Some(u)` 且 `u.id != 0` → 回填 `user_id`。`Some(u)` 且 `u.id == 0` → **视为清空 fk**（与 `None` 等价，数值→0、String→空字符）。`None` → 清空 fk。
+
+**JSON 场景考虑**：HTTP + JSON 下 `null` 与 `0` 常常无法区分——许多 JSON 反序列化库会忽略 `null` 字段（字段保持默认 `None`），客户端想表达「清空关联」时只能显式传 `0`（或空字符串）。因此 **`u.id == 0` 不再抛异常，而是与 `None` 统一为「清空」**，保证 JSON 场景语义正确（同 Go/GORM 的 JSON 行为）。ORM 仍不代为 insert 源表：用户要建立新引用，需先手动 `tx.save` 目标对象拿到 id 再回填。
+
+> 语义统一：`None` 与 `Some(0)` 均表示「清除该 fk 引用」。若未来需要区分「未设置」与「显式清除」，由字段修改标记（第 4 节）承担——标记 false（未赋值）时级联不处理该字段，标记 true 且 fk 为 0/空时清空。
 
 ### ref_many 中间表重建
 
