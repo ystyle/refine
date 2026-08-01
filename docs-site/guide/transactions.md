@@ -25,7 +25,9 @@ rf.transaction { tx: Tx =>
 ```cangjie
 try {
     rf.transaction { tx: Tx =>
-        tx.save(something)
+        let user = User()
+        user.name = "Alice"
+        tx.save(user)
         throw Exception("事务回滚")
         // 不会执行到这里
     }
