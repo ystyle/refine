@@ -302,7 +302,7 @@ func typeNameToStorageType(typeName: String): String {
     } else { "StorageType.Text" }
 }
 
-func buildColsStruct(className: String, cd: ClassDecl): Tokens {
+func buildColsStruct(className: String, cd: ClassDecl, internalNames: ArrayList<String>): Tokens {
     let colsName = Token(TokenKind.IDENTIFIER, className + "Cols")
     var colsFields = Tokens()
     var first = true
@@ -310,7 +310,7 @@ func buildColsStruct(className: String, cd: ClassDecl): Tokens {
         match (cd.body.decls[i] as VarDecl) {
             case Some(vd) =>
                 let fn = vd.identifier.value
-                if (isGeneratedInternalField(fn)) { continue }
+                if (isGeneratedInternalField(fn, internalNames)) { continue }
                 if (!first) { colsFields = colsFields + Token(TokenKind.NL) }
                 colsFields = colsFields + quote(
                     public let $(vd.identifier): Col<$(vd.declType)> = Col<$(vd.declType)>($(Token(TokenKind.STRING_LITERAL, fn)))
@@ -1327,7 +1327,7 @@ func buildTxDeleteExtend(className: String): Tokens {
 
 // --- RowMapper ---
 
-func buildRowMapper(className: String, cd: ClassDecl, rels: ArrayList<RelInfo>): Tokens {
+func buildRowMapper(className: String, cd: ClassDecl, rels: ArrayList<RelInfo>, internalNames: ArrayList<String>): Tokens {
     let cn = Token(TokenKind.IDENTIFIER, className)
     let funcName = Token(TokenKind.IDENTIFIER, className + "RowMapper")
     var assignments = Tokens()
@@ -1344,7 +1344,7 @@ func buildRowMapper(className: String, cd: ClassDecl, rels: ArrayList<RelInfo>):
             case Some(vd) =>
                 let fieldTypeStr = vd.declType.toTokens().toString()
                 if (isRelationField(fieldTypeStr)) { continue }
-                if (isGeneratedInternalField(vd.identifier.value)) { continue }
+                if (isGeneratedInternalField(vd.identifier.value, internalNames)) { continue }
                 if (!first) { assignments = assignments + Token(TokenKind.NL) }
                 let fieldNameLit = Token(TokenKind.STRING_LITERAL, vd.identifier.value)
                 assignments = assignments + Token(TokenKind.IDENTIFIER, "entity")
@@ -1615,7 +1615,7 @@ func mergeFieldOverrides(fields: ArrayList<FieldInfo>, fieldMessages: ArrayList<
     result
 }
 
-func buildColumnNamesFunc(className: String, cd: ClassDecl): Tokens {
+func buildColumnNamesFunc(className: String, cd: ClassDecl, internalNames: ArrayList<String>): Tokens {
     let funcName = Token(TokenKind.IDENTIFIER, className + "ColumnNames")
     var columns = Tokens()
     columns = columns + Token(TokenKind.LSQUARE)
@@ -1625,7 +1625,7 @@ func buildColumnNamesFunc(className: String, cd: ClassDecl): Tokens {
             case Some(vd) =>
                 let fieldTypeStr = vd.declType.toTokens().toString()
                 if (isRelationField(fieldTypeStr)) { continue }
-                if (isGeneratedInternalField(vd.identifier.value)) { continue }
+                if (isGeneratedInternalField(vd.identifier.value, internalNames)) { continue }
                 if (!first) { columns = columns + Token(TokenKind.COMMA) }
                 let nameLit = Token(TokenKind.STRING_LITERAL, vd.identifier.value)
                 columns = columns + quote(Col<Any>($(nameLit)))
@@ -1719,8 +1719,17 @@ func buildSchemasFunc(className: String, junctionRelNames: ArrayList<String>): T
 
 // --- Relation Field Rewriting ---
 
-func isGeneratedInternalField(name: String): Bool {
-    name.startsWith("_")
+func buildGeneratedInternalNames(rels: ArrayList<RelInfo>): ArrayList<String> {
+    let names = ArrayList<String>()
+    for (r in rels) {
+        names.add("_" + r.fieldName)
+        names.add("_" + r.fieldName + "Modified")
+    }
+    names
+}
+
+func isGeneratedInternalField(name: String, internalNames: ArrayList<String>): Bool {
+    internalNames.contains(name)
 }
 
 func rewriteRelationFields(cd: ClassDecl, rels: ArrayList<RelInfo>): Unit {
@@ -1802,6 +1811,7 @@ public macro Refine(input: Tokens): Tokens {
     let mergedRels = mergeAnnotationRels(rels, refMessages, relMessages)
 
     rewriteRelationFields(classDecl, mergedRels)
+    let internalNames = buildGeneratedInternalNames(mergedRels)
 
     let keyExtractorFunc = buildKeyExtractor(className, pkFields)
     let keyExtractorFuncName = Token(TokenKind.IDENTIFIER, className + "KeyFromResult")
@@ -1879,7 +1889,7 @@ public macro Refine(input: Tokens): Tokens {
     let schemasTokens = buildSchemasFunc(className, junctionRelNames)
     classDecl.body.decls.add(FuncDecl(schemasTokens))
 
-    let colsStruct = buildColsStruct(className, classDecl)
+    let colsStruct = buildColsStruct(className, classDecl, internalNames)
     let relClass = buildRelClass(className, mergedRels)
     let insertSQLFunc = buildInsertSQLFunc(className, mergedFields, tableName)
     let txSaveExtend = buildTxSaveExtend(className, pkFields, hasClientPk, hasAutoPk, mergedFields)
@@ -1890,10 +1900,10 @@ public macro Refine(input: Tokens): Tokens {
     let updateSQLFunc = buildUpdateSQLFunc(className, mergedFields, tableName, pkFields)
     let txUpdateExtend = buildTxUpdateExtend(className, mergedFields, tableName, pkFields)
     let txUpsertExtend = buildTxUpsertExtend(className, mergedFields, tableName, pkFields)
-    let rowMapper = buildRowMapper(className, classDecl, mergedRels)
+    let rowMapper = buildRowMapper(className, classDecl, mergedRels, internalNames)
     buildRelationMethods(className, mergedRels, classDecl)
     let schemaClass = buildSchemaClass(className, mergedFields, tableName)
-    let columnNamesFunc = buildColumnNamesFunc(className, classDecl)
+    let columnNamesFunc = buildColumnNamesFunc(className, classDecl, internalNames)
     var deleteSQLFunc = buildDeleteSQLFunc(className, tableName, pkFields)
     var txDeleteExtend: Tokens
     if (isSoftDelete) {

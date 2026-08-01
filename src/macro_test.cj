@@ -112,6 +112,15 @@ public class PostWithRel {
     var comments: ArrayList<Comment> = ArrayList<Comment>()
 }
 
+@Refine
+public class UnderscoreFieldEntity {
+    var id: Int64 = 0
+    var _note: String = ""
+
+    @Rel[has_many, Comment, post_id]
+    var comments: ArrayList<Comment> = ArrayList<Comment>()
+}
+
 class HookFlag {
     var called: Bool = false
     public init() {}
@@ -1601,6 +1610,40 @@ public class RelationFieldRewriteTest {
         let p = PostWithRel()
         p.title = "hello"
         @Expect(p.title, "hello")
+    }
+}
+
+@Test
+public class UnderscoreFieldEntityTest {
+    @TestCase
+    public func testUnderscoreFieldInCols(): Unit {
+        let cols = UnderscoreFieldEntity.col()
+        @Expect(cols._note.name, "_note")
+        @Expect(cols.id.name, "id")
+    }
+
+    @TestCase
+    public func testUnderscoreFieldInColumnNames(): Unit {
+        let names = UnderscoreFieldEntityColumnNames()
+        var found = false
+        for (c in names) {
+            if (c.name == "_note") { found = true }
+        }
+        @Expect(found, true)
+        @Expect(names.size, 2)
+    }
+
+    @TestCase
+    public func testUnderscoreFieldMappedByRowMapper(): Unit {
+        let col1: ColumnInfo = MapperMockColumnInfo("id", false)
+        let col2: ColumnInfo = MapperMockColumnInfo("_note", false)
+        let row = Array<Any>(2, {i => if (i == 0) { 42 } else { "internal" }})
+        let result = MapperMockQueryResult([col1, col2], [row])
+        result.next()
+        let cm = buildColumnMap([col1, col2])
+        let e = UnderscoreFieldEntityRowMapper(result, cm)
+        @Expect(e.id, 42)
+        @Expect(e._note, "internal")
     }
 }
 
