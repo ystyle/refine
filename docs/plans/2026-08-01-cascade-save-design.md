@@ -14,12 +14,12 @@
 | 关联 | save/update 级联 | delete 级联 |
 |---|---|---|
 | `has_many` / `has_one`（`@Rel`，拥有，fk 在子表） | 级联存子对象：子有 id → `tx.update`，无 id → `tx.save`；父 id 回填子 fk | **跟随子实体自身策略**：子有 `deleted_at` 字段 → 软删；否则物理删 |
-| `ref_to`（`@Ref[Target, fk]`，引用，fk 在父表） | **只维护 fk**：关联对象 `Some(u)` 且 `u.id != 0` → 把 `u.id` 回填 fk；关联 `None` 或 id 为 0/空 → fk 清零（数值→0，String→空字符）。**完全不管被引对象本身**（不 save/update/delete 源表行） | 不处理 |
-| `ref_many`（`@Ref[Target, via: j]`，多对多，中间表） | **只 CRUD 中间表**：按关联列表重建中间表记录（增删）。**不碰目标表** | **清空该实体的中间表记录** |
+| `ref_to`（`@Ref[Target, fk]`，引用，fk 在父表） | **只维护 fk**：关联对象 `Some(u)` 且 `u.id != 0` → 把 `u.id` 回填 fk；关联 `None` 或 id 为 0/空 → fk 清零（数值→0，String→空字符）。**完全不管被引对象本身**（不 insert/save/update/delete 源表行） | 不处理 |
+| `ref_many`（`@Ref[Target, via: j]`，多对多，中间表） | **只 CRUD 中间表**：按关联列表重建中间表记录（增删）。**不碰目标表**（不 insert/save/update/delete） | **清空该实体的中间表记录** |
 
 规则核心：
 - **has 系（拥有）**：子对象是父的一部分，生命周期跟随父。
-- **ref 系（引用）**：被引对象独立存在，ORM 完全不管其行数据；ref_to 只管 fk 字段值，ref_many 只管中间表。
+- **ref 系（引用）**：被引对象独立存在，ORM **完全不管其源表行数据（含 insert）**——添加源表在现代软件中往往有权限控制（审计、归属、校验），ORM 不应越权；无需权限的场景开发者手动 `tx.save` 即可。ref_to 只管 fk 字段值，ref_many 只管中间表。
 
 ## 1.5 ref_many 关联管理 API（GORM v2 风格六件套）
 
@@ -36,7 +36,7 @@
 
 - 单对象/数组双重重载（append / delete）
 - 全部返回链式 `this`（除 count 返回 Int64、load 返回数组），与现有 `addX`/`clearX` 链式风格一致
-- 目标对象 id 为空（新对象）时：append/delete 抛异常（「先保存目标对象以获取 id」），防静默丢关联
+- 目标对象 id 为空（新对象）时：append/delete 抛异常（「先手动保存目标对象以获取 id」，ORM 不代为 insert 目标表），防静默丢关联
 - 中间表写入必须原子：方法强制 `tx` 参数，不在内部开事务
 - 级联保存的 ref_many 重建逻辑复用本套方法的中间表操作（INSERT/DELETE），两者并存
 
@@ -50,7 +50,7 @@ entity.author = None                 → entity.user_id = 0（数值）/ ""（St
 entity.author = Some(u) 且 u.id == 0 → 报错？还是回填后不管？
 ```
 
-**决策**：`Some(u)` 且 `u.id != 0` → 回填 `user_id`。`Some(u)` 且 `u.id == 0` → 抛出异常「ref_to 关联对象必须先保存以获得 id」（防静默丢引用）。`None` → fk 清零。
+**决策**：`Some(u)` 且 `u.id != 0` → 回填 `user_id`。`Some(u)` 且 `u.id == 0` → 抛出异常「ref_to 关联对象必须先手动保存以获得 id」（ORM 不代为 insert 源表）。`None` → fk 清零。
 
 ### ref_many 中间表重建
 
@@ -165,6 +165,6 @@ delete 顺序：
 
 - 列表差集全量同步（update 时列表移除不自动删库）
 - 批处理级联（batchSave/batchUpdate 不级联）
-- ref_to 被引对象的任何行操作（save/update/delete 源表）
+- ref 系被引对象的**任何**源表操作（save/update/delete/insert 全部不做）——包括 ref_to 和 ref_many 的目标表。原因：现代软件中往源表插入数据往往有权限控制（如审计、归属、校验），ORM 不应越权；无需权限的场景开发者手动 `tx.save` 也不碍事。ref 系仅维护外键与中间表
 - 级联保存时的显式配置项（`@Cascade` 注解等）——本设计为固定语义，符合 has/ref 区分
 - ref_many 六件套之外的 GORM 特性（如 Association 链式上下文、带条件 count、预加载配置）
