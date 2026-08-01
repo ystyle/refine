@@ -20,7 +20,7 @@ public interface Dialect {
     func render(stmt: Statement): (String, Array<Any>)
     func quoteIdentifier(name: String): String
     func hasUpsertSupport(): Bool
-    func upsertSQL(table: String, columns: Array<String>, conflictColumns: Array<String>): String
+    func upsertSQL(table: String, columns: Array<String>, conflictColumns: Array<String>, auditCreateCols: Array<String>, auditUpdateCols: Array<String>, versionCol: String): String
     func dataTypeOf(st: StorageType): String
     func hasReturningSupport(): Bool
     func hasJSONSupport(): Bool

@@ -174,9 +174,19 @@ public class MySQLDialectTest {
     public func testRenderUpsert(): Unit {
         let dialect = MySQLDialect()
         @Expect(dialect.hasUpsertSupport(), true)
-        let sql = dialect.upsertSQL("users", ["id", "name"], ["id"])
+        let sql = dialect.upsertSQL("users", ["id", "name"], ["id"], [], [], "")
         @Expect(sql.contains("ON DUPLICATE KEY UPDATE"), true)
         @Expect(sql.contains("INSERT INTO"), true)
+    }
+
+    @TestCase
+    public func testRenderUpsertVersionAudit(): Unit {
+        let dialect = MySQLDialect()
+        let sql = dialect.upsertSQL("users", ["id", "name", "created_at", "updated_at", "version"], ["id"], ["created_at"], ["updated_at"], "version")
+        @Expect(sql.contains("`version` = `version` + 1"), true)
+        @Expect(sql.contains("`updated_at` = ?"), true)
+        @Expect(sql.contains("`created_at` = VALUES(`created_at`)"), false)
+        @Expect(sql.contains("`name` = VALUES(`name`)"), true)
     }
 
     @TestCase

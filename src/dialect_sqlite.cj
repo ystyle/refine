@@ -148,7 +148,7 @@ public class SQLiteDialect <: Dialect {
 
     public func hasUpsertSupport(): Bool { false }
 
-    public func upsertSQL(_table: String, _columns: Array<String>, _conflictColumns: Array<String>): String { "" }
+    public func upsertSQL(_table: String, _columns: Array<String>, _conflictColumns: Array<String>, _auditCreateCols: Array<String>, _auditUpdateCols: Array<String>, _versionCol: String): String { "" }
 
     public func dataTypeOf(st: StorageType): String {
         match (st) {

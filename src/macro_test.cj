@@ -1347,4 +1347,213 @@ public class VersionedEntityTest {
         @Expect(conn.stmt.capturedSql.contains("version = version + 1"), true)
         @Expect(p.version, 3)
     }
+
+    // ─── Versioned Batch Operations ─────────────────────
+
+    @TestCase
+    public func testTxBatchSaveVersionedPostInjectsAuditAndVersion(): Unit {
+        clearHooks()
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+
+        let p1 = VersionedPost()
+        p1.title = "A"
+        let p2 = VersionedPost()
+        p2.title = "B"
+        tx.batchSave([p1, p2])
+
+        @Expect(p1.version, 1)
+        @Expect(p2.version, 1)
+        @Expect(conn.stmt.capturedSql, "INSERT INTO versionedPost (title, created_at, updated_at, version) VALUES (?, ?, ?, ?), (?, ?, ?, ?)")
+        @Expect(conn.stmt.capturedSetValues.size, 8)
+    }
+
+    @TestCase
+    public func testTxBatchSaveVersionedEventClientPkInjectsVersion(): Unit {
+        clearHooks()
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+
+        let e1 = VersionedEvent()
+        e1.id = "evt-1"
+        e1.name = "E1"
+        let e2 = VersionedEvent()
+        e2.id = "evt-2"
+        e2.name = "E2"
+        tx.batchSave([e1, e2])
+
+        @Expect(e1.version, 1)
+        @Expect(e2.version, 1)
+        @Expect(conn.stmt.capturedSql, "INSERT INTO versionedEvent (id, name, version) VALUES (?, ?, ?), (?, ?, ?)")
+    }
+
+    @TestCase
+    public func testTxBatchSaveVersionedOrderTagInjectsVersion(): Unit {
+        clearHooks()
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+
+        let ot1 = VersionedOrderTag()
+        ot1.order_id = 1
+        ot1.tag_id = 2
+        ot1.quantity = 5
+        let ot2 = VersionedOrderTag()
+        ot2.order_id = 3
+        ot2.tag_id = 4
+        ot2.quantity = 6
+        tx.batchSave([ot1, ot2])
+
+        @Expect(ot1.version, 1)
+        @Expect(ot2.version, 1)
+        @Expect(conn.stmt.capturedSql, "INSERT INTO versionedOrderTag (order_id, tag_id, quantity, version) VALUES (?, ?, ?, ?), (?, ?, ?, ?)")
+    }
+
+    @TestCase
+    public func testTxBatchUpdateVersionedPostVersionCaseAndRefresh(): Unit {
+        clearHooks()
+        let conn = CaptureConnection()
+        conn.stmt.mockRowCount = 2
+        let tx = Tx(conn)
+
+        let p1 = VersionedPost()
+        p1.id = 1
+        p1.title = "A1"
+        p1.version = 1
+        let p2 = VersionedPost()
+        p2.id = 2
+        p2.title = "A2"
+        p2.version = 3
+        tx.batchUpdate([p1, p2])
+
+        @Expect(conn.stmt.capturedSql, "UPDATE versionedPost SET title = CASE id WHEN ? THEN ? WHEN ? THEN ? END, created_at = CASE id WHEN ? THEN ? WHEN ? THEN ? END, version = CASE id WHEN ? THEN ? WHEN ? THEN ? END, updated_at = CASE id WHEN ? THEN ? WHEN ? THEN ? END WHERE id IN (?, ?)")
+        @Expect(conn.stmt.capturedSql.contains("version = CASE"), true)
+        @Expect(conn.stmt.capturedSql.contains("updated_at = CASE"), true)
+        @Expect(p1.version, 2)
+        @Expect(p2.version, 4)
+        @Expect(containsInt(conn.stmt.capturedSetValues, 2), true)
+        @Expect(containsInt(conn.stmt.capturedSetValues, 4), true)
+    }
+
+    @TestCase
+    public func testTxBatchUpdateVersionedPostConflict(): Unit {
+        clearHooks()
+        let conn = CaptureConnection()
+        conn.stmt.mockRowCount = 1
+        let tx = Tx(conn)
+
+        let p1 = VersionedPost()
+        p1.id = 1
+        p1.title = "A"
+        p1.version = 1
+        let p2 = VersionedPost()
+        p2.id = 2
+        p2.title = "B"
+        p2.version = 1
+        try {
+            tx.batchUpdate([p1, p2])
+            @Fail("expected OptimisticLockException")
+        } catch (e: OptimisticLockException) {
+            @Expect(e.entityType, "VersionedPost")
+            @Expect(e.pk, "batch")
+            @Expect(e.expected, 0)
+            @Expect(e.actual, -1)
+        }
+        @Expect(p1.version, 1)
+        @Expect(p2.version, 1)
+    }
+
+    @TestCase
+    public func testTxBatchUpdateVersionedOrderTagVersionCase(): Unit {
+        clearHooks()
+        let conn = CaptureConnection()
+        conn.stmt.mockRowCount = 2
+        let tx = Tx(conn)
+
+        let ot1 = VersionedOrderTag()
+        ot1.order_id = 1
+        ot1.tag_id = 2
+        ot1.quantity = 5
+        ot1.version = 1
+        let ot2 = VersionedOrderTag()
+        ot2.order_id = 3
+        ot2.tag_id = 4
+        ot2.quantity = 6
+        ot2.version = 2
+        tx.batchUpdate([ot1, ot2])
+
+        @Expect(conn.stmt.capturedSql.contains("version = CASE WHEN order_id = ? AND tag_id = ? THEN ? WHEN order_id = ? AND tag_id = ? THEN ? END"), true)
+        @Expect(ot1.version, 2)
+        @Expect(ot2.version, 3)
+        @Expect(containsInt(conn.stmt.capturedSetValues, 2), true)
+        @Expect(containsInt(conn.stmt.capturedSetValues, 3), true)
+    }
+
+    @TestCase
+    public func testTxUpsertVersionedPostMySQL(): Unit {
+        clearHooks()
+        let conn = CaptureConnection()
+        let rf = Refine(RMockDS(), MySQLDialect(), 1)
+        let tx = Tx(conn, rf, 1)
+
+        let p = VersionedPost()
+        p.id = 1
+        p.title = "T"
+        tx.upsert(p)
+
+        @Expect(p.version, 1)
+        @Expect(conn.stmt.capturedSql.contains("INSERT INTO `versionedPost` (`id`, `title`, `created_at`, `updated_at`, `version`)"), true)
+        @Expect(conn.stmt.capturedSql.contains("ON DUPLICATE KEY UPDATE"), true)
+        @Expect(conn.stmt.capturedSql.contains("`version` = `version` + 1"), true)
+        @Expect(conn.stmt.capturedSql.contains("`updated_at` = ?"), true)
+        @Expect(conn.stmt.capturedSql.contains("`created_at` = VALUES(`created_at`)"), false)
+        @Expect(conn.stmt.capturedSetValues.size, 6)
+    }
+
+    @TestCase
+    public func testTxUpsertVersionedPostPostgres(): Unit {
+        clearHooks()
+        let conn = CaptureConnection()
+        let rf = Refine(RMockDS(), PostgreSQLDialect(), 0)
+        let tx = Tx(conn, rf, 0)
+
+        let p = VersionedPost()
+        p.id = 1
+        p.title = "T"
+        tx.upsert(p)
+
+        @Expect(p.version, 1)
+        @Expect(conn.stmt.capturedSql.contains("INSERT INTO \"versionedpost\" (\"id\", \"title\", \"created_at\", \"updated_at\", \"version\")"), true)
+        @Expect(conn.stmt.capturedSql.contains("ON CONFLICT (\"id\") DO UPDATE SET"), true)
+        @Expect(conn.stmt.capturedSql.contains("\"versionedpost\".\"version\" = \"versionedpost\".\"version\" + 1"), true)
+        @Expect(conn.stmt.capturedSql.contains("\"updated_at\" = EXCLUDED.\"updated_at\""), true)
+        @Expect(conn.stmt.capturedSql.contains("\"created_at\" = EXCLUDED.\"created_at\""), false)
+        @Expect(conn.stmt.capturedSetValues.size, 5)
+    }
+
+    @TestCase
+    public func testTxUpsertVersionedEventMySQL(): Unit {
+        clearHooks()
+        let conn = CaptureConnection()
+        let rf = Refine(RMockDS(), MySQLDialect(), 1)
+        let tx = Tx(conn, rf, 1)
+
+        let e = VersionedEvent()
+        e.id = "evt-1"
+        e.name = "E"
+        tx.upsert(e)
+
+        @Expect(e.version, 1)
+        @Expect(conn.stmt.capturedSql.contains("INSERT INTO `versionedEvent` (`id`, `name`, `version`)"), true)
+        @Expect(conn.stmt.capturedSql.contains("`version` = `version` + 1"), true)
+    }
+}
+
+private func containsInt(arr: ArrayList<Any>, target: Int64): Bool {
+    for (i in 0..arr.size) {
+        match (arr[i]) {
+            case v: Int64 => if (v == target) { return true }
+            case _ => ()
+        }
+    }
+    false
 }

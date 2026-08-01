@@ -225,28 +225,33 @@ func findVersionField(fields: ArrayList<FieldInfo>): String {
     ""
 }
 
-func buildAuditCreateTokens(fields: ArrayList<FieldInfo>): Tokens {
+func buildAuditCreateTokens(fields: ArrayList<FieldInfo>, target: String): Tokens {
     let (hasCreatedAt, hasUpdatedAt) = findAuditFields(fields)
+    let targetTok = Token(TokenKind.IDENTIFIER, target)
     var body = Tokens()
-    if (hasCreatedAt) { body = body + quote(entity.created_at = DateTime.now();) }
+    if (hasCreatedAt) { body = body + quote($(targetTok).created_at = DateTime.now();) }
     if (hasUpdatedAt) {
         body = body + Token(TokenKind.NL)
-        body = body + quote(entity.updated_at = DateTime.now();)
+        body = body + quote($(targetTok).updated_at = DateTime.now();)
     }
     body
 }
 
-func buildAuditUpdateTokens(fields: ArrayList<FieldInfo>): Tokens {
+func buildAuditUpdateTokens(fields: ArrayList<FieldInfo>, target: String): Tokens {
     let (_, hasUpdatedAt) = findAuditFields(fields)
-    if (hasUpdatedAt) { quote(entity.updated_at = DateTime.now();) } else { Tokens() }
+    if (hasUpdatedAt) {
+        let targetTok = Token(TokenKind.IDENTIFIER, target)
+        quote($(targetTok).updated_at = DateTime.now();)
+    } else { Tokens() }
 }
 
-func buildVersionInitTokens(fields: ArrayList<FieldInfo>): Tokens {
+func buildVersionInitTokens(fields: ArrayList<FieldInfo>, target: String): Tokens {
     let vname = findVersionField(fields)
     if (vname == "") { return Tokens() }
     let ident = Token(TokenKind.IDENTIFIER, vname)
+    let targetTok = Token(TokenKind.IDENTIFIER, target)
     quote(
-        if (entity.$(ident) == 0) { entity.$(ident) = 1 }
+        if ($(targetTok).$(ident) == 0) { $(targetTok).$(ident) = 1 }
     )
 }
 
@@ -573,8 +578,8 @@ func buildTxSaveExtend(className: String, pkFields: ArrayList<FieldInfo>, hasCli
     let cn = Token(TokenKind.IDENTIFIER, className)
     let insertSQLFuncName = Token(TokenKind.IDENTIFIER, className + "InsertSQL")
     let nameLit = Token(TokenKind.STRING_LITERAL, className)
-    let auditCreate = buildAuditCreateTokens(fields)
-    let versionInit = buildVersionInitTokens(fields)
+    let auditCreate = buildAuditCreateTokens(fields, "entity")
+    let versionInit = buildVersionInitTokens(fields, "entity")
     let preTokens = auditCreate + Token(TokenKind.NL) + versionInit
 
     if (hasClientPk) {
@@ -692,6 +697,9 @@ func buildTxUpsertExtend(className: String, fields: ArrayList<FieldInfo>, tableN
     let nameLit = Token(TokenKind.STRING_LITERAL, className)
     let tableNameLit = Token(TokenKind.STRING_LITERAL, tableName)
     let genTokens = buildClientPkGenTokens(pkFields)
+    let auditCreate = buildAuditCreateTokens(fields, "entity")
+    let versionInit = buildVersionInitTokens(fields, "entity")
+    let preTokens = auditCreate + Token(TokenKind.NL) + versionInit
 
     // 列名：所有非关系字段（含主键）
     var colNames = ArrayList<String>()
@@ -722,31 +730,54 @@ func buildTxUpsertExtend(className: String, fields: ArrayList<FieldInfo>, tableN
     }
     pksArr = pksArr + Token(TokenKind.RSQUARE)
 
-    // 参数：entity.field
+    // 审计字段：created_at（仅插入，冲突时不覆盖）与 updated_at（冲突时刷新）
+    let (hasCreatedAt, hasUpdatedAt) = findAuditFields(fields)
+    var auditCreateArr = Tokens()
+    auditCreateArr = auditCreateArr + Token(TokenKind.LSQUARE)
+    if (hasCreatedAt) { auditCreateArr = auditCreateArr + Token(TokenKind.STRING_LITERAL, "created_at") }
+    auditCreateArr = auditCreateArr + Token(TokenKind.RSQUARE)
+
+    var auditUpdateArr = Tokens()
+    auditUpdateArr = auditUpdateArr + Token(TokenKind.LSQUARE)
+    if (hasUpdatedAt) { auditUpdateArr = auditUpdateArr + Token(TokenKind.STRING_LITERAL, "updated_at") }
+    auditUpdateArr = auditUpdateArr + Token(TokenKind.RSQUARE)
+
+    let versionName = findVersionField(fields)
+    let versionLit = Token(TokenKind.STRING_LITERAL, versionName)
+
+    // 参数：params.add(entity.field)
     var paramsTok = Tokens()
-    first = true
     for (f in fields) {
         if (isRelationField(f.typeName)) { continue }
-        if (!first) { paramsTok = paramsTok + Token(TokenKind.COMMA) }
-        paramsTok = paramsTok + Token(TokenKind.IDENTIFIER, "entity")
-        paramsTok = paramsTok + Token(TokenKind.DOT)
-        paramsTok = paramsTok + Token(TokenKind.IDENTIFIER, f.name)
-        first = false
+        let fName = Token(TokenKind.IDENTIFIER, f.name)
+        paramsTok = paramsTok + quote(
+            params.add(entity.$(fName));
+        )
+    }
+    // MySQL 的审计更新列需要额外参数（updated_at = ?）
+    var mysqlExtraParams = Tokens()
+    if (hasUpdatedAt) {
+        mysqlExtraParams = mysqlExtraParams + quote(
+            if (d.name() == "mysql") { params.add(entity.updated_at); }
+        )
     }
 
     quote(
         extend Tx {
             public func upsert(entity: $(cn)): Unit {
                 $(genTokens)
+                $(preTokens)
                 let scope = Scope<$(cn)>(entity)
                 scope.db = Some(this)
                 if (this.ref.isSome()) { this.ref.getOrThrow().executeHooks($(nameLit), HookKind.TxBeforeCreate, scope) }
                 if (scope.aborted) { throw scope.error.getOrThrow() }
                 let d = this.ref.getOrThrow().getDialect()
                 if (!d.hasUpsertSupport()) { throw Exception("upsert not supported by dialect: " + d.name()) }
-                let sql = d.upsertSQL($(tableNameLit), $(colsArr), $(pksArr))
-                let params: Array<Any> = [$(paramsTok)]
-                let _ = this.execute(sql, params)
+                let sql = d.upsertSQL($(tableNameLit), $(colsArr), $(pksArr), $(auditCreateArr), $(auditUpdateArr), $(versionLit))
+                var params = ArrayList<Any>()
+                $(paramsTok)
+                $(mysqlExtraParams)
+                let _ = this.execute(sql, params.toArray())
                 let afterScope = Scope<$(cn)>(entity)
                 afterScope.db = Some(this)
                 if (this.ref.isSome()) { this.ref.getOrThrow().executeHooks($(nameLit), HookKind.TxAfterCreate, afterScope) }
@@ -781,18 +812,17 @@ func buildBatchUpdateSQLFunc(className: String, fields: ArrayList<FieldInfo>, ta
     let funcName = Token(TokenKind.IDENTIFIER, className + "BatchUpdateSQL")
     let cn = Token(TokenKind.IDENTIFIER, className)
     let tableNameLit = Token(TokenKind.STRING_LITERAL, tableName)
-    // 每列 PG cast 类型（非 PG 方言忽略）
+    let versionName = findVersionField(fields)
+    let (_, hasUpdatedAt) = findAuditFields(fields)
+
+    // SET 列：非主键、非关系、非 version、非审计 updated_at 字段（version/updated_at 单独生成 CASE 子句）
+    var setCols = ArrayList<String>()
     var colCastTypes = ArrayList<String>()
     for (f in fields) {
-        if (f.isPk || isRelationField(f.typeName)) { continue }
-        colCastTypes.add(pgCastTypeOf(f.typeName))
-    }
-
-    // SET 列：非主键、非关系字段
-    var setCols = ArrayList<String>()
-    for (f in fields) {
-        if (f.isPk || isRelationField(f.typeName)) { continue }
+        if (f.isPk || isRelationField(f.typeName) || f.isVersion) { continue }
+        if (f.name == "updated_at" && f.typeName == "DateTime") { continue }
         setCols.add(f.name)
+        colCastTypes.add(pgCastTypeOf(f.typeName))
     }
     var pkNames = ArrayList<String>()
     for (pk in pkFields) { pkNames.add(pk.name) }
@@ -831,7 +861,8 @@ func buildBatchUpdateSQLFunc(className: String, fields: ArrayList<FieldInfo>, ta
     }
     castArr = castArr + Token(TokenKind.RSQUARE)
 
-    // 参数收集：每列每实体 (pk 值..., 新值)，最后 IN 列表 (pk 值...)
+    // 参数收集：常规列每实体 (pk 值..., 新值)，然后 version 每实体 (pk..., version+1)，
+    // 然后 updated_at 每实体 (pk..., updated_at)，最后 IN 列表 (pk 值...)
     var addParams = Tokens()
     for (c in setCols) {
         let colIdent = Token(TokenKind.IDENTIFIER, c)
@@ -839,6 +870,23 @@ func buildBatchUpdateSQLFunc(className: String, fields: ArrayList<FieldInfo>, ta
             for (_bi_ in 0..entities.size) {
                 $(genPkValueParamsTokens(pkFields, "entities[_bi_]"))
                 allParams.add(entities[_bi_].$(colIdent));
+            }
+        )
+    }
+    if (versionName != "") {
+        let vIdent = Token(TokenKind.IDENTIFIER, versionName)
+        addParams = addParams + quote(
+            for (_bi_ in 0..entities.size) {
+                $(genPkValueParamsTokens(pkFields, "entities[_bi_]"))
+                allParams.add(entities[_bi_].$(vIdent) + 1);
+            }
+        )
+    }
+    if (hasUpdatedAt) {
+        addParams = addParams + quote(
+            for (_bi_ in 0..entities.size) {
+                $(genPkValueParamsTokens(pkFields, "entities[_bi_]"))
+                allParams.add(entities[_bi_].updated_at);
             }
         )
     }
@@ -854,10 +902,44 @@ func buildBatchUpdateSQLFunc(className: String, fields: ArrayList<FieldInfo>, ta
     let whereHeadLit = Token(TokenKind.STRING_LITERAL, whereHead)
     let castArrTok = castArr
 
+    // 额外的 SET 子句（version / updated_at 独立 CASE）
+    var extraSetParts = Tokens()
+    if (versionName != "") {
+        let vNameLit = Token(TokenKind.STRING_LITERAL, versionName)
+        let vCastLit = Token(TokenKind.STRING_LITERAL, "::" + pgCastTypeOf("Int64"))
+        extraSetParts = extraSetParts + quote(
+            var vCaseParts = ArrayList<String>()
+            vCaseParts.add($(caseHeadLit))
+            let vCastSuffix = if (isPostgres) { $(vCastLit) } else { "" }
+            for (_k_ in 0..entities.size) {
+                vCaseParts.add($(whenClauseLit) + vCastSuffix)
+            }
+            vCaseParts.add("END")
+            setParts.add($(vNameLit) + " = " + String.join(vCaseParts.toArray(), delimiter: " "))
+        )
+    }
+    if (hasUpdatedAt) {
+        let uNameLit = Token(TokenKind.STRING_LITERAL, "updated_at")
+        let uCastLit = Token(TokenKind.STRING_LITERAL, "::" + pgCastTypeOf("DateTime"))
+        extraSetParts = extraSetParts + quote(
+            var uCaseParts = ArrayList<String>()
+            uCaseParts.add($(caseHeadLit))
+            let uCastSuffix = if (isPostgres) { $(uCastLit) } else { "" }
+            for (_k_ in 0..entities.size) {
+                uCaseParts.add($(whenClauseLit) + uCastSuffix)
+            }
+            uCaseParts.add("END")
+            setParts.add($(uNameLit) + " = " + String.join(uCaseParts.toArray(), delimiter: " "))
+        )
+    }
+    // 是否还有常规可更新列（编译期判断：colNames 为空且无 version/updated_at 时才抛错）
+    let hasExtraSet = (versionName != "" || hasUpdatedAt)
+    let hasExtraSetLit = Token(TokenKind.IDENTIFIER, if (hasExtraSet) { "true" } else { "false" })
+
     quote(
         func $(funcName)(entities: Array<$(cn)>, dialect: Dialect): (String, Array<Any>) {
             let colNames: Array<String> = $(colArr)
-            if (colNames.size == 0) { throw Exception("no updatable columns for batchUpdate") }
+            if (colNames.size == 0 && !$(hasExtraSetLit)) { throw Exception("no updatable columns for batchUpdate") }
             let colCastTypes: Array<String> = $(castArrTok)
             let isPostgres = (dialect.name() == "postgresql")
             var allParams = ArrayList<Any>()
@@ -873,6 +955,7 @@ func buildBatchUpdateSQLFunc(className: String, fields: ArrayList<FieldInfo>, ta
                 caseParts.add("END")
                 setParts.add(colNames[_ci_] + " = " + String.join(caseParts.toArray(), delimiter: " "))
             }
+            $(extraSetParts)
             var inParts = ArrayList<String>()
             for (_k_ in 0..entities.size) {
                 inParts.add($(inItemLit))
@@ -882,37 +965,76 @@ func buildBatchUpdateSQLFunc(className: String, fields: ArrayList<FieldInfo>, ta
     )
 }
 
-func buildTxBatchUpdateExtend(className: String): Tokens {
+func buildTxBatchUpdateExtend(className: String, fields: ArrayList<FieldInfo>): Tokens {
     let cn = Token(TokenKind.IDENTIFIER, className)
     let batchUpdateSQLFuncName = Token(TokenKind.IDENTIFIER, className + "BatchUpdateSQL")
     let nameLit = Token(TokenKind.STRING_LITERAL, className)
-    quote(
-        extend Tx {
-            public func batchUpdate(entities: Array<$(cn)>): Unit {
-                if (entities.size == 0) { return }
-                for (_bi_ in 0..entities.size) {
-                    let e = entities[_bi_]
-                    let scope = Scope<$(cn)>(e)
-                    scope.db = Some(this)
-                    if (this.ref.isSome()) { this.ref.getOrThrow().executeHooks($(nameLit), HookKind.TxBeforeUpdate, scope) }
-                    if (scope.aborted) { throw scope.error.getOrThrow() }
-                }
-                let (sql, params) = $(batchUpdateSQLFuncName)(entities, this.getDialect())
-                let _ = this.execute(sql, params)
-                for (_bi_ in 0..entities.size) {
-                    let afterScope = Scope<$(cn)>(entities[_bi_])
-                    afterScope.db = Some(this)
-                    if (this.ref.isSome()) { this.ref.getOrThrow().executeHooks($(nameLit), HookKind.TxAfterUpdate, afterScope) }
+    let auditUpdate = buildAuditUpdateTokens(fields, "entities[_bi_]")
+    let versionName = findVersionField(fields)
+
+    if (versionName == "") {
+        quote(
+            extend Tx {
+                public func batchUpdate(entities: Array<$(cn)>): Unit {
+                    if (entities.size == 0) { return }
+                    for (_bi_ in 0..entities.size) {
+                        let e = entities[_bi_]
+                        $(auditUpdate)
+                        let scope = Scope<$(cn)>(e)
+                        scope.db = Some(this)
+                        if (this.ref.isSome()) { this.ref.getOrThrow().executeHooks($(nameLit), HookKind.TxBeforeUpdate, scope) }
+                        if (scope.aborted) { throw scope.error.getOrThrow() }
+                    }
+                    let (sql, params) = $(batchUpdateSQLFuncName)(entities, this.getDialect())
+                    let _ = this.execute(sql, params)
+                    for (_bi_ in 0..entities.size) {
+                        let afterScope = Scope<$(cn)>(entities[_bi_])
+                        afterScope.db = Some(this)
+                        if (this.ref.isSome()) { this.ref.getOrThrow().executeHooks($(nameLit), HookKind.TxAfterUpdate, afterScope) }
+                    }
                 }
             }
-        }
-    )
+        )
+    } else {
+        let vIdent = Token(TokenKind.IDENTIFIER, versionName)
+        quote(
+            extend Tx {
+                public func batchUpdate(entities: Array<$(cn)>): Unit {
+                    if (entities.size == 0) { return }
+                    for (_bi_ in 0..entities.size) {
+                        let e = entities[_bi_]
+                        $(auditUpdate)
+                        let scope = Scope<$(cn)>(e)
+                        scope.db = Some(this)
+                        if (this.ref.isSome()) { this.ref.getOrThrow().executeHooks($(nameLit), HookKind.TxBeforeUpdate, scope) }
+                        if (scope.aborted) { throw scope.error.getOrThrow() }
+                    }
+                    let (sql, params) = $(batchUpdateSQLFuncName)(entities, this.getDialect())
+                    let result = this.execute(sql, params)
+                    if (result.rowCount != entities.size) {
+                        throw OptimisticLockException($(nameLit), "batch", 0, -1)
+                    }
+                    for (_bi_ in 0..entities.size) {
+                        entities[_bi_].$(vIdent) = entities[_bi_].$(vIdent) + 1
+                    }
+                    for (_bi_ in 0..entities.size) {
+                        let afterScope = Scope<$(cn)>(entities[_bi_])
+                        afterScope.db = Some(this)
+                        if (this.ref.isSome()) { this.ref.getOrThrow().executeHooks($(nameLit), HookKind.TxAfterUpdate, afterScope) }
+                    }
+                }
+            }
+        )
+    }
 }
 
-func buildTxBatchSaveExtend(className: String, pkFields: ArrayList<FieldInfo>, hasClientPk: Bool): Tokens {
+func buildTxBatchSaveExtend(className: String, pkFields: ArrayList<FieldInfo>, hasClientPk: Bool, fields: ArrayList<FieldInfo>): Tokens {
     let cn = Token(TokenKind.IDENTIFIER, className)
     let batchInsertSQLFuncName = Token(TokenKind.IDENTIFIER, className + "BatchInsertSQL")
     let nameLit = Token(TokenKind.STRING_LITERAL, className)
+    let auditCreate = buildAuditCreateTokens(fields, "entities[_bi_]")
+    let versionInit = buildVersionInitTokens(fields, "entities[_bi_]")
+    let preTokens = auditCreate + Token(TokenKind.NL) + versionInit
 
     if (hasClientPk) {
         let genTokens = buildClientPkGenTokensBatch(pkFields)
@@ -925,6 +1047,7 @@ func buildTxBatchSaveExtend(className: String, pkFields: ArrayList<FieldInfo>, h
                     }
                     for (_bi_ in 0..entities.size) {
                         let e = entities[_bi_]
+                        $(preTokens)
                         let scope = Scope<$(cn)>(e)
                         scope.db = Some(this)
                         if (this.ref.isSome()) { this.ref.getOrThrow().executeHooks($(nameLit), HookKind.TxBeforeCreate, scope) }
@@ -947,6 +1070,7 @@ func buildTxBatchSaveExtend(className: String, pkFields: ArrayList<FieldInfo>, h
                     if (entities.size == 0) { return }
                     for (_bi_ in 0..entities.size) {
                         let e = entities[_bi_]
+                        $(preTokens)
                         let scope = Scope<$(cn)>(e)
                         scope.db = Some(this)
                         if (this.ref.isSome()) { this.ref.getOrThrow().executeHooks($(nameLit), HookKind.TxBeforeCreate, scope) }
@@ -1023,7 +1147,7 @@ func buildTxUpdateExtend(className: String, fields: ArrayList<FieldInfo>, tableN
     let cn = Token(TokenKind.IDENTIFIER, className)
     let updateSQLFuncName = Token(TokenKind.IDENTIFIER, className + "UpdateSQL")
     let nameLit = Token(TokenKind.STRING_LITERAL, className)
-    let auditUpdate = buildAuditUpdateTokens(fields)
+    let auditUpdate = buildAuditUpdateTokens(fields, "entity")
     let versionName = findVersionField(fields)
 
     if (versionName == "") {
@@ -1705,9 +1829,9 @@ public macro Refine(input: Tokens): Tokens {
     let insertSQLFunc = buildInsertSQLFunc(className, mergedFields, tableName)
     let txSaveExtend = buildTxSaveExtend(className, pkFields, hasClientPk, hasAutoPk, mergedFields)
     let batchInsertSQLFunc = buildBatchInsertSQLFunc(className, mergedFields, tableName)
-    let txBatchSaveExtend = buildTxBatchSaveExtend(className, pkFields, hasClientPk)
+    let txBatchSaveExtend = buildTxBatchSaveExtend(className, pkFields, hasClientPk, mergedFields)
     let batchUpdateSQLFunc = buildBatchUpdateSQLFunc(className, mergedFields, tableName, pkFields)
-    let txBatchUpdateExtend = buildTxBatchUpdateExtend(className)
+    let txBatchUpdateExtend = buildTxBatchUpdateExtend(className, mergedFields)
     let updateSQLFunc = buildUpdateSQLFunc(className, mergedFields, tableName, pkFields)
     let txUpdateExtend = buildTxUpdateExtend(className, mergedFields, tableName, pkFields)
     let txUpsertExtend = buildTxUpsertExtend(className, mergedFields, tableName, pkFields)

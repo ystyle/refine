@@ -148,14 +148,23 @@ public class MySQLDialect <: Dialect {
 
     public func hasUpsertSupport(): Bool { true }
 
-    public func upsertSQL(table: String, columns: Array<String>, _conflictColumns: Array<String>): String {
+    public func upsertSQL(table: String, columns: Array<String>, _conflictColumns: Array<String>, auditCreateCols: Array<String>, auditUpdateCols: Array<String>, versionCol: String): String {
         var cols = ArrayList<String>()
         var placeholders = ArrayList<String>()
         var updates = ArrayList<String>()
         for (c in columns) {
             cols.add(quoteIdentifier(c))
             placeholders.add("?")
-            updates.add(quoteIdentifier(c) + " = VALUES(" + quoteIdentifier(c) + ")")
+        }
+        for (c in columns) {
+            if (auditCreateCols.contains(c)) { continue }
+            if (c == versionCol) {
+                updates.add(quoteIdentifier(c) + " = " + quoteIdentifier(c) + " + 1")
+            } else if (auditUpdateCols.contains(c)) {
+                updates.add(quoteIdentifier(c) + " = ?")
+            } else {
+                updates.add(quoteIdentifier(c) + " = VALUES(" + quoteIdentifier(c) + ")")
+            }
         }
         "INSERT INTO " + quoteIdentifier(table) + " (" + String.join(cols.toArray(), delimiter: ", ") + ") VALUES (" + String.join(placeholders.toArray(), delimiter: ", ") + ") ON DUPLICATE KEY UPDATE " + String.join(updates.toArray(), delimiter: ", ")
     }

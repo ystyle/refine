@@ -163,7 +163,7 @@ public class PostgreSQLDialect <: Dialect {
 
     public func hasUpsertSupport(): Bool { true }
 
-    public func upsertSQL(table: String, columns: Array<String>, conflictColumns: Array<String>): String {
+    public func upsertSQL(table: String, columns: Array<String>, conflictColumns: Array<String>, auditCreateCols: Array<String>, auditUpdateCols: Array<String>, versionCol: String): String {
         var cols = ArrayList<String>()
         var placeholders = ArrayList<String>()
         var updates = ArrayList<String>()
@@ -172,7 +172,14 @@ public class PostgreSQLDialect <: Dialect {
             cols.add(quoteIdentifier(c))
             placeholders.add("$" + idx.toString())
             idx++
-            updates.add(quoteIdentifier(c) + " = EXCLUDED." + quoteIdentifier(c))
+            if (auditCreateCols.contains(c)) { continue }
+            if (c == versionCol) {
+                updates.add(quoteIdentifier(table) + "." + quoteIdentifier(c) + " = " + quoteIdentifier(table) + "." + quoteIdentifier(c) + " + 1")
+            } else if (auditUpdateCols.contains(c)) {
+                updates.add(quoteIdentifier(c) + " = EXCLUDED." + quoteIdentifier(c))
+            } else {
+                updates.add(quoteIdentifier(c) + " = EXCLUDED." + quoteIdentifier(c))
+            }
         }
         var conflictCols = ArrayList<String>()
         for (c in conflictColumns) {
