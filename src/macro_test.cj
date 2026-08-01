@@ -113,6 +113,38 @@ public class PostWithRel {
 }
 
 @Refine
+@Table["custom_tags"]
+public class CustomTag {
+    var id: Int64 = 0
+    var name: String = ""
+}
+
+@Refine
+@Table["custom_tag_posts"]
+public class CustomTagPost {
+    var id: Int64 = 0
+    var title: String = ""
+
+    @Ref[CustomTag, via: custom_post_tags]
+    var tags: ArrayList<CustomTag> = ArrayList<CustomTag>()
+}
+
+@Refine
+public class UuidTag {
+    var id: String = ""
+    var name: String = ""
+}
+
+@Refine
+public class UuidTagPost {
+    var id: Int64 = 0
+    var title: String = ""
+
+    @Ref[UuidTag, via: uuid_tag_post_tags]
+    var tags: ArrayList<UuidTag> = ArrayList<UuidTag>()
+}
+
+@Refine
 public class UnderscoreFieldEntity {
     var id: Int64 = 0
     var _note: String = ""
@@ -1824,7 +1856,7 @@ public class RefManyRelationApiTest {
             p.appendTags(tx, t)
             @Fail("expected exception for unsaved target")
         } catch (e: Exception) {
-            @Expect(true, true)
+            @Expect(e.message, "ref_many tags: target Tag has empty id, save it first")
         }
     }
 
@@ -1839,7 +1871,105 @@ public class RefManyRelationApiTest {
             p.deleteTags(tx, t)
             @Fail("expected exception for unsaved target")
         } catch (e: Exception) {
-            @Expect(true, true)
+            @Expect(e.message, "ref_many tags: target Tag has empty id, save it first")
+        }
+    }
+}
+
+@Test
+public class RefManyTableOverrideTest {
+    @TestCase
+    public func testJunctionSchemaColumnsUseLowerTargetName(): Unit {
+        let js = CustomTagPost_TagsJunctionSchema()
+        let cols = js.columns()
+        @Expect(cols.size, 2)
+        @Expect(cols[0].name, "custom_tag_posts_id")
+        @Expect(cols[1].name, "customTag_id")
+    }
+
+    @TestCase
+    public func testAppendTagsUsesJunctionColumnNames(): Unit {
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        let p = CustomTagPost()
+        p.id = 42
+        let t = CustomTag()
+        t.id = 7
+        p.appendTags(tx, t)
+        @Expect(conn.stmt.capturedSql, "INSERT INTO custom_post_tags (custom_tag_posts_id, customTag_id) VALUES (?, ?)")
+    }
+
+    @TestCase
+    public func testDeleteTagsUsesJunctionColumnNames(): Unit {
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        let p = CustomTagPost()
+        p.id = 42
+        let t = CustomTag()
+        t.id = 7
+        p.deleteTags(tx, t)
+        @Expect(conn.stmt.capturedSql, "DELETE FROM custom_post_tags WHERE custom_tag_posts_id = ? AND customTag_id = ?")
+    }
+
+    @TestCase
+    public func testLoadTagsUsesJunctionColumnNames(): Unit {
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        let p = CustomTagPost()
+        p.id = 42
+        p.loadTags(tx)
+        @Expect(conn.stmt.capturedSql.contains("custom_post_tags.customTag_id"), true)
+        @Expect(conn.stmt.capturedSql.contains("custom_post_tags.custom_tags_id"), false)
+        @Expect(conn.stmt.capturedSql.contains("custom_post_tags.custom_tag_posts_id"), true)
+    }
+}
+
+@Test
+public class RefManyStringPkTargetTest {
+    @TestCase
+    public func testAppendUnsavedStringPkTargetThrows(): Unit {
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        let p = UuidTagPost()
+        p.id = 42
+        let t = UuidTag()
+        try {
+            p.appendTags(tx, t)
+            @Fail("expected exception for unsaved String-pk target")
+        } catch (e: Exception) {
+            @Expect(e.message.contains("has empty id"), true)
+        }
+    }
+
+    @TestCase
+    public func testDeleteUnsavedStringPkTargetThrows(): Unit {
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        let p = UuidTagPost()
+        p.id = 42
+        let t = UuidTag()
+        try {
+            p.deleteTags(tx, t)
+            @Fail("expected exception for unsaved String-pk target")
+        } catch (e: Exception) {
+            @Expect(e.message.contains("has empty id"), true)
+        }
+    }
+
+    @TestCase
+    public func testAppendSavedStringPkTargetWritesId(): Unit {
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        let p = UuidTagPost()
+        p.id = 42
+        let t = UuidTag()
+        t.id = "uuid-tag-1"
+        p.appendTags(tx, t)
+        @Expect(conn.stmt.capturedSetValues.size, 2)
+        @Expect(capturedInt64(conn.stmt.capturedSetValues, 0), 42)
+        match (conn.stmt.capturedSetValues[1]) {
+            case v: String => @Expect(v, "uuid-tag-1")
+            case _ => @Fail("expected String tag id param")
         }
     }
 }

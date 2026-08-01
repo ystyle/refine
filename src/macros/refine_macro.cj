@@ -1521,8 +1521,11 @@ func buildRelationMethods(className: String, rels: ArrayList<RelInfo>, cd: Class
             let sourceTable = lowerTableName(className)
             let sourceSchemaIdent = Token(TokenKind.IDENTIFIER, className + "Schema")
             let viaLit = Token(TokenKind.STRING_LITERAL, r.via)
+            // 中间表目标列名固定用 lowerTableName(target) + "_id"，与 buildJunctionSchema 一致
+            // （不能用 targetSchema().tableName() + "_id"，否则 @Table 覆盖表名时列名不一致）
+            let targetColLit = Token(TokenKind.STRING_LITERAL, lowerTableName(r.target) + "_id")
             let joinSQL = quote(
-                "SELECT " + $(tableNameExpr) + ".* FROM " + $(tableNameExpr) + " JOIN " + $(viaLit) + " ON " + $(tableNameExpr) + ".id = " + $(viaLit) + "." + $(tableNameExpr) + "_id WHERE " + $(viaLit) + "." + $(sourceSchemaIdent)().tableName() + "_id = ?"
+                "SELECT " + $(tableNameExpr) + ".* FROM " + $(tableNameExpr) + " JOIN " + $(viaLit) + " ON " + $(tableNameExpr) + ".id = " + $(viaLit) + "." + $(targetColLit) + " WHERE " + $(viaLit) + "." + $(sourceSchemaIdent)().tableName() + "_id = ?"
             )
             let joinSQLToken = joinSQL
             let loadName = Token(TokenKind.IDENTIFIER, "load" + prefix)
@@ -1553,10 +1556,10 @@ func buildRelationMethods(className: String, rels: ArrayList<RelInfo>, cd: Class
             let unsavedMsg = Token(TokenKind.STRING_LITERAL,
                 "ref_many " + r.fieldName + ": target " + r.target + " has empty id, save it first")
             let insertSQL = quote(
-                "INSERT INTO " + $(viaLit) + " (" + $(sourceSchemaIdent)().tableName() + "_id, " + $(tableNameExpr) + "_id) VALUES (?, ?)"
+                "INSERT INTO " + $(viaLit) + " (" + $(sourceSchemaIdent)().tableName() + "_id, " + $(targetColLit) + ") VALUES (?, ?)"
             )
             let deleteSQL = quote(
-                "DELETE FROM " + $(viaLit) + " WHERE " + $(sourceSchemaIdent)().tableName() + "_id = ? AND " + $(tableNameExpr) + "_id = ?"
+                "DELETE FROM " + $(viaLit) + " WHERE " + $(sourceSchemaIdent)().tableName() + "_id = ? AND " + $(targetColLit) + " = ?"
             )
             let clearSQL = quote(
                 "DELETE FROM " + $(viaLit) + " WHERE " + $(sourceSchemaIdent)().tableName() + "_id = ?"
