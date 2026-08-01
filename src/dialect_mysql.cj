@@ -187,13 +187,11 @@ public class MySQLDialect <: Dialect {
 
     public func hasJSONSupport(): Bool { true }
 
+    public func hasIsolationSupport(): Bool { true }
+
     public func migrator(db: DB): Migrator { MySQLMigrator(db) }
 
     public func initialize(db: DB): Unit {}
 
     public func defaultValueOf(st: StorageType): String { "" }
-
-    public func isolationSQL(level: IsolationLevel): String {
-        "SET TRANSACTION ISOLATION LEVEL " + level.toString()
-    }
 }

@@ -275,13 +275,4 @@ public class PostgreSQLDialectTest {
         let (sql, _) = dialect.render(stmt)
         @Expect(sql, "SELECT \"id\" FROM \"t\" WHERE \"a\" = $1 ORDER BY \"id\" LIMIT 3 OFFSET 0")
     }
-
-    @TestCase
-    public func testIsolationSQL(): Unit {
-        let dialect = PostgreSQLDialect()
-        @Expect(dialect.isolationSQL(IsolationLevel.Serializable), "SET TRANSACTION ISOLATION LEVEL SERIALIZABLE")
-        @Expect(dialect.isolationSQL(IsolationLevel.ReadCommitted), "SET TRANSACTION ISOLATION LEVEL READ COMMITTED")
-        @Expect(dialect.isolationSQL(IsolationLevel.ReadUncommitted), "SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED")
-        @Expect(dialect.isolationSQL(IsolationLevel.RepeatableRead), "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
-    }
 }

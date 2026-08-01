@@ -205,7 +205,9 @@ public class Tx {
     public func getParamOffset(): Int64 { paramOffset }
 
     public func setIsolation(level: IsolationLevel): Unit {
-        let sql = this.getDialect().isolationSQL(level)
+        if (!this.getDialect().hasIsolationSupport()) {
+            throw RefineException("SQLite does not support transaction isolation levels")
+        }
         let mapped = match (level) {
             case ReadUncommitted => TransactionIsoLevel.ReadUncommitted
             case ReadCommitted => TransactionIsoLevel.ReadCommitted

@@ -189,14 +189,17 @@ public class DialectTest {
         let sqlite = SQLiteDialect()
         @Expect(sqlite.hasReturningSupport(), false)
         @Expect(sqlite.hasJSONSupport(), false)
+        @Expect(sqlite.hasIsolationSupport(), false)
 
         let mysql = MySQLDialect()
         @Expect(mysql.hasReturningSupport(), false)
         @Expect(mysql.hasJSONSupport(), true)
+        @Expect(mysql.hasIsolationSupport(), true)
 
         let pg = PostgreSQLDialect()
         @Expect(pg.hasReturningSupport(), true)
         @Expect(pg.hasJSONSupport(), true)
+        @Expect(pg.hasIsolationSupport(), true)
     }
 
     @TestCase
@@ -285,15 +288,5 @@ public class DialectTest {
         stmt.addClause(OrderByClause([Column("id")]))
         let (sql, _) = dialect.render(stmt)
         @Expect(sql, "SELECT \"id\" FROM \"t\" WHERE \"a\" = ? ORDER BY \"id\" LIMIT 3 OFFSET 0")
-    }
-
-    @TestCase
-    public func testIsolationSQLThrows(): Unit {
-        let dialect = SQLiteDialect()
-        try {
-            dialect.isolationSQL(IsolationLevel.Serializable)
-            @Fail("should have thrown for SQLite")
-        } catch (e: RefineException) {
-        }
     }
 }

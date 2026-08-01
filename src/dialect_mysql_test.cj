@@ -237,13 +237,4 @@ public class MySQLDialectTest {
         dialect.initialize(DB(MockDatasource()))
         @Expect(dialect.defaultValueOf(StorageType.Integer), "")
     }
-
-    @TestCase
-    public func testIsolationSQL(): Unit {
-        let dialect = MySQLDialect()
-        @Expect(dialect.isolationSQL(IsolationLevel.Serializable), "SET TRANSACTION ISOLATION LEVEL SERIALIZABLE")
-        @Expect(dialect.isolationSQL(IsolationLevel.ReadCommitted), "SET TRANSACTION ISOLATION LEVEL READ COMMITTED")
-        @Expect(dialect.isolationSQL(IsolationLevel.ReadUncommitted), "SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED")
-        @Expect(dialect.isolationSQL(IsolationLevel.RepeatableRead), "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
-    }
 }

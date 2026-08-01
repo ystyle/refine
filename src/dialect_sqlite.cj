@@ -168,13 +168,11 @@ public class SQLiteDialect <: Dialect {
 
     public func hasJSONSupport(): Bool { false }
 
+    public func hasIsolationSupport(): Bool { false }
+
     public func migrator(db: DB): Migrator { SQLiteMigrator(db) }
 
     public func initialize(db: DB): Unit {}
 
     public func defaultValueOf(st: StorageType): String { "" }
-
-    public func isolationSQL(level: IsolationLevel): String {
-        throw RefineException("SQLite does not support transaction isolation levels")
-    }
 }

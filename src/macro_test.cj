@@ -1112,6 +1112,14 @@ public class VersionedOrderTag {
 @Test
 public class VersionedEntityTest {
     @TestCase
+    public func testVersionedPostAuditColumnsStorageType(): Unit {
+        let schema = VersionedPostSchema()
+        let cols = schema.columns()
+        @Expect(cols[2].storageType, StorageType.Timestamp)
+        @Expect(cols[3].storageType, StorageType.Timestamp)
+    }
+
+    @TestCase
     public func testTxSaveVersionedPostInjectsAuditAndVersion(): Unit {
         clearHooks()
         let conn = CaptureConnection()

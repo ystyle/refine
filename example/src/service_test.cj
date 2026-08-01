@@ -414,6 +414,7 @@ class ServiceChecks {
         } catch (e: OptimisticLockException) {
             @Expect(e.entityType, "AuditNote")
             @Expect(e.expected, 1)
+            @Expect(e.actual, 2)
         }
         // 事务回滚后 DB version 应仍为 1
         let after = AuditNote.query().using(rf).filter(AuditNote.col().id == note.id).one().getOrThrow()
