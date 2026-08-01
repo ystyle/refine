@@ -194,17 +194,19 @@ func applyIdAnnotations(fields: ArrayList<FieldInfo>, idMessages: ArrayList<Macr
 
 func applyAuditVersion(fields: ArrayList<FieldInfo>, versionMessages: ArrayList<MacroMessage>): ArrayList<FieldInfo> {
     var result = ArrayList<FieldInfo>()
+    var versionCount = 0
     for (f in fields) {
         var updated = f
         for (m in versionMessages) {
             if (m.getString("fieldName") == f.name) {
                 if (f.typeName != "Int64") { throw Exception("@Version field must be Int64: " + f.name) }
-                if (updated.isVersion) { throw Exception("duplicate @Version field: " + f.name) }
                 updated.isVersion = true
+                versionCount++
             }
         }
         result.add(updated)
     }
+    if (versionCount > 1) { throw Exception("entity can only have one @Version field") }
     result
 }
 
