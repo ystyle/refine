@@ -496,6 +496,338 @@ class ServiceChecks {
             }
         }
     }
+
+    // ─── 级联保存 / ref_many 六件套（真实 DB 验证） ─────────
+
+    static func junctionCount(rf: Refine, postId: Int64): Int64 {
+        let s = rf.session()
+        let qr = s.query("SELECT COUNT(*) FROM post_tags WHERE post_id = ?", [postId])
+        qr.next()
+        let n = qr.get<Int64>(0 + rf.getParamOffset())
+        qr.close()
+        s.close()
+        n
+    }
+
+    static func cascadeSaveWithChildren(rf: Refine): Unit {
+        let suffix = uid()
+        let u = User()
+        u.name = "CS_" + suffix
+        u.email = "cs_" + suffix + "@t.com"
+        let p1 = Post()
+        p1.title = "CS_P1_" + suffix
+        p1.body = "B1"
+        let p2 = Post()
+        p2.title = "CS_P2_" + suffix
+        p2.body = "B2"
+        let posts = ArrayList<Post>()
+        posts.add(p1)
+        posts.add(p2)
+        u.posts = posts
+        let prof = Profile()
+        prof.bio = "CS_bio_" + suffix
+        prof.avatar = "a.png"
+        u.profile = Some(prof)
+        // 一次 tx.save(user) 级联落库 posts + profile
+        rf.transaction { tx: Tx => tx.save(u) }
+        @Expect(u.id > 0, true)
+        @Expect(p1.id > 0, true)
+        @Expect(p2.id > 0, true)
+        @Expect(prof.id > 0, true)
+        @Expect(p1.user_id, u.id)
+        @Expect(p2.user_id, u.id)
+        @Expect(prof.user_id, u.id)
+        // 回读 DB 确认全部持久化
+        let loaded = User.query().using(rf).filter(User.col().id == u.id).one().getOrThrow()
+        @Expect(loaded.name, u.name)
+        @Expect(Post.query().using(rf).filter(Post.col().user_id == u.id).count(), 2)
+        let profile = Profile.query().using(rf).filter(Profile.col().user_id == u.id).one()
+        @Expect(profile.isSome(), true)
+        @Expect(profile.getOrThrow().bio, prof.bio)
+    }
+
+    static func cascadeUpdateChildren(rf: Refine): Unit {
+        let suffix = uid()
+        let u = User()
+        u.name = "CU_" + suffix
+        u.email = "cu_" + suffix + "@t.com"
+        let p1 = Post()
+        p1.title = "CU_P1_" + suffix
+        p1.body = "B1"
+        let p2 = Post()
+        p2.title = "CU_P2_" + suffix
+        p2.body = "B2"
+        let posts = ArrayList<Post>()
+        posts.add(p1)
+        posts.add(p2)
+        u.posts = posts
+        rf.transaction { tx: Tx => tx.save(u) }
+        // include 加载（不置修改标记），整体赋值 loaded.posts 触发级联
+        var pf = UserFind()
+        pf.id = Some(u.id)
+        pf.withPosts = true
+        let loaded = UserRepo.findOne(rf, pf).getOrThrow()
+        loaded.name = "CU_" + suffix + "_upd"
+        let existing = loaded.posts.get(0).getOrThrow()
+        existing.title = "CU_P1_" + suffix + "_upd"
+        let p3 = Post()
+        p3.title = "CU_P3_" + suffix
+        p3.body = "B3"
+        let arr = ArrayList<Post>()
+        arr.add(existing)
+        arr.add(p3)
+        loaded.posts = arr
+        rf.transaction { tx: Tx => tx.update(loaded) }
+        // user.name 更新
+        let userDb = User.query().using(rf).filter(User.col().id == u.id).one().getOrThrow()
+        @Expect(userDb.name, loaded.name)
+        // 已有 post 更新 title
+        let post1 = Post.query().using(rf).filter(Post.col().id == existing.id).one().getOrThrow()
+        @Expect(post1.title, existing.title)
+        // 新增 post 落库且 user_id 回填
+        @Expect(Post.query().using(rf).filter(Post.col().user_id == u.id).count(), 3)
+        let newPost = Post.query().using(rf).filter(Post.col().title == p3.title).one().getOrThrow()
+        @Expect(newPost.user_id, u.id)
+    }
+
+    static func cascadeDeleteUser(rf: Refine): Unit {
+        let suffix = uid()
+        let u = User()
+        u.name = "CD_" + suffix
+        u.email = "cd_" + suffix + "@t.com"
+        let p1 = Post()
+        p1.title = "CD_P1_" + suffix
+        p1.body = "B1"
+        let posts = ArrayList<Post>()
+        posts.add(p1)
+        u.posts = posts
+        let prof = Profile()
+        prof.bio = "CD_bio_" + suffix
+        u.profile = Some(prof)
+        rf.transaction { tx: Tx => tx.save(u) }
+        // 给 post 挂一个 tag，验证级联删除同时清中间表
+        let t = Tag()
+        t.name = "CD_T_" + suffix
+        rf.transaction { tx: Tx =>
+            tx.save(t)
+            let p = Post.query().using(tx).filter(Post.col().id == p1.id).one().getOrThrow()
+            p.appendTags(tx, t)
+        }
+        @Expect(ServiceChecks.junctionCount(rf, p1.id), 1)
+        // 级联删除 user → posts/profile/tag 关联
+        rf.transaction { tx: Tx => tx.delete(u) }
+        @Expect(User.query().using(rf).filter(User.col().id == u.id).count(), 0)
+        @Expect(Post.query().using(rf).filter(Post.col().user_id == u.id).count(), 0)
+        @Expect(Profile.query().using(rf).filter(Profile.col().user_id == u.id).count(), 0)
+        // 中间表无残留
+        @Expect(ServiceChecks.junctionCount(rf, p1.id), 0)
+    }
+
+    static func refToFkBackfill(rf: Refine): Unit {
+        let suffix = uid()
+        let u = User()
+        u.name = "RF_" + suffix
+        u.email = "rf_" + suffix + "@t.com"
+        rf.transaction { tx: Tx => tx.save(u) }
+        // save post 带 author → fk 回填
+        let p = Post()
+        p.title = "RF_P_" + suffix
+        p.body = "B"
+        p.author = Some(u)
+        rf.transaction { tx: Tx => tx.save(p) }
+        @Expect(p.id > 0, true)
+        @Expect(p.user_id, u.id)
+        let dbPost = Post.query().using(rf).filter(Post.col().id == p.id).one().getOrThrow()
+        @Expect(dbPost.user_id, u.id)
+        // None 清空 fk
+        p.author = None
+        rf.transaction { tx: Tx => tx.update(p) }
+        let afterNone = Post.query().using(rf).filter(Post.col().id == p.id).one().getOrThrow()
+        @Expect(afterNone.user_id, 0)
+        // Some(0) 清空 fk
+        let ghost = User()
+        ghost.id = 0
+        p.author = Some(ghost)
+        rf.transaction { tx: Tx => tx.update(p) }
+        let afterGhost = Post.query().using(rf).filter(Post.col().id == p.id).one().getOrThrow()
+        @Expect(afterGhost.user_id, 0)
+    }
+
+    static func refManyCascadeRebuild(rf: Refine): Unit {
+        let suffix = uid()
+        let u = User()
+        u.name = "RM_" + suffix
+        u.email = "rm_" + suffix + "@t.com"
+        rf.transaction { tx: Tx => tx.save(u) }
+        let t1 = Tag()
+        t1.name = "RM_T1_" + suffix
+        let t2 = Tag()
+        t2.name = "RM_T2_" + suffix
+        let t3 = Tag()
+        t3.name = "RM_T3_" + suffix
+        rf.transaction { tx: Tx =>
+            tx.save(t1)
+            tx.save(t2)
+            tx.save(t3)
+        }
+        // save post 带 tags → 中间表 2 条
+        let p = Post()
+        p.title = "RM_P_" + suffix
+        p.body = "B"
+        p.user_id = u.id
+        let tags = ArrayList<Tag>()
+        tags.add(t1)
+        tags.add(t2)
+        p.tags = tags
+        rf.transaction { tx: Tx => tx.save(p) }
+        @Expect(ServiceChecks.junctionCount(rf, p.id), 2)
+        // update post 换 tags → 中间表重建为 1 条（仅 t3）
+        let tags2 = ArrayList<Tag>()
+        tags2.add(t3)
+        p.tags = tags2
+        rf.transaction { tx: Tx => tx.update(p) }
+        @Expect(ServiceChecks.junctionCount(rf, p.id), 1)
+        let s = rf.session()
+        let qr = s.query("SELECT tag_id FROM post_tags WHERE post_id = ?", [p.id])
+        var ids = ArrayList<Int64>()
+        while (qr.next()) {
+            ids.add(qr.get<Int64>(0 + rf.getParamOffset()))
+        }
+        qr.close()
+        s.close()
+        @Expect(ids.size, 1)
+        @Expect(ids.contains(t3.id), true)
+    }
+
+    static func refManySixPieceApi(rf: Refine): Unit {
+        let suffix = uid()
+        let u = User()
+        u.name = "SP_" + suffix
+        u.email = "sp_" + suffix + "@t.com"
+        rf.transaction { tx: Tx => tx.save(u) }
+        let p = Post()
+        p.title = "SP_P_" + suffix
+        p.body = "B"
+        p.user_id = u.id
+        rf.transaction { tx: Tx => tx.save(p) }
+        let t1 = Tag()
+        t1.name = "SP_T1_" + suffix
+        let t2 = Tag()
+        t2.name = "SP_T2_" + suffix
+        let t3 = Tag()
+        t3.name = "SP_T3_" + suffix
+        rf.transaction { tx: Tx =>
+            tx.save(t1)
+            tx.save(t2)
+            tx.save(t3)
+        }
+        rf.transaction { tx: Tx =>
+            p.appendTags(tx, t1)
+            @Expect(p.countTags(tx), 1)
+            p.appendTags(tx, [t2, t3])
+            @Expect(p.countTags(tx), 3)
+            p.replaceTags(tx, [t1])
+            @Expect(p.countTags(tx), 1)
+            p.deleteTags(tx, t1)
+            @Expect(p.countTags(tx), 0)
+            p.appendTags(tx, t2)
+            p.clearTags(tx)
+            @Expect(p.countTags(tx), 0)
+            p.appendTags(tx, [t1, t2])
+            let loaded = p.loadTags(tx)
+            @Expect(loaded.size, 2)
+        }
+        @Expect(ServiceChecks.junctionCount(rf, p.id), 2)
+    }
+
+    static func cascadeCycleSafety(rf: Refine): Unit {
+        let suffix = uid()
+        let u = User()
+        u.name = "CY_" + suffix
+        u.email = "cy_" + suffix + "@t.com"
+        let p1 = Post()
+        p1.title = "CY_P1_" + suffix
+        p1.body = "B1"
+        let c1 = Comment()
+        c1.body = "CY_C1_" + suffix
+        let c2 = Comment()
+        c2.body = "CY_C2_" + suffix
+        let c1s = ArrayList<Comment>()
+        c1s.add(c1)
+        c1s.add(c2)
+        p1.comments = c1s
+        let p2 = Post()
+        p2.title = "CY_P2_" + suffix
+        p2.body = "B2"
+        let c3 = Comment()
+        c3.body = "CY_C3_" + suffix
+        let c3s = ArrayList<Comment>()
+        c3s.add(c3)
+        p2.comments = c3s
+        let ps = ArrayList<Post>()
+        ps.add(p1)
+        ps.add(p2)
+        u.posts = ps
+        // 深链 save（User→posts→comments）不死循环
+        rf.transaction { tx: Tx => tx.save(u) }
+        @Expect(u.id > 0, true)
+        @Expect(p1.id > 0, true)
+        @Expect(p2.id > 0, true)
+        @Expect(c1.id > 0, true)
+        @Expect(c2.id > 0, true)
+        @Expect(c3.id > 0, true)
+        @Expect(p1.user_id, u.id)
+        @Expect(p2.user_id, u.id)
+        @Expect(c1.post_id, p1.id)
+        @Expect(c2.post_id, p1.id)
+        @Expect(c3.post_id, p2.id)
+        // 深链 delete 不死循环
+        rf.transaction { tx: Tx => tx.delete(u) }
+        @Expect(User.query().using(rf).filter(User.col().id == u.id).count(), 0)
+        @Expect(Post.query().using(rf).filter(Post.col().user_id == u.id).count(), 0)
+        @Expect(Comment.query().using(rf).filter(Comment.col().post_id.anyOf([p1.id, p2.id])).count(), 0)
+    }
+
+    static func cascadeLoadedThenUpdateNoCascade(rf: Refine): Unit {
+        let suffix = uid()
+        let u = User()
+        u.name = "NC_" + suffix
+        u.email = "nc_" + suffix + "@t.com"
+        let p1 = Post()
+        p1.title = "NC_P1_" + suffix
+        p1.body = "B1"
+        let p2 = Post()
+        p2.title = "NC_P2_" + suffix
+        p2.body = "B2"
+        let posts = ArrayList<Post>()
+        posts.add(p1)
+        posts.add(p2)
+        u.posts = posts
+        rf.transaction { tx: Tx => tx.save(u) }
+        // 给 p1 挂 2 个 tag
+        let t1 = Tag()
+        t1.name = "NC_T1_" + suffix
+        let t2 = Tag()
+        t2.name = "NC_T2_" + suffix
+        rf.transaction { tx: Tx =>
+            tx.save(t1)
+            tx.save(t2)
+            let p = Post.query().using(tx).filter(Post.col().id == p1.id).one().getOrThrow()
+            p.appendTags(tx, [t1, t2])
+        }
+        let postsBefore = Post.query().using(rf).filter(Post.col().user_id == u.id).count()
+        let junctionBefore = ServiceChecks.junctionCount(rf, p1.id)
+        // include 加载（不置修改标记），仅改 name → 不触发级联
+        var pf = UserFind()
+        pf.id = Some(u.id)
+        pf.withPosts = true
+        let loaded = UserRepo.findOne(rf, pf).getOrThrow()
+        loaded.name = "NC_" + suffix + "_upd"
+        rf.transaction { tx: Tx => tx.update(loaded) }
+        @Expect(User.query().using(rf).filter(User.col().id == u.id).one().getOrThrow().name, loaded.name)
+        @Expect(Post.query().using(rf).filter(Post.col().user_id == u.id).count(), postsBefore)
+        @Expect(ServiceChecks.junctionCount(rf, p1.id), junctionBefore)
+    }
 }
 
 // ─── MySQL 测试类 ───────────────────────────────────────
@@ -596,6 +928,30 @@ public class MySQLServiceTest {
 
     @TestCase
     public func testIsolationLevel(): Unit { ServiceChecks.isolationLevel(rf) }
+
+    @TestCase
+    public func testCascadeSaveWithChildren(): Unit { ServiceChecks.cascadeSaveWithChildren(rf) }
+
+    @TestCase
+    public func testCascadeUpdateChildren(): Unit { ServiceChecks.cascadeUpdateChildren(rf) }
+
+    @TestCase
+    public func testCascadeDeleteUser(): Unit { ServiceChecks.cascadeDeleteUser(rf) }
+
+    @TestCase
+    public func testRefToFkBackfill(): Unit { ServiceChecks.refToFkBackfill(rf) }
+
+    @TestCase
+    public func testRefManyCascadeRebuild(): Unit { ServiceChecks.refManyCascadeRebuild(rf) }
+
+    @TestCase
+    public func testRefManySixPieceApi(): Unit { ServiceChecks.refManySixPieceApi(rf) }
+
+    @TestCase
+    public func testCascadeLoadedThenUpdateNoCascade(): Unit { ServiceChecks.cascadeLoadedThenUpdateNoCascade(rf) }
+
+    @TestCase
+    public func testCascadeCycleSafety(): Unit { ServiceChecks.cascadeCycleSafety(rf) }
 }
 
 // ─── PostgreSQL 测试类 ──────────────────────────────────
@@ -696,4 +1052,28 @@ public class PostgreSQLServiceTest {
 
     @TestCase
     public func testIsolationLevel(): Unit { ServiceChecks.isolationLevel(rf) }
+
+    @TestCase
+    public func testCascadeSaveWithChildren(): Unit { ServiceChecks.cascadeSaveWithChildren(rf) }
+
+    @TestCase
+    public func testCascadeUpdateChildren(): Unit { ServiceChecks.cascadeUpdateChildren(rf) }
+
+    @TestCase
+    public func testCascadeDeleteUser(): Unit { ServiceChecks.cascadeDeleteUser(rf) }
+
+    @TestCase
+    public func testRefToFkBackfill(): Unit { ServiceChecks.refToFkBackfill(rf) }
+
+    @TestCase
+    public func testRefManyCascadeRebuild(): Unit { ServiceChecks.refManyCascadeRebuild(rf) }
+
+    @TestCase
+    public func testRefManySixPieceApi(): Unit { ServiceChecks.refManySixPieceApi(rf) }
+
+    @TestCase
+    public func testCascadeLoadedThenUpdateNoCascade(): Unit { ServiceChecks.cascadeLoadedThenUpdateNoCascade(rf) }
+
+    @TestCase
+    public func testCascadeCycleSafety(): Unit { ServiceChecks.cascadeCycleSafety(rf) }
 }

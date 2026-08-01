@@ -1689,8 +1689,9 @@ func buildRelationMethods(className: String, rels: ArrayList<RelInfo>, cd: Class
                 public func $(countName)(tx: Tx): Int64 {
                     let sql = $(countSQL)
                     let result = tx.query(sql, [this.id])
+                    let offset = if (tx.ref.isSome()) { tx.ref.getOrThrow().getParamOffset() } else { 0 }
                     result.next()
-                    result.get<Int64>(0)
+                    result.get<Int64>(0 + offset)
                 }
             )))
         } else if (r.kind == "has_many") {
