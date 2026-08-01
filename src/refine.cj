@@ -61,7 +61,7 @@ public class Refine {
         let conn = datasource.connect()
         try {
             let tx = Tx(conn, this, paramOffset)
-            tx.execute(this.dialect.isolationSQL(level), [])
+            tx.setIsolation(level)
             tx.begin()
             try {
                 let result = action(tx)

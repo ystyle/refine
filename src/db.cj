@@ -1,6 +1,6 @@
 package refine
 
-import std.database.sql.{Datasource, Connection, Transaction, QueryResult, UpdateResult, Driver, DriverManager, PooledDatasource}
+import std.database.sql.{Datasource, Connection, Transaction, QueryResult, UpdateResult, Driver, DriverManager, PooledDatasource, TransactionIsoLevel}
 import std.database.sql.Statement as SqlStatement
 import std.collection.{ArrayList, HashMap}
 import std.time.DateTime
@@ -203,6 +203,17 @@ public class Tx {
     }
 
     public func getParamOffset(): Int64 { paramOffset }
+
+    public func setIsolation(level: IsolationLevel): Unit {
+        let sql = this.getDialect().isolationSQL(level)
+        let mapped = match (level) {
+            case ReadUncommitted => TransactionIsoLevel.ReadUncommitted
+            case ReadCommitted => TransactionIsoLevel.ReadCommitted
+            case RepeatableRead => TransactionIsoLevel.RepeatableRead
+            case Serializable => TransactionIsoLevel.Serializable
+        }
+        transaction.isoLevel = mapped
+    }
 }
 
 public interface ExecutionContext {

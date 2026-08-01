@@ -298,6 +298,7 @@ func typeNameToStorageType(typeName: String): String {
     } else if (typeName == "Bool") { "StorageType.`Bool`"
     } else if (typeName == "String") { "StorageType.String"
     } else if (typeName == "Array<UInt8>") { "StorageType.Bytes"
+    } else if (typeName == "DateTime") { "StorageType.Timestamp"
     } else { "StorageType.Text" }
 }
 
@@ -1186,7 +1187,7 @@ func buildTxUpdateExtend(className: String, fields: ArrayList<FieldInfo>, tableN
                     if (result.rowCount == 0) {
                         let qr = this.query($(versionSelectSQLToken), $(pkParams))
                         var actual: Int64 = -1
-                        if (qr.next()) { actual = qr.get<Int64>(0) }
+                        if (qr.next()) { actual = qr.get<Int64>(0 + this.getParamOffset()) }
                         qr.close()
                         throw OptimisticLockException($(nameLit), $(pkValueExpr), entity.$(versionIdent), actual)
                     }
