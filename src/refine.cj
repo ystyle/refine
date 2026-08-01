@@ -41,8 +41,8 @@ public class Refine {
 
     public func transaction<T>(action: (Tx) -> T): T {
         let conn = datasource.connect()
-        let tx = Tx(conn, this, paramOffset)
         try {
+            let tx = Tx(conn, this, paramOffset)
             tx.begin()
             try {
                 let result = action(tx)
@@ -59,8 +59,8 @@ public class Refine {
 
     public func transaction<T>(level: IsolationLevel, action: (Tx) -> T): T {
         let conn = datasource.connect()
-        let tx = Tx(conn, this, paramOffset)
         try {
+            let tx = Tx(conn, this, paramOffset)
             tx.execute(this.dialect.isolationSQL(level), [])
             tx.begin()
             try {

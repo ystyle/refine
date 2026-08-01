@@ -51,15 +51,19 @@ public class DB {
 
     public func transaction<T>(action: (Tx) -> T): T {
         let conn = datasource.connect()
-        let tx = Tx(conn, paramOffset)
-        tx.begin()
         try {
-            let result = action(tx)
-            tx.commit()
-            return result
-        } catch (e: Exception) {
-            tx.rollback()
-            throw e
+            let tx = Tx(conn, paramOffset)
+            tx.begin()
+            try {
+                let result = action(tx)
+                tx.commit()
+                return result
+            } catch (e: Exception) {
+                tx.rollback()
+                throw e
+            }
+        } finally {
+            conn.close()
         }
     }
 

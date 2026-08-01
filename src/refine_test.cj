@@ -87,6 +87,30 @@ class RMockFailingDS <: Datasource {
     public func setOption(_key: String, _value: String): Unit {}
 }
 
+class RMockTxFailConn <: Connection {
+    public var closed = false
+
+    public func close(): Unit { closed = true }
+    public func isClosed(): Bool { closed }
+    public prop state: ConnectionState { get() { ConnectionState.Connected } }
+
+    public func createTransaction(): Transaction { throw Exception("createTransaction failed") }
+    public func getMetaData(): HashMap<String, String> { HashMap() }
+    public func prepareStatement(sql: String): SqlStatement { MockStatement() }
+}
+
+class RMockTxFailDS <: Datasource {
+    public var created = ArrayList<Connection>()
+    public func connect(): Connection {
+        let c = RMockTxFailConn()
+        created.add(c)
+        c
+    }
+    public func close(): Unit {}
+    public func isClosed(): Bool { false }
+    public func setOption(_key: String, _value: String): Unit {}
+}
+
 // ─── Tests ──────────────────────────────────────────────
 
 class RFlag { var v: Bool = false; init() {} }
@@ -166,6 +190,40 @@ public class RefineTest {
         let r = Refine(ds, SQLiteDialect(), 0)
         try {
             r.transaction { tx: Tx => 42 }
+            @Fail("expected Exception")
+        } catch (_: Exception) {
+            @Expect(true, true)
+        }
+        @Expect(ds.created.size, 1)
+        if (ds.created.size > 0) {
+            @Expect(ds.created.get(0).getOrThrow().isClosed(), true)
+        }
+        r.close()
+    }
+
+    @TestCase
+    public func testTransactionTxConstructFailureClosesConnection(): Unit {
+        let ds = RMockTxFailDS()
+        let r = Refine(ds, SQLiteDialect(), 0)
+        try {
+            r.transaction { tx: Tx => 42 }
+            @Fail("expected Exception")
+        } catch (_: Exception) {
+            @Expect(true, true)
+        }
+        @Expect(ds.created.size, 1)
+        if (ds.created.size > 0) {
+            @Expect(ds.created.get(0).getOrThrow().isClosed(), true)
+        }
+        r.close()
+    }
+
+    @TestCase
+    public func testTransactionIsolationTxConstructFailureClosesConnection(): Unit {
+        let ds = RMockTxFailDS()
+        let r = Refine(ds, SQLiteDialect(), 0)
+        try {
+            r.transaction(IsolationLevel.Serializable) { tx: Tx => 42 }
             @Fail("expected Exception")
         } catch (_: Exception) {
             @Expect(true, true)

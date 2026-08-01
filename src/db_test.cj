@@ -318,6 +318,34 @@ public class DbTest {
     }
 
     @TestCase
+    public func testDBTransactionClosesConnectionOnCommit(): Unit {
+        let ds = RMockTrackingDS()
+        let db = DB(ds)
+        let result = db.transaction({ tx => "committed" })
+        @Expect(result, "committed")
+        @Expect(ds.created.size, 1)
+        if (ds.created.size > 0) {
+            @Expect(ds.created.get(0).getOrThrow().isClosed(), true)
+        }
+    }
+
+    @TestCase
+    public func testDBTransactionClosesConnectionOnRollback(): Unit {
+        let ds = RMockTrackingDS()
+        let db = DB(ds)
+        try {
+            db.transaction({ tx => throw Exception("rollback") })
+            @Expect(false, true)
+        } catch (e: Exception) {
+            @Expect(e.message, "rollback")
+        }
+        @Expect(ds.created.size, 1)
+        if (ds.created.size > 0) {
+            @Expect(ds.created.get(0).getOrThrow().isClosed(), true)
+        }
+    }
+
+    @TestCase
     public func testDBOpenWithParamOffset(): Unit {
         let ds = MockDatasource()
         let db = DB(ds, 1)
