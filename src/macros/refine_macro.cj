@@ -1803,7 +1803,7 @@ func buildCascadeKeyTokens(className: String, pkFields: ArrayList<FieldInfo>, ta
 func buildCascadeMethods(className: String, rels: ArrayList<RelInfo>, fields: ArrayList<FieldInfo>, pkFields: ArrayList<FieldInfo>, cd: ClassDecl): Unit {
     let cn = Token(TokenKind.IDENTIFIER, className)
 
-    // cascadePreSave：阶段 1 ref_to 维护 fk（仅标记 true 的字段）
+    // cascadePreSave：阶段 1 ref_to 维护 fk（仅标记 true 的字段，处理一次后复位标记）
     var preBody = Tokens()
     for (r in rels) {
         if (r.kind != "ref_to") { continue }
@@ -1820,6 +1820,7 @@ func buildCascadeMethods(className: String, rels: ArrayList<RelInfo>, fields: Ar
                     case Some($(uTok)) => if ($(uTok).id != $(zeroTok)) { this.$(fkTok) = $(uTok).id } else { this.$(fkTok) = $(zeroTok) }
                     case None => this.$(fkTok) = $(zeroTok)
                 }
+                this.$(modifiedTok) = false
             }
         )
     }
@@ -1830,7 +1831,8 @@ func buildCascadeMethods(className: String, rels: ArrayList<RelInfo>, fields: Ar
         }
     )))
 
-    // cascadePostSave：阶段 3 has_many/has_one 回填 fk + 落库；阶段 4 ref_many 重建中间表（仅标记 true 的字段）
+    // cascadePostSave：阶段 3 has_many/has_one 回填 fk + 落库；阶段 4 ref_many 重建中间表
+    // 仅处理标记 true 的字段，每个字段处理一次后复位标记（一次性语义：用户显式赋值才同步一次）
     // 固定顺序：has 系（阶段 3）在前，ref_many（阶段 4）在后
     var postBody = Tokens()
     for (pass in 0..2) {
@@ -1858,6 +1860,7 @@ func buildCascadeMethods(className: String, rels: ArrayList<RelInfo>, fields: Ar
                                     }
                                 }
                             }
+                            this.$(modifiedTok) = false
                         }
                     )
                 } else {
@@ -1877,6 +1880,7 @@ func buildCascadeMethods(className: String, rels: ArrayList<RelInfo>, fields: Ar
                                     }
                                 case None => ()
                             }
+                            this.$(modifiedTok) = false
                         }
                     )
                 }
@@ -1890,6 +1894,7 @@ func buildCascadeMethods(className: String, rels: ArrayList<RelInfo>, fields: Ar
                     if (this.$(modifiedTok)) {
                         this.$(clearName)(tx)
                         for ($(tTok) in this.$(fieldTok)) { this.$(appendName)(tx, $(tTok)) }
+                        this.$(modifiedTok) = false
                     }
                 )
             }

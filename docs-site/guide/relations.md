@@ -220,8 +220,9 @@ rf.transaction { tx: Tx =>
 
 级联只在关联字段被**修改**时触发。`@Refine` 宏为每个关联字段生成一个修改标记（如 `_postsModified`）：
 
-- **整体赋值** `user.posts = [...]` 触发：字段被重写为 `prop`，setter 将 `_postsModified` 置为 `true`，随后 `tx.save/update(user)` 会级联处理
-- **`.add()` 等原地修改不触发**：`user.posts.add(p)` 走 getter 返回同一底层列表引用，不会经过 setter，标记保持 `false`
+- **整体赋值** `user.posts = [...]` 触发：字段被重写为 `prop`，setter 将 `_postsModified` 置为 `true`，随后 `tx.save/update(user)` 会级联处理该列表
+- **一次性语义**：级联处理完该字段后标记复位为 `false`——后续 `tx.update` 不再重放子列表，直到再次整体赋值
+- **`.add()` 等原地修改不触发**：`user.posts.add(p)` 走 getter 返回同一底层列表引用，不会经过 setter，标记保持 `false`；需要同步时请重新整体赋值
 
 ```cangjie
 let u = User()
@@ -230,10 +231,19 @@ let ps = ArrayList<Post>()
 ps.add(p1)
 ps.add(p2)
 u.posts = ps               // 整体赋值 → _postsModified = true
-tx.save(u)                 // 级联保存 p1、p2
+tx.save(u)                 // 级联保存 p1、p2，处理完标记复位为 false
 
-u.posts.add(p3)            // getter 原地 add → 标记不置位
-tx.update(u)               // 仅更新 user 本身，p3 不会落库
+tx.update(u)               // 标记已复位 → 仅更新 user 本身，子列表不重放
+
+let ps2 = ArrayList<Post>()
+ps2.add(p1)
+ps2.add(p2)
+ps2.add(p3)
+u.posts = ps2              // 再次整体赋值 → 标记重新置位
+tx.update(u)               // 重新级联：p1/p2 已有 id 走 update，p3 无 id 落库
+
+u.posts.add(p4)            // getter 原地 add → 标记不置位
+tx.update(u)               // 不级联，p4 不会落库（需重新整体赋值）
 ```
 
 行映射器加载（`include` 预加载）的实体，所有修改标记为 `false`——只改普通字段再 `tx.update` 不会误触发级联。

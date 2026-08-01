@@ -2011,6 +2011,68 @@ public class CascadeTraversalTest {
     }
 
     @TestCase
+    public func testCascadePreSaveRefToResetsMarker(): Unit {
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        let p = PostWithRel()
+        let u = User()
+        u.id = 42
+        p.author = Some(u)
+        @Expect(p._authorModified, true)
+        p.cascadePreSave(tx, ArrayList<Object>())
+        @Expect(p.user_id, 42)
+        @Expect(p._authorModified, false)
+    }
+
+    @TestCase
+    public func testCascadePostSaveHasManyResetsMarker(): Unit {
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        let p = PostWithRel()
+        p.id = 5
+        let c = Comment()
+        let list = ArrayList<Comment>()
+        list.add(c)
+        p.comments = list
+        @Expect(p._commentsModified, true)
+        p.cascadePostSave(tx, ArrayList<Object>())
+        @Expect(c.post_id, 5)
+        @Expect(p._commentsModified, false)
+    }
+
+    @TestCase
+    public func testCascadePostSaveHasOneResetsMarker(): Unit {
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        let u = UserWithRel()
+        u.id = 3
+        let pr = ProfileWithRel()
+        pr.bio = "bio"
+        u.profile = Some(pr)
+        @Expect(u._profileModified, true)
+        u.cascadePostSave(tx, ArrayList<Object>())
+        @Expect(pr.user_id, 3)
+        @Expect(u._profileModified, false)
+    }
+
+    @TestCase
+    public func testCascadePostSaveRefManyResetsMarker(): Unit {
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        let p = PostWithRel()
+        p.id = 5
+        let t1 = Tag()
+        t1.id = 7
+        let list = ArrayList<Tag>()
+        list.add(t1)
+        p.tags = list
+        @Expect(p._tagsModified, true)
+        p.cascadePostSave(tx, ArrayList<Object>())
+        @Expect(conn.stmt.capturedSqlHistory.size, 2)
+        @Expect(p._tagsModified, false)
+    }
+
+    @TestCase
     public func testCascadeCycleSaveNoDuplicateInsert(): Unit {
         let conn = CaptureConnection()
         let tx = Tx(conn)
@@ -2624,6 +2686,60 @@ public class TxCascadeTest {
         tx.update(p)
         @Expect(conn.stmt.capturedSqlHistory.size, 1)
         @Expect(conn.stmt.capturedSqlHistory[0], "UPDATE postWithRel SET title = ?, user_id = ?, post_id = ? WHERE id = ?")
+    }
+
+    @TestCase
+    public func testTxSaveResetsMarkersThenUpdateDoesNotReplay(): Unit {
+        clearHooks()
+        let conn = CaptureConnection()
+        conn.stmt.mockLastInsertId = 42
+        let tx = Tx(conn)
+        let p = PostWithRel()
+        let c = Comment()
+        c.body = "hello"
+        let list = ArrayList<Comment>()
+        list.add(c)
+        p.comments = list
+        @Expect(p._commentsModified, true)
+        tx.save(p)
+        @Expect(conn.stmt.capturedSqlHistory.size, 2)
+        @Expect(p._commentsModified, false)
+        // 标记已复位：再次 update 不重放子列表
+        conn.stmt.mockRowCount = 1
+        p.title = "changed"
+        tx.update(p)
+        @Expect(conn.stmt.capturedSqlHistory.size, 3)
+        @Expect(conn.stmt.capturedSqlHistory[2], "UPDATE postWithRel SET title = ?, user_id = ?, post_id = ? WHERE id = ?")
+    }
+
+    @TestCase
+    public func testTxSaveResetsMarkersThenUpdateReplayAfterReassign(): Unit {
+        clearHooks()
+        let conn = CaptureConnection()
+        conn.stmt.mockLastInsertId = 42
+        let tx = Tx(conn)
+        let p = PostWithRel()
+        let c = Comment()
+        c.body = "hello"
+        let list = ArrayList<Comment>()
+        list.add(c)
+        p.comments = list
+        tx.save(p)
+        @Expect(p._commentsModified, false)
+        // 再次整体赋值 → 标记置位 → update 重放
+        let c2 = Comment()
+        c2.body = "world"
+        let list2 = ArrayList<Comment>()
+        list2.add(c)
+        list2.add(c2)
+        p.comments = list2
+        @Expect(p._commentsModified, true)
+        conn.stmt.mockRowCount = 1
+        tx.update(p)
+        @Expect(conn.stmt.capturedSqlHistory.size, 5)
+        @Expect(conn.stmt.capturedSqlHistory[3], "UPDATE comment SET body = ?, post_id = ? WHERE id = ?")
+        @Expect(conn.stmt.capturedSqlHistory[4], "INSERT INTO comment (body, post_id) VALUES (?, ?)")
+        @Expect(p._commentsModified, false)
     }
 
     @TestCase
