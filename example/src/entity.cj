@@ -3,6 +3,7 @@ package demo
 import std.collection.ArrayList
 import std.collection.HashMap
 import std.database.sql.QueryResult
+import std.time.DateTime
 import refine.*
 import refine.macros.*
 
@@ -66,4 +67,15 @@ class Event {
     var id: String = ""
     var name: String = ""
     var payload: String = ""
+}
+
+@Refine
+@Table["audit_notes"]
+public class AuditNote {
+    var id: Int64 = 0
+    var title: String = ""
+    var created_at: DateTime = DateTime.now()
+    var updated_at: DateTime = DateTime.now()
+    @Version
+    var version: Int64 = 0
 }

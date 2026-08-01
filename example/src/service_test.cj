@@ -3,6 +3,7 @@ package demo
 import std.unittest.*
 import std.unittest.testmacro.*
 import std.collection.ArrayList
+import std.time.DateTime
 import refine.*
 import mariadb.cdbc.*
 import pgsql.*
@@ -33,10 +34,11 @@ var seq: Int64 = 0
 func uid(): String { seq++; seq.toString() }
 
 func initOnce(rf: Refine): Unit {
-    let schemas: Array<TableSchema> = [UserSchema(), ProfileSchema(), PostSchema(), CommentSchema(), TagSchema(), EventSchema()]
+    let schemas: Array<TableSchema> = [UserSchema(), ProfileSchema(), PostSchema(), CommentSchema(), TagSchema(), EventSchema(), AuditNoteSchema()]
     // 每次测试先清空重建，避免残留数据/旧结构干扰
     let m = rf.migrator()
     for (schema in schemas) {
+        m.dropTable(schema)
     }
     rf.transaction { tx: Tx =>
         tx.execute("DROP TABLE IF EXISTS post_tags", [])
@@ -362,6 +364,137 @@ class ServiceChecks {
         rf.transaction { tx: Tx => EventRepo.delete(tx, ev) }
         @Expect(EventRepo.findOne(rf, p).isNone(), true)
     }
+
+    // ─── 乐观锁 / 审计字段 / 隔离级别 ──────────────────
+
+    static func auditFieldsFilled(rf: Refine): Unit {
+        let note = AuditNote()
+        note.title = "AF_" + uid()
+        rf.transaction { tx: Tx => tx.save(note) }
+        @Expect(note.id > 0, true)
+        @Expect(note.version, 1)
+        @Expect(note.created_at > DateTime.UnixEpoch, true)
+        @Expect(note.updated_at > DateTime.UnixEpoch, true)
+        // 回读确认审计字段已持久化
+        let found = AuditNote.query().using(rf).filter(AuditNote.col().id == note.id).one().getOrThrow()
+        @Expect(found.created_at > DateTime.UnixEpoch, true)
+        @Expect(found.updated_at > DateTime.UnixEpoch, true)
+        @Expect(found.version, 1)
+    }
+
+    static func auditFieldsOnUpdate(rf: Refine): Unit {
+        let note = AuditNote()
+        note.title = "AU_" + uid()
+        rf.transaction { tx: Tx => tx.save(note) }
+        @Expect(note.version, 1)
+        note.title = "AU_" + uid() + "_upd"
+        rf.transaction { tx: Tx => tx.update(note) }
+        // version 递增为主断言；updated_at 通过 DB 回读断言未回退
+        @Expect(note.version, 2)
+        let found = AuditNote.query().using(rf).filter(AuditNote.col().id == note.id).one().getOrThrow()
+        @Expect(found.version, 2)
+        @Expect(found.title, note.title)
+        @Expect(found.updated_at >= found.created_at, true)
+    }
+
+    static func optimisticLockConflict(rf: Refine): Unit {
+        let note = AuditNote()
+        note.title = "OL_" + uid()
+        rf.transaction { tx: Tx => tx.save(note) }
+        @Expect(note.version, 1)
+        try {
+            rf.transaction { tx: Tx =>
+                let found = AuditNote.query().using(tx).filter(AuditNote.col().id == note.id).one().getOrThrow()
+                // 模拟并发写：直接修改 DB 中的 version
+                tx.execute("UPDATE audit_notes SET version = version + 1 WHERE id = ?", [found.id])
+                found.title = "OL_" + uid() + "_conflict"
+                tx.update(found)
+            }
+            @Fail("expected OptimisticLockException")
+        } catch (e: OptimisticLockException) {
+            @Expect(e.entityType, "AuditNote")
+            @Expect(e.expected, 1)
+        }
+        // 事务回滚后 DB version 应仍为 1
+        let after = AuditNote.query().using(rf).filter(AuditNote.col().id == note.id).one().getOrThrow()
+        @Expect(after.version, 1)
+    }
+
+    static func optimisticLockSuccessPath(rf: Refine): Unit {
+        let note = AuditNote()
+        note.title = "OLS_" + uid()
+        rf.transaction { tx: Tx => tx.save(note) }
+        @Expect(note.version, 1)
+        note.title = "OLS_" + uid() + "_upd"
+        rf.transaction { tx: Tx => tx.update(note) }
+        @Expect(note.version, 2)
+        let found = AuditNote.query().using(rf).filter(AuditNote.col().id == note.id).one().getOrThrow()
+        @Expect(found.version, 2)
+        @Expect(found.title, note.title)
+    }
+
+    static func batchSaveAuditAndVersion(rf: Refine): Unit {
+        let n1 = AuditNote()
+        n1.title = "BS1_" + uid()
+        let n2 = AuditNote()
+        n2.title = "BS2_" + uid()
+        rf.transaction { tx: Tx => tx.batchSave([n1, n2]) }
+        @Expect(n1.version, 1)
+        @Expect(n2.version, 1)
+        @Expect(n1.created_at > DateTime.UnixEpoch, true)
+        @Expect(n2.updated_at > DateTime.UnixEpoch, true)
+        // batchSave 不回填自增 id，按 title 回读验证
+        let all = AuditNote.query().using(rf).filter(AuditNote.col().title.anyOf([n1.title, n2.title])).all()
+        @Expect(all.size, 2)
+        for (n in all) {
+            @Expect(n.version, 1)
+            @Expect(n.created_at > DateTime.UnixEpoch, true)
+        }
+    }
+
+    static func batchUpdateVersion(rf: Refine): Unit {
+        let n1 = AuditNote()
+        n1.title = "BU1_" + uid()
+        rf.transaction { tx: Tx => tx.save(n1) }
+        let n2 = AuditNote()
+        n2.title = "BU2_" + uid()
+        rf.transaction { tx: Tx => tx.save(n2) }
+        @Expect(n1.version, 1)
+        @Expect(n2.version, 1)
+        n1.title = "BU1_" + uid() + "_upd"
+        n2.title = "BU2_" + uid() + "_upd"
+        // 关键验证：batchUpdate 不应误报冲突（rowCount == entities.size）
+        rf.transaction { tx: Tx => tx.batchUpdate([n1, n2]) }
+        @Expect(n1.version, 2)
+        @Expect(n2.version, 2)
+        let all = AuditNote.query().using(rf).filter(AuditNote.col().id.anyOf([n1.id, n2.id])).all()
+        @Expect(all.size, 2)
+        for (n in all) {
+            @Expect(n.version, 2)
+        }
+    }
+
+    static func isolationLevel(rf: Refine): Unit {
+        let d = rf.getDialect().name()
+        let note = AuditNote()
+        note.title = "ISO_" + uid()
+        rf.transaction(IsolationLevel.Serializable) { tx: Tx =>
+            tx.save(note)
+            if (d == "postgresql") {
+                let qr = tx.query("SELECT current_setting('transaction_isolation')", [])
+                if (qr.next()) {
+                    @Expect(qr.get<String>(0 + rf.getParamOffset()), "serializable")
+                }
+                qr.close()
+            } else {
+                let qr = tx.query("SELECT @@transaction_isolation", [])
+                if (qr.next()) {
+                    @Expect(qr.get<String>(0 + rf.getParamOffset()), "SERIALIZABLE")
+                }
+                qr.close()
+            }
+        }
+    }
 }
 
 // ─── MySQL 测试类 ───────────────────────────────────────
@@ -441,6 +574,27 @@ public class MySQLServiceTest {
 
     @TestCase
     public func testForUpdateQuery(): Unit { ServiceChecks.forUpdateQuery(rf) }
+
+    @TestCase
+    public func testAuditFieldsFilled(): Unit { ServiceChecks.auditFieldsFilled(rf) }
+
+    @TestCase
+    public func testAuditFieldsOnUpdate(): Unit { ServiceChecks.auditFieldsOnUpdate(rf) }
+
+    @TestCase
+    public func testOptimisticLockConflict(): Unit { ServiceChecks.optimisticLockConflict(rf) }
+
+    @TestCase
+    public func testOptimisticLockSuccessPath(): Unit { ServiceChecks.optimisticLockSuccessPath(rf) }
+
+    @TestCase
+    public func testBatchSaveAuditAndVersion(): Unit { ServiceChecks.batchSaveAuditAndVersion(rf) }
+
+    @TestCase
+    public func testBatchUpdateVersion(): Unit { ServiceChecks.batchUpdateVersion(rf) }
+
+    @TestCase
+    public func testIsolationLevel(): Unit { ServiceChecks.isolationLevel(rf) }
 }
 
 // ─── PostgreSQL 测试类 ──────────────────────────────────
@@ -520,4 +674,25 @@ public class PostgreSQLServiceTest {
 
     @TestCase
     public func testForUpdateQuery(): Unit { ServiceChecks.forUpdateQuery(rf) }
+
+    @TestCase
+    public func testAuditFieldsFilled(): Unit { ServiceChecks.auditFieldsFilled(rf) }
+
+    @TestCase
+    public func testAuditFieldsOnUpdate(): Unit { ServiceChecks.auditFieldsOnUpdate(rf) }
+
+    @TestCase
+    public func testOptimisticLockConflict(): Unit { ServiceChecks.optimisticLockConflict(rf) }
+
+    @TestCase
+    public func testOptimisticLockSuccessPath(): Unit { ServiceChecks.optimisticLockSuccessPath(rf) }
+
+    @TestCase
+    public func testBatchSaveAuditAndVersion(): Unit { ServiceChecks.batchSaveAuditAndVersion(rf) }
+
+    @TestCase
+    public func testBatchUpdateVersion(): Unit { ServiceChecks.batchUpdateVersion(rf) }
+
+    @TestCase
+    public func testIsolationLevel(): Unit { ServiceChecks.isolationLevel(rf) }
 }
