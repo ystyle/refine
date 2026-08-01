@@ -584,6 +584,10 @@ func buildTxSaveExtend(className: String, pkFields: ArrayList<FieldInfo>, hasCli
     let auditCreate = buildAuditCreateTokens(fields, "entity")
     let versionInit = buildVersionInitTokens(fields, "entity")
     let preTokens = auditCreate + Token(TokenKind.NL) + versionInit
+    // 操作层 visited 守卫（defense-in-depth）：正常流程不触发——cascadePostSave 在调用
+    // saveCascade/updateCascade 前已先 `visitedContains` 预检子对象。与 deleteCascade 的
+    // visitedKeyContains 守卫不同：delete 守卫是 load-bearing（cascadeDelete 子循环直接调用
+    // deleteCascade 不做预检，该守卫负责环上行不重复 DELETE）
     let cascadePre = quote(
         if (visitedContains(visited, entity)) { return }
         entity.cascadePreSave(this, visited)
@@ -1172,6 +1176,8 @@ func buildTxUpdateExtend(className: String, fields: ArrayList<FieldInfo>, tableN
     let nameLit = Token(TokenKind.STRING_LITERAL, className)
     let auditUpdate = buildAuditUpdateTokens(fields, "entity")
     let versionName = findVersionField(fields)
+    // 同 buildTxSaveExtend：save/update 操作层 visited 守卫是 defense-in-depth，
+    // 与 deleteCascade 的 load-bearing visitedKeyContains 守卫不对称（delete 环守卫防重复 DELETE）
     let cascadePre = quote(
         if (visitedContains(visited, entity)) { return }
         entity.cascadePreSave(this, visited)
@@ -1312,36 +1318,41 @@ func buildTxSoftDeleteExtend(className: String, pkFields: ArrayList<FieldInfo>):
     let deleteSQLFuncName = Token(TokenKind.IDENTIFIER, className + "DeleteSQL")
     let nameLit = Token(TokenKind.STRING_LITERAL, className)
     let keyTokens = buildCascadeKeyTokens(className, pkFields, "entity")
+    let deleteHookHead = quote(
+        $(keyTokens)
+        if (visitedKeyContains(visited, key)) { return }
+        let scope = Scope<$(cn)>(entity)
+        scope.db = Some(this)
+        if (this.ref.isSome()) { this.ref.getOrThrow().executeHooks($(nameLit), HookKind.TxBeforeDelete, scope) }
+        if (scope.aborted) { throw scope.error.getOrThrow() }
+    )
+    let deleteAfterHooks = quote(
+        let afterScope = Scope<$(cn)>(entity)
+        afterScope.db = Some(this)
+        if (this.ref.isSome()) { this.ref.getOrThrow().executeHooks($(nameLit), HookKind.TxAfterDelete, afterScope) }
+    )
     quote(
         extend Tx {
             public func delete(entity: $(cn)): Unit {
                 this.deleteCascade(entity, ArrayList<String>())
             }
             public func deleteCascade(entity: $(cn), visited: ArrayList<String>): Unit {
-                $(keyTokens)
-                if (visitedKeyContains(visited, key)) { return }
+                $(deleteHookHead)
                 entity.cascadeDelete(this, visited)
-                let scope = Scope<$(cn)>(entity)
-                scope.db = Some(this)
-                if (this.ref.isSome()) { this.ref.getOrThrow().executeHooks($(nameLit), HookKind.TxBeforeDelete, scope) }
-                if (scope.aborted) { throw scope.error.getOrThrow() }
                 let (sql, params) = $(softDeleteSQLFuncName)(entity)
                 this.execute(sql, params)
-                let afterScope = Scope<$(cn)>(entity)
-                afterScope.db = Some(this)
-                if (this.ref.isSome()) { this.ref.getOrThrow().executeHooks($(nameLit), HookKind.TxAfterDelete, afterScope) }
+                $(deleteAfterHooks)
             }
 
             public func physicalDelete(entity: $(cn)): Unit {
-                let scope = Scope<$(cn)>(entity)
-                scope.db = Some(this)
-                if (this.ref.isSome()) { this.ref.getOrThrow().executeHooks($(nameLit), HookKind.TxBeforeDelete, scope) }
-                if (scope.aborted) { throw scope.error.getOrThrow() }
+                this.physicalDeleteCascade(entity, ArrayList<String>())
+            }
+            public func physicalDeleteCascade(entity: $(cn), visited: ArrayList<String>): Unit {
+                $(deleteHookHead)
+                entity.cascadeDelete(this, visited)
                 let (sql, params) = $(deleteSQLFuncName)(entity)
                 this.execute(sql, params)
-                let afterScope = Scope<$(cn)>(entity)
-                afterScope.db = Some(this)
-                if (this.ref.isSome()) { this.ref.getOrThrow().executeHooks($(nameLit), HookKind.TxAfterDelete, afterScope) }
+                $(deleteAfterHooks)
             }
         }
     )
@@ -1360,11 +1371,11 @@ func buildTxDeleteExtend(className: String, pkFields: ArrayList<FieldInfo>): Tok
             public func deleteCascade(entity: $(cn), visited: ArrayList<String>): Unit {
                 $(keyTokens)
                 if (visitedKeyContains(visited, key)) { return }
-                entity.cascadeDelete(this, visited)
                 let scope = Scope<$(cn)>(entity)
                 scope.db = Some(this)
                 if (this.ref.isSome()) { this.ref.getOrThrow().executeHooks($(nameLit), HookKind.TxBeforeDelete, scope) }
                 if (scope.aborted) { throw scope.error.getOrThrow() }
+                entity.cascadeDelete(this, visited)
                 let (sql, params) = $(deleteSQLFuncName)(entity)
                 this.execute(sql, params)
                 let afterScope = Scope<$(cn)>(entity)

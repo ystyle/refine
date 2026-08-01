@@ -2619,6 +2619,52 @@ public class TxCascadeTest {
     }
 }
 
+// ─── delete 钩子 abort 不删子 + physicalDelete 级联 ────────
+
+@Test
+public class TxDeleteHookAbortTest {
+    @TestCase
+    public func testTxDeleteHookAbortSkipsCascadeDelete(): Unit {
+        clearHooks()
+        let conn = CaptureConnection()
+        let rf = Refine(RMockDS(), SQLiteDialect(), 0)
+        let tx = Tx(conn, rf, 0)
+        let p = PostWithRel()
+        p.id = 5
+        let cols: Array<ColumnInfo> = [MapperMockColumnInfo("id", false), MapperMockColumnInfo("body", false), MapperMockColumnInfo("post_id", false)]
+        conn.stmt.queryResult = MapperMockQueryResult(cols, [Array<Any>(3, {i => if (i == 0) { 9 } else if (i == 1) { "hi" } else { 5 }})])
+        rf.hook<PostWithRel>("PostWithRel", HookKind.TxBeforeDelete) { scope: Scope<PostWithRel> =>
+            scope.abort(Exception("blocked"))
+        }
+        try {
+            tx.delete(p)
+            @Fail("expected abort exception")
+        } catch (e: Exception) {
+            @Expect(e.message, "blocked")
+        }
+        @Expect(conn.stmt.capturedSqlHistory.size, 0)
+    }
+}
+
+@Test
+public class TxPhysicalDeleteCascadeTest {
+    @TestCase
+    public func testTxPhysicalDeleteCascadesChildren(): Unit {
+        clearHooks()
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        let p = SoftDeleteParent()
+        p.id = 1
+        let cols: Array<ColumnInfo> = [MapperMockColumnInfo("id", false), MapperMockColumnInfo("name", false), MapperMockColumnInfo("deleted_at", false), MapperMockColumnInfo("parent_id", false)]
+        conn.stmt.queryResult = MapperMockQueryResult(cols, [Array<Any>(4, {i => if (i == 0) { 2 } else if (i == 1) { "c" } else if (i == 2) { 0 } else { 1 }})])
+        tx.physicalDelete(p)
+        @Expect(conn.stmt.capturedSqlHistory.size, 3)
+        @Expect(conn.stmt.capturedSqlHistory[0], "SELECT * FROM softDeleteChild WHERE parent_id = ?")
+        @Expect(conn.stmt.capturedSqlHistory[1].contains("UPDATE softDeleteChild SET deleted_at"), true)
+        @Expect(conn.stmt.capturedSqlHistory[2], "DELETE FROM softDeleteParent WHERE id = ?")
+    }
+}
+
 private func capturedInt64(arr: ArrayList<Any>, index: Int64): Int64 {
     match (arr[index]) {
         case v: Int64 => v
