@@ -167,4 +167,13 @@ public class RefineExceptionTest {
         let e: Exception = ConnectionException("chain test")
         @Expect(e.message, "chain test")
     }
+
+    @TestCase
+    public func testCreateOptimisticLockException(): Unit {
+        let e = OptimisticLockException("User", 42, 3, 5)
+        @Expect(e.message.contains("User"), true)
+        @Expect(e.message.contains("42"), true)
+        @Expect(e.expected, 3)
+        @Expect(e.actual, 5)
+    }
 }
