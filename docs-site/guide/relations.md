@@ -173,7 +173,7 @@ ref_many 的完整关联管理 API（六件套）见下文 [ref_many 关联管�
 
 ## 级联保存
 
-`tx.save(entity)` / `tx.update(entity)` / `tx.delete(entity)` 会沿关联字段自动级联处理子对象（引用对象除外）。所有级联写操作都在同一个事务中执行。
+`tx.save(entity)` / `tx.update(entity)` / `tx.delete(entity)` 会沿关联字段自动级联处理子对象（不落库/删除被引对象本身）。所有级联写操作都在同一个事务中执行。
 
 ### 级联语义
 
@@ -183,6 +183,8 @@ ref_many 的完整关联管理 API（六件套）见下文 [ref_many 关联管�
 | `has_one`（`@Rel[has_one]`） | 回填 fk 并级联 save/update 子对象 | 回填 fk 并级联 save/update 子对象 | 从库加载并级联删除子对象 |
 | `has_many`（`@Rel[has_many]`） | 回填 fk 并级联 save/update 每个子对象 | 回填 fk 并级联 save/update 每个子对象 | 从库加载并逐个级联删除子对象 |
 | `ref_many`（`@Ref[Target, via]`） | 按关联列表重建中间表 | 按关联列表重建中间表 | 清空中间表（不动目标表） |
+
+> **注意**：`ref_many` 列表整体赋值后，列表中的目标对象须先 `tx.save` 获取 id（`id != 0`），否则级联在 `appendX` 守卫处抛异常（见 [六件套 - 目标 id 校验](#ref-many-关联管理-api六件套)）。
 
 ### 级联保存示例
 
@@ -284,14 +286,14 @@ DELETE FROM user WHERE id = ?              -- 删除父
 `@Ref[Target, via: ...]` 关联除 `loadX` / `getX` 外，还会为每个 `ref_many` 字段生成一套直接操作中间表的 API（以 `Post.tags` 为例，方法名 = 动词 + 字段名首字母大写）：
 
 ```cangjie
-p.appendTags(tx, t: Tag): Post               // 添加关联：INSERT 中间表，返回 this
-p.appendTags(tx, arr: Array<Tag>): Post      // 批量添加
-p.replaceTags(tx, arr: Array<Tag>): Post     // 重建：先清空再批量添加
-p.deleteTags(tx, t: Tag): Post               // 移除关联：DELETE 中间表对应行
-p.deleteTags(tx, arr: Array<Tag>): Post      // 批量移除
-p.clearTags(tx): Post                        // 清空所有关联：DELETE 全部中间表行
-p.countTags(tx): Int64                       // 中间表记录数
-p.loadTags(tx): ArrayList<Tag>               // 通过中间表加载全部关联
+appendTags(tx: Tx, tag: Tag): Post               // 添加关联：INSERT 中间表，返回 this
+appendTags(tx: Tx, arr: Array<Tag>): Post        // 逐条 INSERT（循环）
+replaceTags(tx: Tx, arr: Array<Tag>): Post       // 重建：先清空再逐条添加
+deleteTags(tx: Tx, tag: Tag): Post               // 移除关联：DELETE 中间表对应行
+deleteTags(tx: Tx, arr: Array<Tag>): Post        // 逐条移除（循环）
+clearTags(tx: Tx): Post                          // 清空所有关联：DELETE 全部中间表行
+countTags(tx: Tx): Int64                         // 中间表记录数
+loadTags(tx: Tx): ArrayList<Tag>                 // 通过中间表加载全部关联
 ```
 
 行为约定：
@@ -299,18 +301,20 @@ p.loadTags(tx): ArrayList<Tag>               // 通过中间表加载全部关�
 - 所有方法**必须传入 `tx`**（在事务内执行）
 - 除 `countX` / `loadX` 外返回 `this`，可链式调用
 - **目标 id 为空抛异常**：`append` / `delete` 传入的目标 `id == 0`（Int64 主键）或 `id == ""`（String 主键）时抛 `Exception`（消息形如 `"ref_many tags: target Tag has empty id, save it first"`）——先 `tx.save` 目标再关联
+- **源实体需先 `tx.save`（`this.id != 0`）**：空 id 守卫只校验目标，未保存的源实体调用 `append` / `delete` 会向中间表写入 0 值源 id 的脏关联
 - 这些方法与 `loadX`/`getX` 互不干扰：直接操作中间表，不修改实体的关联列表
 
 ```cangjie
+// t1/t2/t3 为已 tx.save 的 Tag
 rf.transaction { tx: Tx =>
     let p = Post.query().using(tx)
         .filter(Post.col().id == 1)
         .one().getOrThrow()
 
     p.appendTags(tx, t1)                 // INSERT INTO post_tags (post_id, tag_id) VALUES (?, ?)
-    p.appendTags(tx, [t2, t3])           // 批量
+    p.appendTags(tx, [t2, t3])           // 逐条 INSERT
     p.countTags(tx)                      // 3
-    p.replaceTags(tx, [t1])              // DELETE 全部 + INSERT 一条 → 1
+    p.replaceTags(tx, [t1])              // DELETE 全部 + 逐条 INSERT → 1
     p.deleteTags(tx, t1)                 // 移除 → 0
     p.clearTags(tx)                      // 清空
     p.appendTags(tx, t1)                 // 重新关联
@@ -323,5 +327,5 @@ rf.transaction { tx: Tx =>
 - **`has_one` 的 String 主键目标 include 加载暂不支持**：`@Rel[has_one, Target, fk]` 且目标主键为 `String` 时，`include`/JOIN 预加载无法正确还原子对象 id（宏层无法跨类内省目标主键类型）。`ref_to` 的 String 主键目标不受影响（fk 类型在当前表可直接推导）
 - **`batchSave` / `batchUpdate` 不级联**：批量操作只处理传入的实体数组本身，不沿关联字段递归
 - **update 列表移除不自动删库**：从关联列表移除子对象不会删除其数据库行
-- **级联非事务内需自行保证原子性**：级联多次写库，若拆散在多个事务中执行，失败时需自行 `tx.rollback()` 保证一致
+- **级联与主写操作同在一个事务内**：由单个 `tx.save/update/delete` 触发，全程共用同一个 `tx`；`rf.transaction` 包裹时失败自动回滚，仅当手动管理连接/会话事务时才需自行 `tx.rollback()`
 - **`physicalDelete` 硬删父**：子对象仍遵循自身删除策略，软删子仍软删，可能留下引用已删父的行
