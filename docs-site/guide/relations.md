@@ -141,10 +141,10 @@ Order.query().using(rf)
 ### @Rel[has_many] 生成
 
 ```
-addItem(tx: Tx, entity: OrderItem): Self   // 添加子实体（自动设置 fk）
+addItems(tx: Tx, entity: OrderItem): Self   // 添加子实体（自动设置 fk）
 loadItems(tx: Tx): ArrayList<OrderItem>    // 按 fk 加载所有子实体
 clearItems(tx: Tx): Self                   // 删除所有子实体
-removeItem(tx: Tx, entity: OrderItem): Self // 删除指定子实体
+removeItems(tx: Tx, entity: OrderItem): Self // 删除指定子实体
 ```
 
 ### @Rel[has_one] 生成
