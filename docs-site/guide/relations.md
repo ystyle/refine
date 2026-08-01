@@ -263,6 +263,18 @@ p.author = None         // p.user_id = 0（清空）
 - `None`：清空 fk
 - 仅当标记置位时执行（同上，整体赋值触发）
 
+> **注意（幽灵对象边界）**：被引对象须先 `tx.save` 获取 id，再赋值给父实体并 save/update；否则 fk 会按 `id == 0` 视为清空，标记在第一次 save 后复位，后续 update 不再回填。需重新整体赋值才回填。
+>
+> ```cangjie
+> p.author = Some(u)   // u.id == 0（幽灵对象）
+> tx.save(p)           // user_id = 0，标记复位
+> tx.save(u)           // u 得 id
+> tx.update(p)         // 标记已复位 → user_id 仍为 0（不回填）
+>
+> p.author = Some(u)   // 重新整体赋值 → 标记置位
+> tx.update(p)         // 回填 user_id = u.id
+> ```
+
 ### 级联更新
 
 `tx.update(user)` 沿 has 系子对象逐层递归，规则与 save 一致：子无 id → save，有 id → update。子对象若带 `@Version`，级联 update 同样走乐观锁校验并递增 version。

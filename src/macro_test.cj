@@ -2675,6 +2675,36 @@ public class TxCascadeTest {
     }
 
     @TestCase
+    public func testCascadeRefToGhostThenSaveTargetDoesNotBackfill(): Unit {
+        clearHooks()
+        let conn = CaptureConnection()
+        conn.stmt.mockLastInsertIdQueue.add(1)   // p.id
+        conn.stmt.mockLastInsertIdQueue.add(2)   // u.id
+        conn.stmt.mockRowCount = 1
+        let tx = Tx(conn)
+        let p = PostWithRel()
+        let u = User()
+        u.name = "ghost"
+        p.author = Some(u)                       // u.id == 0，幽灵对象
+        @Expect(p._authorModified, true)
+        tx.save(p)
+        @Expect(p.id, 1)
+        @Expect(p.user_id, 0)                    // 幽灵对象按清空处理
+        @Expect(p._authorModified, false)        // 标记已复位
+        // 后存目标得 id → update 不再回填（一次性语义）
+        tx.save(u)
+        @Expect(u.id, 2)
+        tx.update(p)
+        @Expect(p.user_id, 0)                    // 不回填，user_id 保持 0
+        // 重新整体赋值 → 回填
+        p.author = Some(u)
+        @Expect(p._authorModified, true)
+        tx.update(p)
+        @Expect(p.user_id, 2)
+        @Expect(p._authorModified, false)
+    }
+
+    @TestCase
     public func testTxUpdateNoCascadeWhenRelsNotModified(): Unit {
         clearHooks()
         let conn = CaptureConnection()
