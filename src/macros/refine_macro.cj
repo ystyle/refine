@@ -220,6 +220,64 @@ func findAuditFields(fields: ArrayList<FieldInfo>): (Bool, Bool) {
     (hasCreatedAt, hasUpdatedAt)
 }
 
+func findVersionField(fields: ArrayList<FieldInfo>): String {
+    for (f in fields) { if (f.isVersion) { return f.name } }
+    ""
+}
+
+func buildAuditCreateTokens(fields: ArrayList<FieldInfo>): Tokens {
+    let (hasCreatedAt, hasUpdatedAt) = findAuditFields(fields)
+    var body = Tokens()
+    if (hasCreatedAt) { body = body + quote(entity.created_at = DateTime.now();) }
+    if (hasUpdatedAt) {
+        body = body + Token(TokenKind.NL)
+        body = body + quote(entity.updated_at = DateTime.now();)
+    }
+    body
+}
+
+func buildAuditUpdateTokens(fields: ArrayList<FieldInfo>): Tokens {
+    let (_, hasUpdatedAt) = findAuditFields(fields)
+    if (hasUpdatedAt) { quote(entity.updated_at = DateTime.now();) } else { Tokens() }
+}
+
+func buildVersionInitTokens(fields: ArrayList<FieldInfo>): Tokens {
+    let vname = findVersionField(fields)
+    if (vname == "") { return Tokens() }
+    let ident = Token(TokenKind.IDENTIFIER, vname)
+    quote(
+        if (entity.$(ident) == 0) { entity.$(ident) = 1 }
+    )
+}
+
+func buildPkValueExprTokens(pkFields: ArrayList<FieldInfo>): Tokens {
+    if (pkFields.size == 0) {
+        Tokens() + Token(TokenKind.IDENTIFIER, "entity") + Token(TokenKind.DOT) + Token(TokenKind.IDENTIFIER, "id")
+    } else if (pkFields.size == 1) {
+        let pk = pkFields.get(0).getOrThrow()
+        Tokens() + Token(TokenKind.IDENTIFIER, "entity") + Token(TokenKind.DOT) + Token(TokenKind.IDENTIFIER, pk.name)
+    } else {
+        var t = Tokens()
+        var first = true
+        for (pk in pkFields) {
+            if (!first) {
+                t = t + Token(TokenKind.ADD)
+                t = t + Token(TokenKind.STRING_LITERAL, ":")
+                t = t + Token(TokenKind.ADD)
+            }
+            t = t + Token(TokenKind.IDENTIFIER, "entity")
+            t = t + Token(TokenKind.DOT)
+            t = t + Token(TokenKind.IDENTIFIER, pk.name)
+            t = t + Token(TokenKind.DOT)
+            t = t + Token(TokenKind.IDENTIFIER, "toString")
+            t = t + Token(TokenKind.LPAREN)
+            t = t + Token(TokenKind.RPAREN)
+            first = false
+        }
+        t
+    }
+}
+
 func buildPkWhereClause(pkFields: ArrayList<FieldInfo>): String {
     var parts = ArrayList<String>()
     for (pk in pkFields) { parts.add(pk.name + " = ?") }
@@ -511,16 +569,20 @@ func buildAutoPkReturningCols(pkFields: ArrayList<FieldInfo>): String {
     String.join(cols.toArray(), delimiter: ", ")
 }
 
-func buildTxSaveExtend(className: String, pkFields: ArrayList<FieldInfo>, hasClientPk: Bool, hasAutoPk: Bool): Tokens {
+func buildTxSaveExtend(className: String, pkFields: ArrayList<FieldInfo>, hasClientPk: Bool, hasAutoPk: Bool, fields: ArrayList<FieldInfo>): Tokens {
     let cn = Token(TokenKind.IDENTIFIER, className)
     let insertSQLFuncName = Token(TokenKind.IDENTIFIER, className + "InsertSQL")
     let nameLit = Token(TokenKind.STRING_LITERAL, className)
+    let auditCreate = buildAuditCreateTokens(fields)
+    let versionInit = buildVersionInitTokens(fields)
+    let preTokens = auditCreate + Token(TokenKind.NL) + versionInit
 
     if (hasClientPk) {
         let genTokens = buildClientPkGenTokens(pkFields)
         quote(
             extend Tx {
                 public func save(entity: $(cn)): Unit {
+                    $(preTokens)
                     $(genTokens)
                     let scope = Scope<$(cn)>(entity)
                     scope.db = Some(this)
@@ -542,6 +604,7 @@ func buildTxSaveExtend(className: String, pkFields: ArrayList<FieldInfo>, hasCli
         quote(
             extend Tx {
                 public func save(entity: $(cn)): Unit {
+                    $(preTokens)
                     let scope = Scope<$(cn)>(entity)
                     scope.db = Some(this)
                     if (this.ref.isSome()) { this.ref.getOrThrow().executeHooks($(nameLit), HookKind.TxBeforeCreate, scope) }
@@ -565,6 +628,7 @@ func buildTxSaveExtend(className: String, pkFields: ArrayList<FieldInfo>, hasCli
         quote(
             extend Tx {
                 public func save(entity: $(cn)): Unit {
+                    $(preTokens)
                     let scope = Scope<$(cn)>(entity)
                     scope.db = Some(this)
                     if (this.ref.isSome()) { this.ref.getOrThrow().executeHooks($(nameLit), HookKind.TxBeforeCreate, scope) }
@@ -904,10 +968,13 @@ func buildTxBatchSaveExtend(className: String, pkFields: ArrayList<FieldInfo>, h
 func buildUpdateSQLString(fields: ArrayList<FieldInfo>, tableName: String, pkFields: ArrayList<FieldInfo>): String {
     var setClauses = ArrayList<String>()
     for (f in fields) {
-        if (f.isPk || isRelationField(f.typeName)) { continue }
+        if (f.isPk || isRelationField(f.typeName) || f.isVersion) { continue }
         setClauses.add(f.name + " = ?")
     }
-    "UPDATE " + tableName + " SET " + String.join(setClauses.toArray(), delimiter: ", ") + buildPkWhereClause(pkFields)
+    var sql = "UPDATE " + tableName + " SET " + String.join(setClauses.toArray(), delimiter: ", ") + buildPkWhereClause(pkFields)
+    let versionName = findVersionField(fields)
+    if (versionName != "") { sql = sql + " AND " + versionName + " = ?" }
+    sql
 }
 
 func buildUpdateEntityArrayTokens(fields: ArrayList<FieldInfo>, pkFields: ArrayList<FieldInfo>): Tokens {
@@ -915,7 +982,7 @@ func buildUpdateEntityArrayTokens(fields: ArrayList<FieldInfo>, pkFields: ArrayL
     arr = arr + Token(TokenKind.LSQUARE)
     var first = true
     for (f in fields) {
-        if (f.isPk || isRelationField(f.typeName)) { continue }
+        if (f.isPk || isRelationField(f.typeName) || f.isVersion) { continue }
         if (!first) { arr = arr + Token(TokenKind.COMMA) }
         arr = arr + Token(TokenKind.IDENTIFIER, "entity")
         arr = arr + Token(TokenKind.DOT)
@@ -928,6 +995,13 @@ func buildUpdateEntityArrayTokens(fields: ArrayList<FieldInfo>, pkFields: ArrayL
         arr = arr + Token(TokenKind.IDENTIFIER, "entity")
         arr = arr + Token(TokenKind.DOT)
         arr = arr + Token(TokenKind.IDENTIFIER, pk.name)
+    }
+    let versionName = findVersionField(fields)
+    if (versionName != "") {
+        if (first) { first = false } else { arr = arr + Token(TokenKind.COMMA) }
+        arr = arr + Token(TokenKind.IDENTIFIER, "entity")
+        arr = arr + Token(TokenKind.DOT)
+        arr = arr + Token(TokenKind.IDENTIFIER, versionName)
     }
     arr = arr + Token(TokenKind.RSQUARE)
     arr
@@ -944,25 +1018,61 @@ func buildUpdateSQLFunc(className: String, fields: ArrayList<FieldInfo>, tableNa
     )
 }
 
-func buildTxUpdateExtend(className: String): Tokens {
+func buildTxUpdateExtend(className: String, fields: ArrayList<FieldInfo>, tableName: String, pkFields: ArrayList<FieldInfo>): Tokens {
     let cn = Token(TokenKind.IDENTIFIER, className)
     let updateSQLFuncName = Token(TokenKind.IDENTIFIER, className + "UpdateSQL")
     let nameLit = Token(TokenKind.STRING_LITERAL, className)
-    quote(
-        extend Tx {
-            public func update(entity: $(cn)): Unit {
-                let scope = Scope<$(cn)>(entity)
-                scope.db = Some(this)
-                if (this.ref.isSome()) { this.ref.getOrThrow().executeHooks($(nameLit), HookKind.TxBeforeUpdate, scope) }
-                if (scope.aborted) { throw scope.error.getOrThrow() }
-                let (sql, params) = $(updateSQLFuncName)(entity)
-                this.execute(sql, params)
-                let afterScope = Scope<$(cn)>(entity)
-                afterScope.db = Some(this)
-                if (this.ref.isSome()) { this.ref.getOrThrow().executeHooks($(nameLit), HookKind.TxAfterUpdate, afterScope) }
+    let auditUpdate = buildAuditUpdateTokens(fields)
+    let versionName = findVersionField(fields)
+
+    if (versionName == "") {
+        quote(
+            extend Tx {
+                public func update(entity: $(cn)): Unit {
+                    $(auditUpdate)
+                    let scope = Scope<$(cn)>(entity)
+                    scope.db = Some(this)
+                    if (this.ref.isSome()) { this.ref.getOrThrow().executeHooks($(nameLit), HookKind.TxBeforeUpdate, scope) }
+                    if (scope.aborted) { throw scope.error.getOrThrow() }
+                    let (sql, params) = $(updateSQLFuncName)(entity)
+                    this.execute(sql, params)
+                    let afterScope = Scope<$(cn)>(entity)
+                    afterScope.db = Some(this)
+                    if (this.ref.isSome()) { this.ref.getOrThrow().executeHooks($(nameLit), HookKind.TxAfterUpdate, afterScope) }
+                }
             }
-        }
-    )
+        )
+    } else {
+        let versionIdent = Token(TokenKind.IDENTIFIER, versionName)
+        let versionSelectSQL = "SELECT " + versionName + " FROM " + tableName + buildPkWhereClause(pkFields)
+        let versionSelectSQLToken = Token(TokenKind.STRING_LITERAL, versionSelectSQL)
+        let pkParams = buildDeleteEntityParamsToken(pkFields)
+        let pkValueExpr = buildPkValueExprTokens(pkFields)
+        quote(
+            extend Tx {
+                public func update(entity: $(cn)): Unit {
+                    $(auditUpdate)
+                    let scope = Scope<$(cn)>(entity)
+                    scope.db = Some(this)
+                    if (this.ref.isSome()) { this.ref.getOrThrow().executeHooks($(nameLit), HookKind.TxBeforeUpdate, scope) }
+                    if (scope.aborted) { throw scope.error.getOrThrow() }
+                    let (sql, params) = $(updateSQLFuncName)(entity)
+                    let result = this.execute(sql, params)
+                    if (result.rowCount == 0) {
+                        let qr = this.query($(versionSelectSQLToken), $(pkParams))
+                        var actual: Int64 = -1
+                        if (qr.next()) { actual = qr.get<Int64>(0) }
+                        qr.close()
+                        throw OptimisticLockException($(nameLit), $(pkValueExpr), entity.$(versionIdent), actual)
+                    }
+                    entity.$(versionIdent) = entity.$(versionIdent) + 1
+                    let afterScope = Scope<$(cn)>(entity)
+                    afterScope.db = Some(this)
+                    if (this.ref.isSome()) { this.ref.getOrThrow().executeHooks($(nameLit), HookKind.TxAfterUpdate, afterScope) }
+                }
+            }
+        )
+    }
 }
 
 func buildDeleteSQLString(tableName: String, pkFields: ArrayList<FieldInfo>): String {
@@ -1499,7 +1609,6 @@ public macro Refine(input: Tokens): Tokens {
     mergedFields = applyIdAnnotations(mergedFields, idMessages)
     let versionMessages = getChildMessages("Version")
     mergedFields = applyAuditVersion(mergedFields, versionMessages)
-    let (hasCreatedAt, hasUpdatedAt) = findAuditFields(mergedFields)
     let pkFields = getPkFields(mergedFields)
     var hasClientPk = false
     for (i in 0..pkFields.size) {
@@ -1593,13 +1702,13 @@ public macro Refine(input: Tokens): Tokens {
     let colsStruct = buildColsStruct(className, classDecl)
     let relClass = buildRelClass(className, mergedRels)
     let insertSQLFunc = buildInsertSQLFunc(className, mergedFields, tableName)
-    let txSaveExtend = buildTxSaveExtend(className, pkFields, hasClientPk, hasAutoPk)
+    let txSaveExtend = buildTxSaveExtend(className, pkFields, hasClientPk, hasAutoPk, mergedFields)
     let batchInsertSQLFunc = buildBatchInsertSQLFunc(className, mergedFields, tableName)
     let txBatchSaveExtend = buildTxBatchSaveExtend(className, pkFields, hasClientPk)
     let batchUpdateSQLFunc = buildBatchUpdateSQLFunc(className, mergedFields, tableName, pkFields)
     let txBatchUpdateExtend = buildTxBatchUpdateExtend(className)
     let updateSQLFunc = buildUpdateSQLFunc(className, mergedFields, tableName, pkFields)
-    let txUpdateExtend = buildTxUpdateExtend(className)
+    let txUpdateExtend = buildTxUpdateExtend(className, mergedFields, tableName, pkFields)
     let txUpsertExtend = buildTxUpsertExtend(className, mergedFields, tableName, pkFields)
     let rowMapper = buildRowMapper(className, classDecl, mergedRels)
     buildRelationMethods(className, mergedRels, classDecl)
@@ -1810,7 +1919,7 @@ public macro Table(attr: Tokens, input: Tokens): Tokens {
 // Marker annotation: entity with this annotation uses physical delete instead of soft delete
 public macro HardDelete(input: Tokens): Tokens { input }
 
-public macro Version(attr: Tokens, input: Tokens): Tokens {
+public macro Version(input: Tokens): Tokens {
     let decl = parseDecl(input)
     setItem("fieldName", decl.identifier.value)
     input

@@ -5,6 +5,7 @@ import std.collection.ArrayList
 import std.collection.HashMap
 import std.database.sql.{Connection, Transaction, QueryResult, UpdateResult, ColumnInfo, ConnectionState, SqlDbType}
 import std.database.sql.Statement as SqlStatement
+import std.time.DateTime
 import std.unittest.*
 import std.unittest.testmacro.*
 
@@ -148,14 +149,15 @@ class CaptureStatement <: SqlStatement {
     public var capturedParams: Array<Any> = []
     public var mockLastInsertId: Int64 = 0
     public var mockRowCount: Int64 = 0
+    public var queryResult: QueryResult = MockQueryResult()
 
     public func close(): Unit {}
     public func isClosed(): Bool { false }
     public prop parameterColumnInfos: Array<ColumnInfo> { get() { _parameterColumnInfos } }
     private var _parameterColumnInfos: Array<ColumnInfo> = []
 
-    public func query(): QueryResult { MockQueryResult() }
-    public func query(_params: Array<SqlDbType>): QueryResult { MockQueryResult() }
+    public func query(): QueryResult { queryResult }
+    public func query(_params: Array<SqlDbType>): QueryResult { queryResult }
 
     public func set<T>(index: Int, value: T): Unit {}
     public func setNull(index: Int): Unit {}
@@ -176,6 +178,25 @@ class CaptureConnection <: Connection {
         stmt.capturedSql = sql
         stmt
     }
+}
+
+class RowQueryResult <: QueryResult {
+    private var value: Any
+    private var consumed: Bool = false
+    public init(value: Any) { this.value = value }
+    public func close(): Unit {}
+    public func isClosed(): Bool { false }
+    public prop columnInfos: Array<ColumnInfo> { get() { _columnInfos } }
+    private var _columnInfos: Array<ColumnInfo> = []
+    public func next(): Bool {
+        if (!consumed) { consumed = true; return true }
+        false
+    }
+    public func next(_values: Array<SqlDbType>): Bool { false }
+    public func get<T>(index: Int): T {
+        match (value) { case v: T => v; case _ => throw Exception("type mismatch") }
+    }
+    public func getOrNull<T>(index: Int): ?T { None }
 }
 
 @Test
@@ -1050,5 +1071,232 @@ public class SoftDeleteTest {
             }
         }
         @Expect(hasDeletedAtFilter, false)
+    }
+}
+
+// ─── Version + Audit Fields Tests ───────────────────────
+
+@Refine
+public class VersionedPost {
+    var id: Int64 = 0
+    var title: String = ""
+    var created_at: DateTime = DateTime.now()
+    var updated_at: DateTime = DateTime.now()
+    @Version
+    var version: Int64 = 0
+}
+
+@Refine
+public class VersionedEvent {
+    @Id[]
+    var id: String = ""
+    var name: String = ""
+    @Version
+    var version: Int64 = 0
+}
+
+@Refine
+public class VersionedOrderTag {
+    @Id[]
+    var order_id: Int64 = 0
+    @Id[]
+    var tag_id: Int64 = 0
+    var quantity: Int64 = 0
+    @Version
+    var version: Int64 = 0
+}
+
+@Test
+public class VersionedEntityTest {
+    @TestCase
+    public func testTxSaveVersionedPostInjectsAuditAndVersion(): Unit {
+        clearHooks()
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        let before = DateTime.now()
+
+        let p = VersionedPost()
+        p.title = "Audit"
+        tx.save(p)
+
+        let after = DateTime.now()
+        @Expect(p.version, 1)
+        @Expect(p.created_at >= before, true)
+        @Expect(p.created_at <= after, true)
+        @Expect(p.updated_at >= before, true)
+        @Expect(p.updated_at <= after, true)
+        @Expect(conn.stmt.capturedSql.contains("INSERT INTO versionedPost (title, created_at, updated_at, version)"), true)
+        @Expect(conn.stmt.capturedSql.contains("VALUES (?, ?, ?, ?)"), true)
+    }
+
+    @TestCase
+    public func testTxUpdateVersionedPostSuccess(): Unit {
+        clearHooks()
+        let conn = CaptureConnection()
+        conn.stmt.mockRowCount = 1
+        let tx = Tx(conn)
+
+        let p = VersionedPost()
+        p.id = 1
+        p.title = "Updated"
+        p.version = 1
+        tx.update(p)
+
+        @Expect(conn.stmt.capturedSql, "UPDATE versionedPost SET title = ?, created_at = ?, updated_at = ? WHERE id = ? AND version = ?")
+        @Expect(p.version, 2)
+    }
+
+    @TestCase
+    public func testTxUpdateVersionedPostConflictNotFound(): Unit {
+        clearHooks()
+        let conn = CaptureConnection()
+        conn.stmt.mockRowCount = 0
+        let tx = Tx(conn)
+
+        let p = VersionedPost()
+        p.id = 1
+        p.title = "Updated"
+        p.version = 1
+        try {
+            tx.update(p)
+            @Fail("expected OptimisticLockException")
+        } catch (e: OptimisticLockException) {
+            @Expect(e.entityType, "VersionedPost")
+            @Expect(e.pk, "1")
+            @Expect(e.expected, 1)
+            @Expect(e.actual, -1)
+            @Expect(conn.stmt.capturedSql, "SELECT version FROM versionedPost WHERE id = ?")
+        }
+    }
+
+    @TestCase
+    public func testTxUpdateVersionedPostConflictActualVersion(): Unit {
+        clearHooks()
+        let conn = CaptureConnection()
+        conn.stmt.mockRowCount = 0
+        conn.stmt.queryResult = RowQueryResult(5)
+        let tx = Tx(conn)
+
+        let p = VersionedPost()
+        p.id = 1
+        p.title = "Updated"
+        p.version = 1
+        try {
+            tx.update(p)
+            @Fail("expected OptimisticLockException")
+        } catch (e: OptimisticLockException) {
+            @Expect(e.actual, 5)
+            @Expect(e.expected, 1)
+        }
+    }
+
+    @TestCase
+    public func testTxSaveVersionedEventClientPkInjectsVersion(): Unit {
+        clearHooks()
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+
+        let e = VersionedEvent()
+        e.id = "evt-1"
+        e.name = "E"
+        tx.save(e)
+
+        @Expect(e.version, 1)
+        @Expect(conn.stmt.capturedSql.contains("INSERT INTO versionedEvent (id, name, version)"), true)
+    }
+
+    @TestCase
+    public func testTxUpdateVersionedEventConflictStringPk(): Unit {
+        clearHooks()
+        let conn = CaptureConnection()
+        conn.stmt.mockRowCount = 0
+        let tx = Tx(conn)
+
+        let e = VersionedEvent()
+        e.id = "evt-1"
+        e.version = 1
+        try {
+            tx.update(e)
+            @Fail("expected OptimisticLockException")
+        } catch (ex: OptimisticLockException) {
+            @Expect(ex.pk, "evt-1")
+            @Expect(ex.expected, 1)
+            @Expect(ex.actual, -1)
+        }
+    }
+
+    @TestCase
+    public func testTxUpdateVersionedPostKeepsVersionOutOfSet(): Unit {
+        clearHooks()
+        let conn = CaptureConnection()
+        conn.stmt.mockRowCount = 1
+        let tx = Tx(conn)
+
+        let p = VersionedPost()
+        p.id = 1
+        p.version = 3
+        tx.update(p)
+
+        let setPart = conn.stmt.capturedSql.split("SET ")[1].split(" WHERE")[0]
+        @Expect(setPart.contains("version"), false)
+        @Expect(setPart.contains("created_at"), true)
+        @Expect(p.version, 4)
+    }
+
+    @TestCase
+    public func testTxSaveVersionedOrderTagInjectsVersion(): Unit {
+        clearHooks()
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+
+        let ot = VersionedOrderTag()
+        ot.order_id = 1
+        ot.tag_id = 2
+        ot.quantity = 5
+        tx.save(ot)
+
+        @Expect(ot.version, 1)
+        @Expect(conn.stmt.capturedSql.contains("INSERT INTO versionedOrderTag (order_id, tag_id, quantity, version)"), true)
+    }
+
+    @TestCase
+    public func testTxUpdateVersionedOrderTagCompoundPk(): Unit {
+        clearHooks()
+        let conn = CaptureConnection()
+        conn.stmt.mockRowCount = 1
+        let tx = Tx(conn)
+
+        let ot = VersionedOrderTag()
+        ot.order_id = 1
+        ot.tag_id = 2
+        ot.quantity = 5
+        ot.version = 1
+        tx.update(ot)
+
+        @Expect(conn.stmt.capturedSql, "UPDATE versionedOrderTag SET quantity = ? WHERE order_id = ? AND tag_id = ? AND version = ?")
+        @Expect(ot.version, 2)
+    }
+
+    @TestCase
+    public func testTxUpdateVersionedOrderTagConflictCompositePk(): Unit {
+        clearHooks()
+        let conn = CaptureConnection()
+        conn.stmt.mockRowCount = 0
+        conn.stmt.queryResult = RowQueryResult(3)
+        let tx = Tx(conn)
+
+        let ot = VersionedOrderTag()
+        ot.order_id = 1
+        ot.tag_id = 2
+        ot.quantity = 5
+        ot.version = 1
+        try {
+            tx.update(ot)
+            @Fail("expected OptimisticLockException")
+        } catch (e: OptimisticLockException) {
+            @Expect(e.pk, "1:2")
+            @Expect(e.expected, 1)
+            @Expect(e.actual, 3)
+        }
     }
 }
