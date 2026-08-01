@@ -584,12 +584,21 @@ func buildTxSaveExtend(className: String, pkFields: ArrayList<FieldInfo>, hasCli
     let auditCreate = buildAuditCreateTokens(fields, "entity")
     let versionInit = buildVersionInitTokens(fields, "entity")
     let preTokens = auditCreate + Token(TokenKind.NL) + versionInit
+    let cascadePre = quote(
+        if (visitedContains(visited, entity)) { return }
+        entity.cascadePreSave(this, visited)
+    )
+    let cascadePost = quote(entity.cascadePostSave(this, visited))
 
     if (hasClientPk) {
         let genTokens = buildClientPkGenTokens(pkFields)
         quote(
             extend Tx {
                 public func save(entity: $(cn)): Unit {
+                    this.saveCascade(entity, ArrayList<Object>())
+                }
+                public func saveCascade(entity: $(cn), visited: ArrayList<Object>): Unit {
+                    $(cascadePre)
                     $(preTokens)
                     $(genTokens)
                     let scope = Scope<$(cn)>(entity)
@@ -598,6 +607,7 @@ func buildTxSaveExtend(className: String, pkFields: ArrayList<FieldInfo>, hasCli
                     if (scope.aborted) { throw scope.error.getOrThrow() }
                     let (sql, params) = $(insertSQLFuncName)(entity)
                     let _ = this.execute(sql, params)
+                    $(cascadePost)
                     let afterScope = Scope<$(cn)>(entity)
                     afterScope.db = Some(this)
                     if (this.ref.isSome()) { this.ref.getOrThrow().executeHooks($(nameLit), HookKind.TxAfterCreate, afterScope) }
@@ -612,6 +622,10 @@ func buildTxSaveExtend(className: String, pkFields: ArrayList<FieldInfo>, hasCli
         quote(
             extend Tx {
                 public func save(entity: $(cn)): Unit {
+                    this.saveCascade(entity, ArrayList<Object>())
+                }
+                public func saveCascade(entity: $(cn), visited: ArrayList<Object>): Unit {
+                    $(cascadePre)
                     $(preTokens)
                     let scope = Scope<$(cn)>(entity)
                     scope.db = Some(this)
@@ -626,6 +640,7 @@ func buildTxSaveExtend(className: String, pkFields: ArrayList<FieldInfo>, hasCli
                         let result = this.execute(sql, params)
                         $(assignTokens)
                     }
+                    $(cascadePost)
                     let afterScope = Scope<$(cn)>(entity)
                     afterScope.db = Some(this)
                     if (this.ref.isSome()) { this.ref.getOrThrow().executeHooks($(nameLit), HookKind.TxAfterCreate, afterScope) }
@@ -636,6 +651,10 @@ func buildTxSaveExtend(className: String, pkFields: ArrayList<FieldInfo>, hasCli
         quote(
             extend Tx {
                 public func save(entity: $(cn)): Unit {
+                    this.saveCascade(entity, ArrayList<Object>())
+                }
+                public func saveCascade(entity: $(cn), visited: ArrayList<Object>): Unit {
+                    $(cascadePre)
                     $(preTokens)
                     let scope = Scope<$(cn)>(entity)
                     scope.db = Some(this)
@@ -643,6 +662,7 @@ func buildTxSaveExtend(className: String, pkFields: ArrayList<FieldInfo>, hasCli
                     if (scope.aborted) { throw scope.error.getOrThrow() }
                     let (sql, params) = $(insertSQLFuncName)(entity)
                     let _ = this.execute(sql, params)
+                    $(cascadePost)
                     let afterScope = Scope<$(cn)>(entity)
                     afterScope.db = Some(this)
                     if (this.ref.isSome()) { this.ref.getOrThrow().executeHooks($(nameLit), HookKind.TxAfterCreate, afterScope) }
@@ -1152,11 +1172,20 @@ func buildTxUpdateExtend(className: String, fields: ArrayList<FieldInfo>, tableN
     let nameLit = Token(TokenKind.STRING_LITERAL, className)
     let auditUpdate = buildAuditUpdateTokens(fields, "entity")
     let versionName = findVersionField(fields)
+    let cascadePre = quote(
+        if (visitedContains(visited, entity)) { return }
+        entity.cascadePreSave(this, visited)
+    )
+    let cascadePost = quote(entity.cascadePostSave(this, visited))
 
     if (versionName == "") {
         quote(
             extend Tx {
                 public func update(entity: $(cn)): Unit {
+                    this.updateCascade(entity, ArrayList<Object>())
+                }
+                public func updateCascade(entity: $(cn), visited: ArrayList<Object>): Unit {
+                    $(cascadePre)
                     $(auditUpdate)
                     let scope = Scope<$(cn)>(entity)
                     scope.db = Some(this)
@@ -1164,6 +1193,7 @@ func buildTxUpdateExtend(className: String, fields: ArrayList<FieldInfo>, tableN
                     if (scope.aborted) { throw scope.error.getOrThrow() }
                     let (sql, params) = $(updateSQLFuncName)(entity)
                     this.execute(sql, params)
+                    $(cascadePost)
                     let afterScope = Scope<$(cn)>(entity)
                     afterScope.db = Some(this)
                     if (this.ref.isSome()) { this.ref.getOrThrow().executeHooks($(nameLit), HookKind.TxAfterUpdate, afterScope) }
@@ -1179,6 +1209,10 @@ func buildTxUpdateExtend(className: String, fields: ArrayList<FieldInfo>, tableN
         quote(
             extend Tx {
                 public func update(entity: $(cn)): Unit {
+                    this.updateCascade(entity, ArrayList<Object>())
+                }
+                public func updateCascade(entity: $(cn), visited: ArrayList<Object>): Unit {
+                    $(cascadePre)
                     $(auditUpdate)
                     let scope = Scope<$(cn)>(entity)
                     scope.db = Some(this)
@@ -1194,6 +1228,7 @@ func buildTxUpdateExtend(className: String, fields: ArrayList<FieldInfo>, tableN
                         throw OptimisticLockException($(nameLit), $(pkValueExpr), entity.$(versionIdent), actual)
                     }
                     entity.$(versionIdent) = entity.$(versionIdent) + 1
+                    $(cascadePost)
                     let afterScope = Scope<$(cn)>(entity)
                     afterScope.db = Some(this)
                     if (this.ref.isSome()) { this.ref.getOrThrow().executeHooks($(nameLit), HookKind.TxAfterUpdate, afterScope) }
@@ -1271,14 +1306,21 @@ func buildSoftDeleteSQLFunc(className: String, tableName: String, pkFields: Arra
     )
 }
 
-func buildTxSoftDeleteExtend(className: String): Tokens {
+func buildTxSoftDeleteExtend(className: String, pkFields: ArrayList<FieldInfo>): Tokens {
     let cn = Token(TokenKind.IDENTIFIER, className)
     let softDeleteSQLFuncName = Token(TokenKind.IDENTIFIER, className + "SoftDeleteSQL")
     let deleteSQLFuncName = Token(TokenKind.IDENTIFIER, className + "DeleteSQL")
     let nameLit = Token(TokenKind.STRING_LITERAL, className)
+    let keyTokens = buildCascadeKeyTokens(className, pkFields, "entity")
     quote(
         extend Tx {
             public func delete(entity: $(cn)): Unit {
+                this.deleteCascade(entity, ArrayList<String>())
+            }
+            public func deleteCascade(entity: $(cn), visited: ArrayList<String>): Unit {
+                $(keyTokens)
+                if (visitedKeyContains(visited, key)) { return }
+                entity.cascadeDelete(this, visited)
                 let scope = Scope<$(cn)>(entity)
                 scope.db = Some(this)
                 if (this.ref.isSome()) { this.ref.getOrThrow().executeHooks($(nameLit), HookKind.TxBeforeDelete, scope) }
@@ -1305,13 +1347,20 @@ func buildTxSoftDeleteExtend(className: String): Tokens {
     )
 }
 
-func buildTxDeleteExtend(className: String): Tokens {
+func buildTxDeleteExtend(className: String, pkFields: ArrayList<FieldInfo>): Tokens {
     let cn = Token(TokenKind.IDENTIFIER, className)
     let deleteSQLFuncName = Token(TokenKind.IDENTIFIER, className + "DeleteSQL")
     let nameLit = Token(TokenKind.STRING_LITERAL, className)
+    let keyTokens = buildCascadeKeyTokens(className, pkFields, "entity")
     quote(
         extend Tx {
             public func delete(entity: $(cn)): Unit {
+                this.deleteCascade(entity, ArrayList<String>())
+            }
+            public func deleteCascade(entity: $(cn), visited: ArrayList<String>): Unit {
+                $(keyTokens)
+                if (visitedKeyContains(visited, key)) { return }
+                entity.cascadeDelete(this, visited)
                 let scope = Scope<$(cn)>(entity)
                 scope.db = Some(this)
                 if (this.ref.isSome()) { this.ref.getOrThrow().executeHooks($(nameLit), HookKind.TxBeforeDelete, scope) }
@@ -1717,21 +1766,23 @@ func getDeclFieldType(cd: ClassDecl, name: String): String {
 
 // cascadeDelete 环检测基于 (type, id) 而非对象引用：loadX 每次新建实体实例，
 // refEq 无法识别 DB 常驻环（如自引用表数据损坏成 A↔B），必须用 "<ClassName>:<pk...>" 键
-func buildCascadeKeyTokens(className: String, pkFields: ArrayList<FieldInfo>): Tokens {
+// target：生成键表达式时使用的实体变量名（cascadeDelete 用 this，Tx.deleteCascade 用 entity）
+func buildCascadeKeyTokens(className: String, pkFields: ArrayList<FieldInfo>, target: String): Tokens {
     let cnLit = Token(TokenKind.STRING_LITERAL, className + ":")
+    let targetTok = Token(TokenKind.IDENTIFIER, target)
     if (pkFields.size == 0) {
         return quote(
-            var key = $(cnLit) + this.id.toString()
+            var key = $(cnLit) + $(targetTok).id.toString()
         )
     }
     let firstPk = pkFields.get(0).getOrThrow()
     var keyTokens = quote(
-        var key = $(cnLit) + this.$(Token(TokenKind.IDENTIFIER, firstPk.name)).toString()
+        var key = $(cnLit) + $(targetTok).$(Token(TokenKind.IDENTIFIER, firstPk.name)).toString()
     )
     for (i in 1..pkFields.size) {
         let pk = pkFields.get(i).getOrThrow()
         keyTokens = keyTokens + Token(TokenKind.NL) + quote(
-            key = key + ":" + this.$(Token(TokenKind.IDENTIFIER, pk.name)).toString()
+            key = key + ":" + $(targetTok).$(Token(TokenKind.IDENTIFIER, pk.name)).toString()
         )
     }
     keyTokens
@@ -1789,9 +1840,9 @@ func buildCascadeMethods(className: String, rels: ArrayList<RelInfo>, fields: Ar
                                 if (!visitedContains(visited, $(childTok))) {
                                     let anyId: Any = $(childTok).id
                                     match (anyId) {
-                                        case v: Int64 => if (v != 0) { tx.update($(childTok)) } else { tx.save($(childTok)) }
-                                        case v: String => if (v != "") { tx.update($(childTok)) } else { tx.save($(childTok)) }
-                                        case _ => tx.save($(childTok))
+                                        case v: Int64 => if (v != 0) { tx.updateCascade($(childTok), visited) } else { tx.saveCascade($(childTok), visited) }
+                                        case v: String => if (v != "") { tx.updateCascade($(childTok), visited) } else { tx.saveCascade($(childTok), visited) }
+                                        case _ => tx.saveCascade($(childTok), visited)
                                     }
                                 }
                             }
@@ -1807,9 +1858,9 @@ func buildCascadeMethods(className: String, rels: ArrayList<RelInfo>, fields: Ar
                                     if (!visitedContains(visited, $(subTok))) {
                                         let anyId: Any = $(subTok).id
                                         match (anyId) {
-                                            case v: Int64 => if (v != 0) { tx.update($(subTok)) } else { tx.save($(subTok)) }
-                                            case v: String => if (v != "") { tx.update($(subTok)) } else { tx.save($(subTok)) }
-                                            case _ => tx.save($(subTok))
+                                            case v: Int64 => if (v != 0) { tx.updateCascade($(subTok), visited) } else { tx.saveCascade($(subTok), visited) }
+                                            case v: String => if (v != "") { tx.updateCascade($(subTok), visited) } else { tx.saveCascade($(subTok), visited) }
+                                            case _ => tx.saveCascade($(subTok), visited)
                                         }
                                     }
                                 case None => ()
@@ -1856,15 +1907,14 @@ func buildCascadeMethods(className: String, rels: ArrayList<RelInfo>, fields: Ar
                     let childTok = Token(TokenKind.IDENTIFIER, "child")
                     deleteBody = deleteBody + quote(
                         for ($(childTok) in this.$(loadName)(tx)) {
-                            $(childTok).cascadeDelete(tx, visited)
-                            tx.delete($(childTok))
+                            tx.deleteCascade($(childTok), visited)
                         }
                     )
                 } else {
                     let subTok = Token(TokenKind.IDENTIFIER, "sub")
                     deleteBody = deleteBody + quote(
                         match (this.$(loadName)(tx)) {
-                            case Some($(subTok)) => $(subTok).cascadeDelete(tx, visited); tx.delete($(subTok))
+                            case Some($(subTok)) => tx.deleteCascade($(subTok), visited)
                             case None => ()
                         }
                     )
@@ -1879,7 +1929,7 @@ func buildCascadeMethods(className: String, rels: ArrayList<RelInfo>, fields: Ar
             }
         }
     }
-    let keyTokens = buildCascadeKeyTokens(className, pkFields)
+    let keyTokens = buildCascadeKeyTokens(className, pkFields, "this")
     cd.body.decls.add(FuncDecl(quote(
         public func cascadeDelete(tx: Tx, visited: ArrayList<String>): $(cn) {
             $(keyTokens)
@@ -2199,7 +2249,7 @@ public macro Refine(input: Tokens): Tokens {
     var txDeleteExtend: Tokens
     if (isSoftDelete) {
         let softDeleteSQLFunc = buildSoftDeleteSQLFunc(className, tableName, pkFields)
-        txDeleteExtend = buildTxSoftDeleteExtend(className)
+        txDeleteExtend = buildTxSoftDeleteExtend(className, pkFields)
         classDecl.toTokens() + Token(TokenKind.NL) + Token(TokenKind.NL) +
             colsStruct + Token(TokenKind.NL) + Token(TokenKind.NL) + relClass +
             Token(TokenKind.NL) + Token(TokenKind.NL) + insertSQLFunc +
@@ -2220,7 +2270,7 @@ public macro Refine(input: Tokens): Tokens {
             Token(TokenKind.NL) + Token(TokenKind.NL) + schemaClass +
             junctionTokens
     } else {
-        txDeleteExtend = buildTxDeleteExtend(className)
+        txDeleteExtend = buildTxDeleteExtend(className, pkFields)
         classDecl.toTokens() + Token(TokenKind.NL) + Token(TokenKind.NL) +
             colsStruct + Token(TokenKind.NL) + Token(TokenKind.NL) + relClass +
             Token(TokenKind.NL) + Token(TokenKind.NL) + insertSQLFunc +

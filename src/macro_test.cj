@@ -189,6 +189,26 @@ public class CategoryWithRel {
     var children: ArrayList<CategoryWithRel> = ArrayList<CategoryWithRel>()
 }
 
+@Refine
+public class SoftDeleteParent {
+    var id: Int64 = 0
+    var name: String = ""
+    @Field[Integer]
+    var deleted_at: Int64 = 0
+
+    @Rel[has_many, SoftDeleteChild, parent_id]
+    var children: ArrayList<SoftDeleteChild> = ArrayList<SoftDeleteChild>()
+}
+
+@Refine
+public class SoftDeleteChild {
+    var id: Int64 = 0
+    var name: String = ""
+    @Field[Integer]
+    var deleted_at: Int64 = 0
+    var parent_id: Int64 = 0
+}
+
 class HookFlag {
     var called: Bool = false
     public init() {}
@@ -2080,16 +2100,15 @@ public class CascadeTraversalTest {
         let root = CategoryWithRel()
         root.id = 5
         root.cascadeDelete(tx, ArrayList<String>())
-        // 环在第二层被 "CategoryWithRel:5" 键命中即返回：仅 2 次 SELECT + 2 次 DELETE，不重复删除
-        @Expect(conn.stmt.capturedSqlHistory.size, 4)
+        // 环在第二层被 "CategoryWithRel:5" 键命中即返回，且 deleteCascade 操作层守卫阻止对
+        // A'(id=5)（与 root 同 (type,id) 的副本行）重复 DELETE：仅 2 次 SELECT + 1 次 DELETE(B)
+        @Expect(conn.stmt.capturedSqlHistory.size, 3)
         @Expect(conn.stmt.capturedSqlHistory[0], "SELECT * FROM categoryWithRel WHERE parent_id = ?")
         @Expect(conn.stmt.capturedSqlHistory[1], "SELECT * FROM categoryWithRel WHERE parent_id = ?")
         @Expect(conn.stmt.capturedSqlHistory[2], "DELETE FROM categoryWithRel WHERE id = ?")
-        @Expect(conn.stmt.capturedSqlHistory[3], "DELETE FROM categoryWithRel WHERE id = ?")
         @Expect(capturedInt64(conn.stmt.capturedSetValues, 0), 5)
         @Expect(capturedInt64(conn.stmt.capturedSetValues, 1), 9)
-        @Expect(capturedInt64(conn.stmt.capturedSetValues, 2), 5)
-        @Expect(capturedInt64(conn.stmt.capturedSetValues, 3), 9)
+        @Expect(capturedInt64(conn.stmt.capturedSetValues, 2), 9)
     }
 
     @TestCase
@@ -2420,6 +2439,183 @@ public class RefManyStringPkTargetTest {
             case v: String => @Expect(v, "uuid-tag-1")
             case _ => @Fail("expected String tag id param")
         }
+    }
+}
+
+// ─── Tx.save/update/delete 级联接线 ───────────────────────
+
+@Test
+public class TxCascadeTest {
+    @TestCase
+    public func testTxSaveCascadesHasManyBackfillsFk(): Unit {
+        clearHooks()
+        let conn = CaptureConnection()
+        conn.stmt.mockLastInsertId = 42
+        let tx = Tx(conn)
+        let p = PostWithRel()
+        let c = Comment()
+        c.body = "hello"
+        let list = ArrayList<Comment>()
+        list.add(c)
+        p.comments = list
+        tx.save(p)
+        @Expect(conn.stmt.capturedSqlHistory.size, 2)
+        @Expect(conn.stmt.capturedSqlHistory[0], "INSERT INTO postWithRel (title, user_id, post_id) VALUES (?, ?, ?)")
+        @Expect(conn.stmt.capturedSqlHistory[1], "INSERT INTO comment (body, post_id) VALUES (?, ?)")
+        @Expect(p.id, 42)
+        @Expect(c.post_id, 42)
+        @Expect(capturedInt64(conn.stmt.capturedSetValues, 4), 42)
+    }
+
+    @TestCase
+    public func testTxSaveCascadesHasOneBackfillsFk(): Unit {
+        clearHooks()
+        let conn = CaptureConnection()
+        conn.stmt.mockLastInsertId = 7
+        let tx = Tx(conn)
+        let u = UserWithRel()
+        let pr = ProfileWithRel()
+        pr.bio = "b"
+        u.profile = Some(pr)
+        tx.save(u)
+        @Expect(conn.stmt.capturedSqlHistory.size, 2)
+        @Expect(conn.stmt.capturedSqlHistory[0], "INSERT INTO userWithRel (name) VALUES (?)")
+        @Expect(conn.stmt.capturedSqlHistory[1], "INSERT INTO profileWithRel (bio, user_id) VALUES (?, ?)")
+        @Expect(u.id, 7)
+        @Expect(pr.user_id, 7)
+    }
+
+    @TestCase
+    public func testTxUpdateCascadesChildInsertAndUpdate(): Unit {
+        clearHooks()
+        let conn = CaptureConnection()
+        conn.stmt.mockRowCount = 1
+        let tx = Tx(conn)
+        let p = PostWithRel()
+        p.id = 5
+        let existing = Comment()
+        existing.id = 9
+        existing.body = "updated"
+        let fresh = Comment()
+        fresh.body = "new"
+        let list = ArrayList<Comment>()
+        list.add(existing)
+        list.add(fresh)
+        p.comments = list
+        tx.update(p)
+        @Expect(conn.stmt.capturedSqlHistory.size, 3)
+        @Expect(conn.stmt.capturedSqlHistory[0], "UPDATE postWithRel SET title = ?, user_id = ?, post_id = ? WHERE id = ?")
+        @Expect(conn.stmt.capturedSqlHistory[1], "UPDATE comment SET body = ?, post_id = ? WHERE id = ?")
+        @Expect(conn.stmt.capturedSqlHistory[2], "INSERT INTO comment (body, post_id) VALUES (?, ?)")
+        @Expect(existing.post_id, 5)
+        @Expect(fresh.post_id, 5)
+    }
+
+    @TestCase
+    public func testTxDeleteCascadesChildrenThenParent(): Unit {
+        clearHooks()
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        let p = PostWithRel()
+        p.id = 5
+        let cols: Array<ColumnInfo> = [MapperMockColumnInfo("id", false), MapperMockColumnInfo("body", false), MapperMockColumnInfo("post_id", false)]
+        conn.stmt.queryResult = MapperMockQueryResult(cols, [Array<Any>(3, {i => if (i == 0) { 9 } else if (i == 1) { "hi" } else { 5 }})])
+        tx.delete(p)
+        @Expect(conn.stmt.capturedSqlHistory.size, 4)
+        @Expect(conn.stmt.capturedSqlHistory[0], "SELECT * FROM comment WHERE post_id = ?")
+        @Expect(conn.stmt.capturedSqlHistory[1], "DELETE FROM comment WHERE id = ?")
+        @Expect(conn.stmt.capturedSqlHistory[2], "DELETE FROM post_tags WHERE postWithRel_id = ?")
+        @Expect(conn.stmt.capturedSqlHistory[3], "DELETE FROM postWithRel WHERE id = ?")
+        @Expect(capturedInt64(conn.stmt.capturedSetValues, 0), 5)
+        @Expect(capturedInt64(conn.stmt.capturedSetValues, 1), 9)
+    }
+
+    @TestCase
+    public func testTxDeleteSoftDeleteCascadesChildren(): Unit {
+        clearHooks()
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        let p = SoftDeleteParent()
+        p.id = 1
+        let cols: Array<ColumnInfo> = [MapperMockColumnInfo("id", false), MapperMockColumnInfo("name", false), MapperMockColumnInfo("deleted_at", false), MapperMockColumnInfo("parent_id", false)]
+        conn.stmt.queryResult = MapperMockQueryResult(cols, [Array<Any>(4, {i => if (i == 0) { 2 } else if (i == 1) { "c" } else if (i == 2) { 0 } else { 1 }})])
+        tx.delete(p)
+        @Expect(conn.stmt.capturedSqlHistory.size, 3)
+        @Expect(conn.stmt.capturedSqlHistory[0], "SELECT * FROM softDeleteChild WHERE parent_id = ?")
+        @Expect(conn.stmt.capturedSqlHistory[1].contains("UPDATE softDeleteChild SET deleted_at"), true)
+        @Expect(conn.stmt.capturedSqlHistory[2].contains("UPDATE softDeleteParent SET deleted_at"), true)
+    }
+
+    @TestCase
+    public func testTxSaveCycleNoDuplicateInsertSharedVisited(): Unit {
+        clearHooks()
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        let a = CategoryWithRel()
+        let b = CategoryWithRel()
+        let la = ArrayList<CategoryWithRel>()
+        la.add(b)
+        a.children = la
+        let lb = ArrayList<CategoryWithRel>()
+        lb.add(a)
+        b.children = lb
+        tx.save(a)
+        @Expect(conn.stmt.capturedSqlHistory.size, 2)
+        @Expect(conn.stmt.capturedSqlHistory[0], "INSERT INTO categoryWithRel (name, parent_id) VALUES (?, ?)")
+        @Expect(conn.stmt.capturedSqlHistory[1], "INSERT INTO categoryWithRel (name, parent_id) VALUES (?, ?)")
+    }
+
+    @TestCase
+    public func testTxSaveRefToBackfillsFkBeforeInsert(): Unit {
+        clearHooks()
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        let p = PostWithRel()
+        let u = User()
+        u.id = 5
+        p.author = Some(u)
+        tx.save(p)
+        @Expect(conn.stmt.capturedSqlHistory.size, 1)
+        @Expect(conn.stmt.capturedSqlHistory[0], "INSERT INTO postWithRel (title, user_id, post_id) VALUES (?, ?, ?)")
+        @Expect(capturedInt64(conn.stmt.capturedSetValues, 1), 5)
+    }
+
+    @TestCase
+    public func testTxUpdateNoCascadeWhenRelsNotModified(): Unit {
+        clearHooks()
+        let conn = CaptureConnection()
+        conn.stmt.mockRowCount = 1
+        let tx = Tx(conn)
+        let p = PostWithRel()
+        p.id = 5
+        p.title = "x"
+        tx.update(p)
+        @Expect(conn.stmt.capturedSqlHistory.size, 1)
+        @Expect(conn.stmt.capturedSqlHistory[0], "UPDATE postWithRel SET title = ?, user_id = ?, post_id = ? WHERE id = ?")
+    }
+
+    @TestCase
+    public func testTxSaveRefManyRebuildsJunction(): Unit {
+        clearHooks()
+        let conn = CaptureConnection()
+        conn.stmt.mockLastInsertId = 42
+        let tx = Tx(conn)
+        let p = PostWithRel()
+        let t1 = Tag()
+        t1.id = 7
+        let t2 = Tag()
+        t2.id = 8
+        let list = ArrayList<Tag>()
+        list.add(t1)
+        list.add(t2)
+        p.tags = list
+        tx.save(p)
+        @Expect(conn.stmt.capturedSqlHistory.size, 4)
+        @Expect(conn.stmt.capturedSqlHistory[0], "INSERT INTO postWithRel (title, user_id, post_id) VALUES (?, ?, ?)")
+        @Expect(conn.stmt.capturedSqlHistory[1], "DELETE FROM post_tags WHERE postWithRel_id = ?")
+        @Expect(conn.stmt.capturedSqlHistory[2], "INSERT INTO post_tags (postWithRel_id, tag_id) VALUES (?, ?)")
+        @Expect(conn.stmt.capturedSqlHistory[3], "INSERT INTO post_tags (postWithRel_id, tag_id) VALUES (?, ?)")
+        @Expect(capturedInt64(conn.stmt.capturedSetValues, 3), 42)
     }
 }
 
