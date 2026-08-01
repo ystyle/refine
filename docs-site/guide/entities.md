@@ -235,7 +235,8 @@ class Note {
 - 字段必须为 `Int64`，且每个实体至多一个 `@Version` 字段（违反则编译报错）
 - `Tx.save` / `Tx.batchSave` / `Tx.upsert` 插入时 version 为 0 自动置 1
 - `Tx.update`：SQL 的 WHERE 追加 `AND version = ?`，更新成功则 version 自动 +1（内存与数据库同步）；若匹配行数为 0（版本过期或行被删）抛 [OptimisticLockException](../api/error.md#optimisticlockexception)
-- `Tx.batchUpdate`：version 参与 CASE 更新（值取 version+1），执行后若匹配行数不足抛 [OptimisticLockException](../api/error.md#optimisticlockexception)
+- `Tx.batchUpdate`：version 参与 CASE 更新（值取 version+1），执行后若匹配行数不足（有行不存在）抛 [OptimisticLockException](../api/error.md#optimisticlockexception)
+- **注意**：`batchUpdate` 只检测「行缺失」，**不校验存量行的版本是否过期**（CASE 更新不比较旧版本）；若并发修改了同一行，batchUpdate 会静默覆盖并写回 version+1。需要逐行版本强校验时，请使用 `tx.update` 逐条更新
 - `Tx.upsert` 冲突更新侧：version 自动 +1
 - **注意**：`Tx.upsert` 冲突更新时仅数据库侧的 version 递增，实体内存中的 version 不回写；若 upsert 后需继续 `tx.update(entity)`，请先重新查询实体以获取最新 version
 - **注意**：`updateWhere` / `deleteWhere` 不校验 version
