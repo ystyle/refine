@@ -1540,6 +1540,89 @@ func buildRelationMethods(className: String, rels: ArrayList<RelInfo>, cd: Class
             cd.body.decls.add(FuncDecl(quote(
                 public func $(getFuncName)(): ArrayList<$(targetType)> { this.$(fieldIdent) }
             )))
+
+            // ref_many 六件套：append / replace / delete / clear / count（load 已有）
+            let cn = Token(TokenKind.IDENTIFIER, className)
+            let targetParam = Token(TokenKind.IDENTIFIER, lowerTableName(r.target))
+            let arrayParam = Token(TokenKind.IDENTIFIER, r.fieldName)
+            let appendName = Token(TokenKind.IDENTIFIER, "append" + prefix)
+            let replaceName = Token(TokenKind.IDENTIFIER, "replace" + prefix)
+            let deleteName = Token(TokenKind.IDENTIFIER, "delete" + prefix)
+            let clearName = Token(TokenKind.IDENTIFIER, "clear" + prefix)
+            let countName = Token(TokenKind.IDENTIFIER, "count" + prefix)
+            let unsavedMsg = Token(TokenKind.STRING_LITERAL,
+                "ref_many " + r.fieldName + ": target " + r.target + " has empty id, save it first")
+            let insertSQL = quote(
+                "INSERT INTO " + $(viaLit) + " (" + $(sourceSchemaIdent)().tableName() + "_id, " + $(tableNameExpr) + "_id) VALUES (?, ?)"
+            )
+            let deleteSQL = quote(
+                "DELETE FROM " + $(viaLit) + " WHERE " + $(sourceSchemaIdent)().tableName() + "_id = ? AND " + $(tableNameExpr) + "_id = ?"
+            )
+            let clearSQL = quote(
+                "DELETE FROM " + $(viaLit) + " WHERE " + $(sourceSchemaIdent)().tableName() + "_id = ?"
+            )
+            let countSQL = quote(
+                "SELECT COUNT(*) FROM " + $(viaLit) + " WHERE " + $(sourceSchemaIdent)().tableName() + "_id = ?"
+            )
+            let targetIdCheck = quote(
+                let anyId: Any = $(targetParam).id
+                let isEmpty = match (anyId) {
+                    case v: Int64 => v == 0
+                    case v: String => v == ""
+                    case _ => false
+                }
+                if (isEmpty) { throw Exception($(unsavedMsg)) }
+            )
+            cd.body.decls.add(FuncDecl(quote(
+                public func $(appendName)(tx: Tx, $(targetParam): $(targetType)): $(cn) {
+                    $(targetIdCheck)
+                    let sql = $(insertSQL)
+                    tx.execute(sql, [this.id, $(targetParam).id])
+                    this
+                }
+            )))
+            cd.body.decls.add(FuncDecl(quote(
+                public func $(appendName)(tx: Tx, $(arrayParam): Array<$(targetType)>): $(cn) {
+                    for ($(targetParam) in $(arrayParam)) { this.$(appendName)(tx, $(targetParam)) }
+                    this
+                }
+            )))
+            cd.body.decls.add(FuncDecl(quote(
+                public func $(replaceName)(tx: Tx, $(arrayParam): Array<$(targetType)>): $(cn) {
+                    this.$(clearName)(tx)
+                    this.$(appendName)(tx, $(arrayParam))
+                    this
+                }
+            )))
+            cd.body.decls.add(FuncDecl(quote(
+                public func $(deleteName)(tx: Tx, $(targetParam): $(targetType)): $(cn) {
+                    $(targetIdCheck)
+                    let sql = $(deleteSQL)
+                    tx.execute(sql, [this.id, $(targetParam).id])
+                    this
+                }
+            )))
+            cd.body.decls.add(FuncDecl(quote(
+                public func $(deleteName)(tx: Tx, $(arrayParam): Array<$(targetType)>): $(cn) {
+                    for ($(targetParam) in $(arrayParam)) { this.$(deleteName)(tx, $(targetParam)) }
+                    this
+                }
+            )))
+            cd.body.decls.add(FuncDecl(quote(
+                public func $(clearName)(tx: Tx): $(cn) {
+                    let sql = $(clearSQL)
+                    tx.execute(sql, [this.id])
+                    this
+                }
+            )))
+            cd.body.decls.add(FuncDecl(quote(
+                public func $(countName)(tx: Tx): Int64 {
+                    let sql = $(countSQL)
+                    let result = tx.query(sql, [this.id])
+                    result.next()
+                    result.get<Int64>(0)
+                }
+            )))
         } else if (r.kind == "has_many") {
             let cn = Token(TokenKind.IDENTIFIER, className)
             let byField = Token(TokenKind.IDENTIFIER, r.by)

@@ -155,6 +155,7 @@ class CaptureUpdateResult <: UpdateResult {
 
 class CaptureStatement <: SqlStatement {
     public var capturedSql: String = ""
+    public var capturedSqlHistory: ArrayList<String> = ArrayList<String>()
     public var capturedParams: Array<Any> = []
     public var mockLastInsertId: Int64 = 0
     public var mockRowCount: Int64 = 0
@@ -188,6 +189,7 @@ class CaptureConnection <: Connection {
     public func getMetaData(): HashMap<String, String> { HashMap<String, String>() }
     public func prepareStatement(sql: String): SqlStatement {
         stmt.capturedSql = sql
+        stmt.capturedSqlHistory.add(sql)
         stmt
     }
 }
@@ -1682,6 +1684,170 @@ public class UnderscoreFieldEntityTest {
         let e = UnderscoreFieldEntityRowMapper(result, cm)
         @Expect(e.id, 42)
         @Expect(e._note, "internal")
+    }
+}
+
+@Test
+public class RefManyRelationApiTest {
+    @TestCase
+    public func testAppendTagsSingle(): Unit {
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        let p = PostWithRel()
+        p.id = 42
+        let t = Tag()
+        t.id = 7
+        let r = p.appendTags(tx, t)
+        @Expect(conn.stmt.capturedSql, "INSERT INTO post_tags (postWithRel_id, tag_id) VALUES (?, ?)")
+        @Expect(conn.stmt.capturedSetValues.size, 2)
+        @Expect(capturedInt64(conn.stmt.capturedSetValues, 0), 42)
+        @Expect(capturedInt64(conn.stmt.capturedSetValues, 1), 7)
+        r.clearTags(tx)
+        @Expect(conn.stmt.capturedSql, "DELETE FROM post_tags WHERE postWithRel_id = ?")
+    }
+
+    @TestCase
+    public func testAppendTagsArray(): Unit {
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        let p = PostWithRel()
+        p.id = 42
+        let t1 = Tag()
+        t1.id = 7
+        let t2 = Tag()
+        t2.id = 8
+        p.appendTags(tx, [t1, t2])
+        @Expect(conn.stmt.capturedSqlHistory.size, 2)
+        @Expect(conn.stmt.capturedSqlHistory[0], "INSERT INTO post_tags (postWithRel_id, tag_id) VALUES (?, ?)")
+        @Expect(conn.stmt.capturedSqlHistory[1], "INSERT INTO post_tags (postWithRel_id, tag_id) VALUES (?, ?)")
+        @Expect(conn.stmt.capturedSetValues.size, 4)
+        @Expect(capturedInt64(conn.stmt.capturedSetValues, 0), 42)
+        @Expect(capturedInt64(conn.stmt.capturedSetValues, 1), 7)
+        @Expect(capturedInt64(conn.stmt.capturedSetValues, 2), 42)
+        @Expect(capturedInt64(conn.stmt.capturedSetValues, 3), 8)
+    }
+
+    @TestCase
+    public func testReplaceTags(): Unit {
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        let p = PostWithRel()
+        p.id = 42
+        let t1 = Tag()
+        t1.id = 7
+        let t2 = Tag()
+        t2.id = 8
+        p.replaceTags(tx, [t1, t2])
+        @Expect(conn.stmt.capturedSqlHistory.size, 3)
+        @Expect(conn.stmt.capturedSqlHistory[0], "DELETE FROM post_tags WHERE postWithRel_id = ?")
+        @Expect(conn.stmt.capturedSqlHistory[1], "INSERT INTO post_tags (postWithRel_id, tag_id) VALUES (?, ?)")
+        @Expect(conn.stmt.capturedSqlHistory[2], "INSERT INTO post_tags (postWithRel_id, tag_id) VALUES (?, ?)")
+        @Expect(conn.stmt.capturedSetValues.size, 5)
+        @Expect(capturedInt64(conn.stmt.capturedSetValues, 0), 42)
+        @Expect(capturedInt64(conn.stmt.capturedSetValues, 1), 42)
+        @Expect(capturedInt64(conn.stmt.capturedSetValues, 2), 7)
+        @Expect(capturedInt64(conn.stmt.capturedSetValues, 3), 42)
+        @Expect(capturedInt64(conn.stmt.capturedSetValues, 4), 8)
+    }
+
+    @TestCase
+    public func testDeleteTagsSingle(): Unit {
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        let p = PostWithRel()
+        p.id = 42
+        let t = Tag()
+        t.id = 7
+        p.deleteTags(tx, t)
+        @Expect(conn.stmt.capturedSql, "DELETE FROM post_tags WHERE postWithRel_id = ? AND tag_id = ?")
+        @Expect(conn.stmt.capturedSetValues.size, 2)
+        @Expect(capturedInt64(conn.stmt.capturedSetValues, 0), 42)
+        @Expect(capturedInt64(conn.stmt.capturedSetValues, 1), 7)
+    }
+
+    @TestCase
+    public func testDeleteTagsArray(): Unit {
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        let p = PostWithRel()
+        p.id = 42
+        let t1 = Tag()
+        t1.id = 7
+        let t2 = Tag()
+        t2.id = 8
+        p.deleteTags(tx, [t1, t2])
+        @Expect(conn.stmt.capturedSqlHistory.size, 2)
+        @Expect(conn.stmt.capturedSqlHistory[0], "DELETE FROM post_tags WHERE postWithRel_id = ? AND tag_id = ?")
+        @Expect(conn.stmt.capturedSqlHistory[1], "DELETE FROM post_tags WHERE postWithRel_id = ? AND tag_id = ?")
+        @Expect(conn.stmt.capturedSetValues.size, 4)
+        @Expect(capturedInt64(conn.stmt.capturedSetValues, 0), 42)
+        @Expect(capturedInt64(conn.stmt.capturedSetValues, 1), 7)
+        @Expect(capturedInt64(conn.stmt.capturedSetValues, 2), 42)
+        @Expect(capturedInt64(conn.stmt.capturedSetValues, 3), 8)
+    }
+
+    @TestCase
+    public func testClearTags(): Unit {
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        let p = PostWithRel()
+        p.id = 42
+        p.clearTags(tx)
+        @Expect(conn.stmt.capturedSql, "DELETE FROM post_tags WHERE postWithRel_id = ?")
+        @Expect(conn.stmt.capturedSetValues.size, 1)
+        @Expect(capturedInt64(conn.stmt.capturedSetValues, 0), 42)
+    }
+
+    @TestCase
+    public func testCountTags(): Unit {
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        let p = PostWithRel()
+        p.id = 42
+        let col: ColumnInfo = MapperMockColumnInfo("COUNT(*)", false)
+        conn.stmt.queryResult = MapperMockQueryResult([col], [Array<Any>(1, {i => 5})])
+        let n = p.countTags(tx)
+        @Expect(n, 5)
+        @Expect(conn.stmt.capturedSql, "SELECT COUNT(*) FROM post_tags WHERE postWithRel_id = ?")
+        @Expect(conn.stmt.capturedSetValues.size, 1)
+        @Expect(capturedInt64(conn.stmt.capturedSetValues, 0), 42)
+    }
+
+    @TestCase
+    public func testAppendTagsUnsavedThrows(): Unit {
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        let p = PostWithRel()
+        p.id = 42
+        let t = Tag()
+        try {
+            p.appendTags(tx, t)
+            @Fail("expected exception for unsaved target")
+        } catch (e: Exception) {
+            @Expect(true, true)
+        }
+    }
+
+    @TestCase
+    public func testDeleteTagsUnsavedThrows(): Unit {
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        let p = PostWithRel()
+        p.id = 42
+        let t = Tag()
+        try {
+            p.deleteTags(tx, t)
+            @Fail("expected exception for unsaved target")
+        } catch (e: Exception) {
+            @Expect(true, true)
+        }
+    }
+}
+
+private func capturedInt64(arr: ArrayList<Any>, index: Int64): Int64 {
+    match (arr[index]) {
+        case v: Int64 => v
+        case _ => throw Exception("param " + index.toString() + " is not Int64")
     }
 }
 
