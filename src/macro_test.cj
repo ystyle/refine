@@ -247,6 +247,8 @@ class CaptureStatement <: SqlStatement {
     public var capturedParams: Array<Any> = []
     public var mockLastInsertId: Int64 = 0
     public var mockRowCount: Int64 = 0
+    public var mockLastInsertIdQueue: ArrayList<Int64> = ArrayList<Int64>()
+    public var mockRowCountQueue: ArrayList<Int64> = ArrayList<Int64>()
     public var queryResult: QueryResult = MockQueryResult()
     public var queryResultQueue: ArrayList<QueryResult> = ArrayList<QueryResult>()
     public var capturedSetValues: ArrayList<Any> = ArrayList<Any>()
@@ -271,8 +273,18 @@ class CaptureStatement <: SqlStatement {
     }
     public func setNull(index: Int): Unit {}
     public func setOption(_key: String, value: String): Unit {}
-    public func update(): UpdateResult { CaptureUpdateResult(mockLastInsertId, mockRowCount) }
-    public func update(_params: Array<SqlDbType>): UpdateResult { CaptureUpdateResult(mockLastInsertId, mockRowCount) }
+    public func update(): UpdateResult { CaptureUpdateResult(dequeueLastInsertId(), dequeueRowCount()) }
+    public func update(_params: Array<SqlDbType>): UpdateResult { CaptureUpdateResult(dequeueLastInsertId(), dequeueRowCount()) }
+
+    private func dequeueLastInsertId(): Int64 {
+        if (mockLastInsertIdQueue.size > 0) { return mockLastInsertIdQueue.remove(at: 0) }
+        mockLastInsertId
+    }
+
+    private func dequeueRowCount(): Int64 {
+        if (mockRowCountQueue.size > 0) { return mockRowCountQueue.remove(at: 0) }
+        mockRowCount
+    }
 }
 
 class CaptureConnection <: Connection {
@@ -1214,6 +1226,26 @@ public class VersionedOrderTag {
     var quantity: Int64 = 0
     @Version
     var version: Int64 = 0
+}
+
+@Refine
+public class VersionedOrder {
+    var id: Int64 = 0
+    var name: String = ""
+    @Version
+    var version: Int64 = 0
+
+    @Rel[has_many, VersionedOrderItem, order_id]
+    var items: ArrayList<VersionedOrderItem> = ArrayList<VersionedOrderItem>()
+}
+
+@Refine
+public class VersionedOrderItem {
+    var id: Int64 = 0
+    var name: String = ""
+    @Version
+    var version: Int64 = 0
+    var order_id: Int64 = 0
 }
 
 @Test
@@ -2619,6 +2651,254 @@ public class TxCascadeTest {
     }
 }
 
+// ─── 级联边界用例 ──────────────────────────────────────
+// 覆盖设计文档第 2/4/7 节的边界：加载后未修改不级联、两个无 id 新对象互不误判、
+// 空列表标记 true 的语义、三层深链、级联子对象乐观锁
+
+@Test
+public class CascadeBoundaryTest {
+    @TestCase
+    public func testTxUpdateLoadedEntityNoCascade(): Unit {
+        clearHooks()
+        // rowMapper 从库加载实体（含 ref_to include），关联字段标记必须保持 false
+        let col1: ColumnInfo = MapperMockColumnInfo("id", false)
+        let col2: ColumnInfo = MapperMockColumnInfo("title", false)
+        let col3: ColumnInfo = MapperMockColumnInfo("user_id", false)
+        let col4: ColumnInfo = MapperMockColumnInfo("post_id", false)
+        let col5: ColumnInfo = MapperMockColumnInfo("author.id", false)
+        let cols: Array<ColumnInfo> = [col1, col2, col3, col4, col5]
+        let row = Array<Any>(5, {i => if (i == 0) { 5 } else if (i == 1) { "loaded" } else if (i == 2) { 7 } else if (i == 3) { 0 } else { 99 }})
+        let result = MapperMockQueryResult(cols, [row])
+        result.next()
+        let cm = buildColumnMap(cols)
+        let e = PostWithRelRowMapper(result, cm)
+        @Expect(e._authorModified, false)
+        @Expect(e._tagsModified, false)
+        @Expect(e._commentsModified, false)
+        @Expect(e.author.getOrThrow().id, 99)
+
+        // 仅加载未修改 → update 只发父 UPDATE，无 fk 改动 / 无子落库 / 无中间表重建
+        let conn = CaptureConnection()
+        conn.stmt.mockRowCount = 1
+        let tx = Tx(conn)
+        tx.update(e)
+        @Expect(conn.stmt.capturedSqlHistory.size, 1)
+        @Expect(conn.stmt.capturedSqlHistory[0], "UPDATE postWithRel SET title = ?, user_id = ?, post_id = ? WHERE id = ?")
+        @Expect(capturedInt64(conn.stmt.capturedSetValues, 3), 5)
+    }
+
+    @TestCase
+    public func testTxSaveTwoNewChildrenBothSaved(): Unit {
+        clearHooks()
+        // 两个不同实例的新子对象（都 id=0）不得被 visited 按 (type,id) 误判为同一对象
+        let conn = CaptureConnection()
+        conn.stmt.mockLastInsertId = 42
+        let tx = Tx(conn)
+        let p = PostWithRel()
+        let c1 = Comment()
+        c1.body = "one"
+        let c2 = Comment()
+        c2.body = "two"
+        let list = ArrayList<Comment>()
+        list.add(c1)
+        list.add(c2)
+        p.comments = list
+        tx.save(p)
+        @Expect(conn.stmt.capturedSqlHistory.size, 3)
+        @Expect(conn.stmt.capturedSqlHistory[0], "INSERT INTO postWithRel (title, user_id, post_id) VALUES (?, ?, ?)")
+        @Expect(conn.stmt.capturedSqlHistory[1], "INSERT INTO comment (body, post_id) VALUES (?, ?)")
+        @Expect(conn.stmt.capturedSqlHistory[2], "INSERT INTO comment (body, post_id) VALUES (?, ?)")
+        @Expect(p.id, 42)
+        @Expect(c1.post_id, 42)
+        @Expect(c2.post_id, 42)
+        @Expect(capturedString(conn.stmt.capturedSetValues, 3), "one")
+        @Expect(capturedString(conn.stmt.capturedSetValues, 5), "two")
+    }
+
+    @TestCase
+    public func testTxSaveHasManyEmptyListNoChildInsert(): Unit {
+        clearHooks()
+        // 标记 true 且 has_many 列表为空 → save 无子对象要存（只父 INSERT）
+        let conn = CaptureConnection()
+        conn.stmt.mockLastInsertId = 42
+        let tx = Tx(conn)
+        let p = PostWithRel()
+        p.comments = ArrayList<Comment>()
+        tx.save(p)
+        @Expect(conn.stmt.capturedSqlHistory.size, 1)
+        @Expect(conn.stmt.capturedSqlHistory[0], "INSERT INTO postWithRel (title, user_id, post_id) VALUES (?, ?, ?)")
+    }
+
+    @TestCase
+    public func testTxUpdateHasManyEmptyListNoChildDelete(): Unit {
+        clearHooks()
+        // 标记 true 且 has_many 列表为空 → update 不删现有（不自动清库）
+        let conn = CaptureConnection()
+        conn.stmt.mockRowCount = 1
+        let tx = Tx(conn)
+        let p = PostWithRel()
+        p.id = 5
+        p.comments = ArrayList<Comment>()
+        tx.update(p)
+        @Expect(conn.stmt.capturedSqlHistory.size, 1)
+        @Expect(conn.stmt.capturedSqlHistory[0], "UPDATE postWithRel SET title = ?, user_id = ?, post_id = ? WHERE id = ?")
+    }
+
+    @TestCase
+    public func testTxSaveRefManyEmptyListClearsJunction(): Unit {
+        clearHooks()
+        // 标记 true 且 ref_many 列表为空 → save 清空中间表（DELETE 旧关联，无 INSERT）
+        let conn = CaptureConnection()
+        conn.stmt.mockLastInsertId = 42
+        let tx = Tx(conn)
+        let p = PostWithRel()
+        p.tags = ArrayList<Tag>()
+        tx.save(p)
+        @Expect(conn.stmt.capturedSqlHistory.size, 2)
+        @Expect(conn.stmt.capturedSqlHistory[0], "INSERT INTO postWithRel (title, user_id, post_id) VALUES (?, ?, ?)")
+        @Expect(conn.stmt.capturedSqlHistory[1], "DELETE FROM post_tags WHERE postWithRel_id = ?")
+        @Expect(capturedInt64(conn.stmt.capturedSetValues, 3), 42)
+    }
+
+    @TestCase
+    public func testTxUpdateRefManyEmptyListClearsJunction(): Unit {
+        clearHooks()
+        // 标记 true 且 ref_many 列表为空 → update 清空中间表（重建为空 = 清旧关联）
+        let conn = CaptureConnection()
+        conn.stmt.mockRowCount = 1
+        let tx = Tx(conn)
+        let p = PostWithRel()
+        p.id = 5
+        p.tags = ArrayList<Tag>()
+        tx.update(p)
+        @Expect(conn.stmt.capturedSqlHistory.size, 2)
+        @Expect(conn.stmt.capturedSqlHistory[0], "UPDATE postWithRel SET title = ?, user_id = ?, post_id = ? WHERE id = ?")
+        @Expect(conn.stmt.capturedSqlHistory[1], "DELETE FROM post_tags WHERE postWithRel_id = ?")
+        @Expect(capturedInt64(conn.stmt.capturedSetValues, 4), 5)
+    }
+
+    @TestCase
+    public func testTxSaveThreeLevelDeepChain(): Unit {
+        clearHooks()
+        // 三层嵌套：root → l2 → l3，自动递归，fk 逐层回填正确
+        let conn = CaptureConnection()
+        conn.stmt.mockLastInsertIdQueue.add(10)
+        conn.stmt.mockLastInsertIdQueue.add(11)
+        conn.stmt.mockLastInsertIdQueue.add(12)
+        let tx = Tx(conn)
+        let root = CategoryWithRel()
+        root.name = "root"
+        let l2 = CategoryWithRel()
+        l2.name = "l2"
+        let l3 = CategoryWithRel()
+        l3.name = "l3"
+        let l2List = ArrayList<CategoryWithRel>()
+        l2List.add(l2)
+        root.children = l2List
+        let l3List = ArrayList<CategoryWithRel>()
+        l3List.add(l3)
+        l2.children = l3List
+        tx.save(root)
+        @Expect(conn.stmt.capturedSqlHistory.size, 3)
+        @Expect(conn.stmt.capturedSqlHistory[0], "INSERT INTO categoryWithRel (name, parent_id) VALUES (?, ?)")
+        @Expect(conn.stmt.capturedSqlHistory[1], "INSERT INTO categoryWithRel (name, parent_id) VALUES (?, ?)")
+        @Expect(conn.stmt.capturedSqlHistory[2], "INSERT INTO categoryWithRel (name, parent_id) VALUES (?, ?)")
+        @Expect(root.id, 10)
+        @Expect(l2.id, 11)
+        @Expect(l3.id, 12)
+        @Expect(l2.parent_id, 10)
+        @Expect(l3.parent_id, 11)
+        @Expect(capturedInt64(conn.stmt.capturedSetValues, 3), 10)
+        @Expect(capturedInt64(conn.stmt.capturedSetValues, 5), 11)
+    }
+
+    @TestCase
+    public func testTxUpdateCascadesVersionedChildIncrementsVersion(): Unit {
+        clearHooks()
+        // 级联 update 子对象带乐观锁：子 UPDATE 含 version 校验并递增
+        let conn = CaptureConnection()
+        conn.stmt.mockRowCount = 1
+        let tx = Tx(conn)
+        let order = VersionedOrder()
+        order.id = 1
+        order.name = "o"
+        order.version = 1
+        let item = VersionedOrderItem()
+        item.id = 7
+        item.name = "old"
+        item.version = 1
+        let list = ArrayList<VersionedOrderItem>()
+        list.add(item)
+        order.items = list
+        tx.update(order)
+        @Expect(conn.stmt.capturedSqlHistory.size, 2)
+        @Expect(conn.stmt.capturedSqlHistory[0], "UPDATE versionedOrder SET name = ?, version = version + 1 WHERE id = ? AND version = ?")
+        @Expect(conn.stmt.capturedSqlHistory[1], "UPDATE versionedOrderItem SET name = ?, order_id = ?, version = version + 1 WHERE id = ? AND version = ?")
+        @Expect(order.version, 2)
+        @Expect(item.version, 2)
+        @Expect(item.order_id, 1)
+    }
+
+    @TestCase
+    public func testTxUpdateCascadeVersionedChildConflictThrows(): Unit {
+        clearHooks()
+        // 级联 update 子对象乐观锁冲突：父成功、子 rowCount=0 → 抛 OptimisticLockException
+        let conn = CaptureConnection()
+        conn.stmt.mockRowCountQueue.add(1)
+        conn.stmt.mockRowCountQueue.add(0)
+        let tx = Tx(conn)
+        let order = VersionedOrder()
+        order.id = 1
+        order.version = 1
+        let item = VersionedOrderItem()
+        item.id = 7
+        item.name = "old"
+        item.version = 1
+        let list = ArrayList<VersionedOrderItem>()
+        list.add(item)
+        order.items = list
+        try {
+            tx.update(order)
+            @Fail("expected OptimisticLockException from cascade child update")
+        } catch (e: OptimisticLockException) {
+            @Expect(e.entityType, "VersionedOrderItem")
+            @Expect(e.expected, 1)
+            @Expect(e.actual, -1)
+        }
+        @Expect(conn.stmt.capturedSqlHistory.size, 3)
+        @Expect(conn.stmt.capturedSqlHistory[1].contains("versionedOrderItem"), true)
+        @Expect(conn.stmt.capturedSqlHistory[2], "SELECT version FROM versionedOrderItem WHERE id = ?")
+    }
+
+    @TestCase
+    public func testTxSaveCascadesNewVersionedChildInitsVersion(): Unit {
+        clearHooks()
+        // 级联 save 子对象（无 id）：version 0→1 初始化、父 id 回填子 fk、子 INSERT 带 version 列
+        let conn = CaptureConnection()
+        conn.stmt.mockLastInsertIdQueue.add(1)
+        conn.stmt.mockLastInsertIdQueue.add(2)
+        let tx = Tx(conn)
+        let order = VersionedOrder()
+        order.name = "o"
+        let item = VersionedOrderItem()
+        item.name = "fresh"
+        let list = ArrayList<VersionedOrderItem>()
+        list.add(item)
+        order.items = list
+        tx.save(order)
+        @Expect(conn.stmt.capturedSqlHistory.size, 2)
+        @Expect(conn.stmt.capturedSqlHistory[0], "INSERT INTO versionedOrder (name, version) VALUES (?, ?)")
+        @Expect(conn.stmt.capturedSqlHistory[1], "INSERT INTO versionedOrderItem (name, version, order_id) VALUES (?, ?, ?)")
+        @Expect(order.id, 1)
+        @Expect(order.version, 1)
+        @Expect(item.id, 2)
+        @Expect(item.version, 1)
+        @Expect(item.order_id, 1)
+        @Expect(capturedInt64(conn.stmt.capturedSetValues, 1), 1)
+        @Expect(capturedInt64(conn.stmt.capturedSetValues, 4), 1)
+    }
+}
+
 // ─── delete 钩子 abort 不删子 + physicalDelete 级联 ────────
 
 @Test
@@ -2669,6 +2949,13 @@ private func capturedInt64(arr: ArrayList<Any>, index: Int64): Int64 {
     match (arr[index]) {
         case v: Int64 => v
         case _ => throw Exception("param " + index.toString() + " is not Int64")
+    }
+}
+
+private func capturedString(arr: ArrayList<Any>, index: Int64): String {
+    match (arr[index]) {
+        case v: String => v
+        case _ => throw Exception("param " + index.toString() + " is not String")
     }
 }
 
