@@ -171,9 +171,28 @@ public class RefineExceptionTest {
     @TestCase
     public func testCreateOptimisticLockException(): Unit {
         let e = OptimisticLockException("User", 42, 3, 5)
-        @Expect(e.message.contains("User"), true)
-        @Expect(e.message.contains("42"), true)
+        @Expect(e.entityType, "User")
+        @Expect(e.pk, "42")
         @Expect(e.expected, 3)
         @Expect(e.actual, 5)
+        @Expect(e.message, "optimistic lock conflict on User pk=42 expected version 3 got 5")
+    }
+
+    @TestCase
+    public func testCreateOptimisticLockExceptionStringPk(): Unit {
+        let e = OptimisticLockException("Event", "abc-123", 7, 8)
+        @Expect(e.entityType, "Event")
+        @Expect(e.pk, "abc-123")
+        @Expect(e.message.contains("abc-123"), true)
+        @Expect(e.message, "optimistic lock conflict on Event pk=abc-123 expected version 7 got 8")
+    }
+
+    @TestCase
+    public func testCatchOptimisticLockExceptionAsRefineException(): Unit {
+        try {
+            throw OptimisticLockException("User", 42, 3, 5)
+        } catch (e: RefineException) {
+            @Expect(e.message.contains("optimistic lock conflict"), true)
+        }
     }
 }

@@ -44,11 +44,19 @@ public class HookException <: RefineException {
 
 public class OptimisticLockException <: RefineException {
     public var entityType: String
-    public var pk: Int64
+    public var pk: String
     public var expected: Int64
     public var actual: Int64
     public init(entityType: String, pk: Int64, expected: Int64, actual: Int64) {
         super("optimistic lock conflict on " + entityType + " pk=" + pk.toString() +
+            " expected version " + expected.toString() + " got " + actual.toString())
+        this.entityType = entityType
+        this.pk = pk.toString()
+        this.expected = expected
+        this.actual = actual
+    }
+    public init(entityType: String, pk: String, expected: Int64, actual: Int64) {
+        super("optimistic lock conflict on " + entityType + " pk=" + pk +
             " expected version " + expected.toString() + " got " + actual.toString())
         this.entityType = entityType
         this.pk = pk
