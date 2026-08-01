@@ -150,6 +150,7 @@ class CaptureStatement <: SqlStatement {
     public var mockLastInsertId: Int64 = 0
     public var mockRowCount: Int64 = 0
     public var queryResult: QueryResult = MockQueryResult()
+    public var capturedSetValues: ArrayList<Any> = ArrayList<Any>()
 
     public func close(): Unit {}
     public func isClosed(): Bool { false }
@@ -159,7 +160,9 @@ class CaptureStatement <: SqlStatement {
     public func query(): QueryResult { queryResult }
     public func query(_params: Array<SqlDbType>): QueryResult { queryResult }
 
-    public func set<T>(index: Int, value: T): Unit {}
+    public func set<T>(index: Int, value: T): Unit {
+        capturedSetValues.add(value)
+    }
     public func setNull(index: Int): Unit {}
     public func setOption(_key: String, value: String): Unit {}
     public func update(): UpdateResult { CaptureUpdateResult(mockLastInsertId, mockRowCount) }
@@ -1142,7 +1145,7 @@ public class VersionedEntityTest {
         p.version = 1
         tx.update(p)
 
-        @Expect(conn.stmt.capturedSql, "UPDATE versionedPost SET title = ?, created_at = ?, updated_at = ? WHERE id = ? AND version = ?")
+        @Expect(conn.stmt.capturedSql, "UPDATE versionedPost SET title = ?, created_at = ?, updated_at = ?, version = version + 1 WHERE id = ? AND version = ?")
         @Expect(p.version, 2)
     }
 
@@ -1226,7 +1229,7 @@ public class VersionedEntityTest {
     }
 
     @TestCase
-    public func testTxUpdateVersionedPostKeepsVersionOutOfSet(): Unit {
+    public func testTxUpdateVersionedPostWritesVersionInSet(): Unit {
         clearHooks()
         let conn = CaptureConnection()
         conn.stmt.mockRowCount = 1
@@ -1238,7 +1241,7 @@ public class VersionedEntityTest {
         tx.update(p)
 
         let setPart = conn.stmt.capturedSql.split("SET ")[1].split(" WHERE")[0]
-        @Expect(setPart.contains("version"), false)
+        @Expect(setPart.contains("version = version + 1"), true)
         @Expect(setPart.contains("created_at"), true)
         @Expect(p.version, 4)
     }
@@ -1273,7 +1276,7 @@ public class VersionedEntityTest {
         ot.version = 1
         tx.update(ot)
 
-        @Expect(conn.stmt.capturedSql, "UPDATE versionedOrderTag SET quantity = ? WHERE order_id = ? AND tag_id = ? AND version = ?")
+        @Expect(conn.stmt.capturedSql, "UPDATE versionedOrderTag SET quantity = ?, version = version + 1 WHERE order_id = ? AND tag_id = ? AND version = ?")
         @Expect(ot.version, 2)
     }
 
@@ -1298,5 +1301,50 @@ public class VersionedEntityTest {
             @Expect(e.expected, 1)
             @Expect(e.actual, 3)
         }
+    }
+
+    @TestCase
+    public func testTxUpdateVersionedPostTwiceNoFalseConflict(): Unit {
+        clearHooks()
+        let conn = CaptureConnection()
+        conn.stmt.mockRowCount = 1
+        let tx = Tx(conn)
+
+        let p = VersionedPost()
+        p.id = 1
+        p.title = "T"
+        p.version = 1
+        tx.update(p)
+        @Expect(p.version, 2)
+
+        conn.stmt.capturedSetValues.clear()
+        conn.stmt.mockRowCount = 1
+        tx.update(p)
+        @Expect(p.version, 3)
+
+        let lastIdx = conn.stmt.capturedSetValues.size - 1
+        var lastParam: Int64 = -1
+        match (conn.stmt.capturedSetValues[lastIdx]) {
+            case v: Int64 => lastParam = v
+            case _ => ()
+        }
+        @Expect(lastParam, 2)
+    }
+
+    @TestCase
+    public func testTxUpdateVersionedPostNoOpStillBumpsVersion(): Unit {
+        clearHooks()
+        let conn = CaptureConnection()
+        conn.stmt.mockRowCount = 1
+        let tx = Tx(conn)
+
+        let p = VersionedPost()
+        p.id = 1
+        p.title = "same"
+        p.version = 2
+        tx.update(p)
+
+        @Expect(conn.stmt.capturedSql.contains("version = version + 1"), true)
+        @Expect(p.version, 3)
     }
 }

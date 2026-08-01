@@ -971,8 +971,9 @@ func buildUpdateSQLString(fields: ArrayList<FieldInfo>, tableName: String, pkFie
         if (f.isPk || isRelationField(f.typeName) || f.isVersion) { continue }
         setClauses.add(f.name + " = ?")
     }
-    var sql = "UPDATE " + tableName + " SET " + String.join(setClauses.toArray(), delimiter: ", ") + buildPkWhereClause(pkFields)
     let versionName = findVersionField(fields)
+    if (versionName != "") { setClauses.add(versionName + " = " + versionName + " + 1") }
+    var sql = "UPDATE " + tableName + " SET " + String.join(setClauses.toArray(), delimiter: ", ") + buildPkWhereClause(pkFields)
     if (versionName != "") { sql = sql + " AND " + versionName + " = ?" }
     sql
 }
