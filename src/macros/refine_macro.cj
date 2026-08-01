@@ -9,13 +9,15 @@ struct FieldInfo {
     var storageOverride: String
     var isPk: Bool
     var autoInc: Bool
+    var isVersion: Bool
     public init(name: String, typeName: String, storageOverride: String,
-                isPk: Bool, autoInc: Bool) {
+                isPk: Bool, autoInc: Bool, isVersion: Bool) {
         this.name = name
         this.typeName = typeName
         this.storageOverride = storageOverride
         this.isPk = isPk
         this.autoInc = autoInc
+        this.isVersion = isVersion
     }
 }
 
@@ -46,7 +48,7 @@ func extractFields(cd: ClassDecl): ArrayList<FieldInfo> {
                 let fn = vd.identifier.value
                 let isPk = (fn == "id")
                 let autoInc = (fn == "id" && typeStr == "Int64")
-                let info = FieldInfo(fn, typeStr, "", isPk, autoInc)
+                let info = FieldInfo(fn, typeStr, "", isPk, autoInc, false)
                 list.add(info)
             case _ => ()
         }
@@ -188,6 +190,32 @@ func applyIdAnnotations(fields: ArrayList<FieldInfo>, idMessages: ArrayList<Macr
         result = next
     }
     result
+}
+
+func applyAuditVersion(fields: ArrayList<FieldInfo>, versionMessages: ArrayList<MacroMessage>): ArrayList<FieldInfo> {
+    var result = ArrayList<FieldInfo>()
+    for (f in fields) {
+        var updated = f
+        for (m in versionMessages) {
+            if (m.getString("fieldName") == f.name) {
+                if (f.typeName != "Int64") { throw Exception("@Version field must be Int64: " + f.name) }
+                if (updated.isVersion) { throw Exception("duplicate @Version field: " + f.name) }
+                updated.isVersion = true
+            }
+        }
+        result.add(updated)
+    }
+    result
+}
+
+func findAuditFields(fields: ArrayList<FieldInfo>): (Bool, Bool) {
+    var hasCreatedAt = false
+    var hasUpdatedAt = false
+    for (f in fields) {
+        if (f.name == "created_at" && f.typeName == "DateTime") { hasCreatedAt = true }
+        if (f.name == "updated_at" && f.typeName == "DateTime") { hasUpdatedAt = true }
+    }
+    (hasCreatedAt, hasUpdatedAt)
 }
 
 func buildPkWhereClause(pkFields: ArrayList<FieldInfo>): String {
@@ -1467,6 +1495,9 @@ public macro Refine(input: Tokens): Tokens {
     var mergedFields = mergeFieldOverrides(fields, fieldMessages)
     let idMessages = getChildMessages("Id")
     mergedFields = applyIdAnnotations(mergedFields, idMessages)
+    let versionMessages = getChildMessages("Version")
+    mergedFields = applyAuditVersion(mergedFields, versionMessages)
+    let (hasCreatedAt, hasUpdatedAt) = findAuditFields(mergedFields)
     let pkFields = getPkFields(mergedFields)
     var hasClientPk = false
     for (i in 0..pkFields.size) {
@@ -1776,3 +1807,9 @@ public macro Table(attr: Tokens, input: Tokens): Tokens {
 
 // Marker annotation: entity with this annotation uses physical delete instead of soft delete
 public macro HardDelete(input: Tokens): Tokens { input }
+
+public macro Version(attr: Tokens, input: Tokens): Tokens {
+    let decl = parseDecl(input)
+    setItem("fieldName", decl.identifier.value)
+    input
+}
