@@ -161,3 +161,10 @@ public func detectDialect(name: String): Dialect {
         case _ => SQLiteDialect()
     }
 }
+
+public func visitedContains(visited: ArrayList<Object>, target: Object): Bool {
+    for (v in visited) {
+        if (refEq(v, target)) { return true }
+    }
+    false
+}

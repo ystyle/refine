@@ -1382,11 +1382,17 @@ func buildRowMapper(className: String, cd: ClassDecl, rels: ArrayList<RelInfo>, 
             let tmpName = Token(TokenKind.IDENTIFIER, "tmp")
             let targetType = Token(TokenKind.IDENTIFIER, r.target)
             let backingIdent = Token(TokenKind.IDENTIFIER, "_" + r.fieldName)
+            // ref_to 的 fk 字段在当前实体上，类型已知；has_one 的 fk 在目标表，保持 Int64
+            let idTypeTok = if (r.kind == "ref_to" && getDeclFieldType(cd, r.by) == "String") {
+                Token(TokenKind.IDENTIFIER, "String")
+            } else {
+                Token(TokenKind.IDENTIFIER, "Int64")
+            }
             assignments = assignments + Token(TokenKind.NL)
             let check = quote(
                 if (columnMap.contains($(prefixCheckLit))) {
                     let $(tmpName) = $(targetType)()
-                    $(tmpName).id = result.get<Int64>(columnMap.get($(prefixCheckLit)).getOrThrow())
+                    $(tmpName).id = result.get<$(idTypeTok)>(columnMap.get($(prefixCheckLit)).getOrThrow())
                     entity.$(backingIdent) = Some($(tmpName))
                 }
             )
@@ -1686,6 +1692,173 @@ func buildRelationMethods(className: String, rels: ArrayList<RelInfo>, cd: Class
             )))
         }
     }
+}
+
+// --- Cascade Traversal Helpers ---
+
+func getFieldTypeName(fields: ArrayList<FieldInfo>, name: String): String {
+    for (f in fields) {
+        if (f.name == name) { return f.typeName }
+    }
+    ""
+}
+
+func getDeclFieldType(cd: ClassDecl, name: String): String {
+    for (i in 0..cd.body.decls.size) {
+        match (cd.body.decls[i] as VarDecl) {
+            case Some(vd) =>
+                if (vd.identifier.value == name) { return vd.declType.toTokens().toString() }
+            case _ => ()
+        }
+    }
+    ""
+}
+
+func buildCascadeMethods(className: String, rels: ArrayList<RelInfo>, fields: ArrayList<FieldInfo>, cd: ClassDecl): Unit {
+    let cn = Token(TokenKind.IDENTIFIER, className)
+
+    // cascadePreSave：阶段 1 ref_to 维护 fk（仅标记 true 的字段）
+    var preBody = Tokens()
+    for (r in rels) {
+        if (r.kind != "ref_to") { continue }
+        let modifiedTok = Token(TokenKind.IDENTIFIER, "_" + r.fieldName + "Modified")
+        let fieldTok = Token(TokenKind.IDENTIFIER, r.fieldName)
+        let fkTok = Token(TokenKind.IDENTIFIER, r.by)
+        let uTok = Token(TokenKind.IDENTIFIER, "u")
+        let fkType = getFieldTypeName(fields, r.by)
+        let zeroTok = if (fkType == "String") { Token(TokenKind.STRING_LITERAL, "") } else { Token(TokenKind.IDENTIFIER, "0") }
+        if (preBody.size > 0) { preBody = preBody + Token(TokenKind.NL) + Token(TokenKind.NL) }
+        preBody = preBody + quote(
+            if (this.$(modifiedTok)) {
+                match (this.$(fieldTok)) {
+                    case Some($(uTok)) => if ($(uTok).id != $(zeroTok)) { this.$(fkTok) = $(uTok).id } else { this.$(fkTok) = $(zeroTok) }
+                    case None => this.$(fkTok) = $(zeroTok)
+                }
+            }
+        )
+    }
+    cd.body.decls.add(FuncDecl(quote(
+        public func cascadePreSave(tx: Tx, visited: ArrayList<Object>): $(cn) {
+            $(preBody)
+            this
+        }
+    )))
+
+    // cascadePostSave：阶段 3 has_many/has_one 回填 fk + 落库；阶段 4 ref_many 重建中间表（仅标记 true 的字段）
+    // 固定顺序：has 系（阶段 3）在前，ref_many（阶段 4）在后
+    var postBody = Tokens()
+    for (pass in 0..2) {
+        for (r in rels) {
+            let isHas = (r.kind == "has_many" || r.kind == "has_one")
+            let wantHas = (pass == 0)
+            if (isHas != wantHas) { continue }
+            let modifiedTok = Token(TokenKind.IDENTIFIER, "_" + r.fieldName + "Modified")
+            let fieldTok = Token(TokenKind.IDENTIFIER, r.fieldName)
+            if (r.kind == "has_many" || r.kind == "has_one") {
+                let byTok = Token(TokenKind.IDENTIFIER, r.by)
+                if (postBody.size > 0) { postBody = postBody + Token(TokenKind.NL) + Token(TokenKind.NL) }
+                if (r.kind == "has_many") {
+                    let childTok = Token(TokenKind.IDENTIFIER, "child")
+                    postBody = postBody + quote(
+                        if (this.$(modifiedTok)) {
+                            for ($(childTok) in this.$(fieldTok)) {
+                                $(childTok).$(byTok) = this.id
+                                let anyId: Any = $(childTok).id
+                                match (anyId) {
+                                    case v: Int64 => if (v != 0) { tx.update($(childTok)) } else { tx.save($(childTok)) }
+                                    case v: String => if (v != "") { tx.update($(childTok)) } else { tx.save($(childTok)) }
+                                    case _ => tx.save($(childTok))
+                                }
+                            }
+                        }
+                    )
+                } else {
+                    let subTok = Token(TokenKind.IDENTIFIER, "sub")
+                    postBody = postBody + quote(
+                        if (this.$(modifiedTok)) {
+                            match (this.$(fieldTok)) {
+                                case Some($(subTok)) =>
+                                    $(subTok).$(byTok) = this.id
+                                    let anyId: Any = $(subTok).id
+                                    match (anyId) {
+                                        case v: Int64 => if (v != 0) { tx.update($(subTok)) } else { tx.save($(subTok)) }
+                                        case v: String => if (v != "") { tx.update($(subTok)) } else { tx.save($(subTok)) }
+                                        case _ => tx.save($(subTok))
+                                    }
+                                case None => ()
+                            }
+                        }
+                    )
+                }
+            } else if (r.kind == "ref_many") {
+                let prefix = upperFirstLetter(r.fieldName)
+                let clearName = Token(TokenKind.IDENTIFIER, "clear" + prefix)
+                let appendName = Token(TokenKind.IDENTIFIER, "append" + prefix)
+                let tTok = Token(TokenKind.IDENTIFIER, "t")
+                if (postBody.size > 0) { postBody = postBody + Token(TokenKind.NL) + Token(TokenKind.NL) }
+                postBody = postBody + quote(
+                    if (this.$(modifiedTok)) {
+                        this.$(clearName)(tx)
+                        for ($(tTok) in this.$(fieldTok)) { this.$(appendName)(tx, $(tTok)) }
+                    }
+                )
+            }
+        }
+    }
+    cd.body.decls.add(FuncDecl(quote(
+        public func cascadePostSave(tx: Tx, visited: ArrayList<Object>): $(cn) {
+            if (visitedContains(visited, this)) { return this }
+            visited.add(this)
+            $(postBody)
+            this
+        }
+    )))
+
+    // cascadeDelete：先递归删子（has 系）→ 清中间表（ref_many）
+    var deleteBody = Tokens()
+    for (pass in 0..2) {
+        for (r in rels) {
+            let isHas = (r.kind == "has_many" || r.kind == "has_one")
+            let wantHas = (pass == 0)
+            if (isHas != wantHas) { continue }
+            let fieldTok = Token(TokenKind.IDENTIFIER, r.fieldName)
+            if (r.kind == "has_many" || r.kind == "has_one") {
+                if (deleteBody.size > 0) { deleteBody = deleteBody + Token(TokenKind.NL) + Token(TokenKind.NL) }
+                if (r.kind == "has_many") {
+                    let childTok = Token(TokenKind.IDENTIFIER, "child")
+                    deleteBody = deleteBody + quote(
+                        for ($(childTok) in this.$(fieldTok)) {
+                            $(childTok).cascadeDelete(tx, visited)
+                            tx.delete($(childTok))
+                        }
+                    )
+                } else {
+                    let subTok = Token(TokenKind.IDENTIFIER, "sub")
+                    deleteBody = deleteBody + quote(
+                        match (this.$(fieldTok)) {
+                            case Some($(subTok)) => $(subTok).cascadeDelete(tx, visited); tx.delete($(subTok))
+                            case None => ()
+                        }
+                    )
+                }
+            } else if (r.kind == "ref_many") {
+                let prefix = upperFirstLetter(r.fieldName)
+                let clearName = Token(TokenKind.IDENTIFIER, "clear" + prefix)
+                if (deleteBody.size > 0) { deleteBody = deleteBody + Token(TokenKind.NL) + Token(TokenKind.NL) }
+                deleteBody = deleteBody + quote(
+                    this.$(clearName)(tx)
+                )
+            }
+        }
+    }
+    cd.body.decls.add(FuncDecl(quote(
+        public func cascadeDelete(tx: Tx, visited: ArrayList<Object>): $(cn) {
+            if (visitedContains(visited, this)) { return this }
+            visited.add(this)
+            $(deleteBody)
+            this
+        }
+    )))
 }
 
 // --- Schema Generation ---
@@ -1989,6 +2162,7 @@ public macro Refine(input: Tokens): Tokens {
     let txUpsertExtend = buildTxUpsertExtend(className, mergedFields, tableName, pkFields)
     let rowMapper = buildRowMapper(className, classDecl, mergedRels, internalNames)
     buildRelationMethods(className, mergedRels, classDecl)
+    buildCascadeMethods(className, mergedRels, mergedFields, classDecl)
     let schemaClass = buildSchemaClass(className, mergedFields, tableName)
     let columnNamesFunc = buildColumnNamesFunc(className, classDecl, internalNames)
     var deleteSQLFunc = buildDeleteSQLFunc(className, tableName, pkFields)

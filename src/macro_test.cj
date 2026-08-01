@@ -153,6 +153,32 @@ public class UnderscoreFieldEntity {
     var comments: ArrayList<Comment> = ArrayList<Comment>()
 }
 
+@Refine
+public class UuidRefComment {
+    var id: Int64 = 0
+    var body: String = ""
+    var post_id: String = ""
+
+    @Ref[UuidPost, post_id]
+    var post: Option<UuidPost> = None
+}
+
+@Refine
+public class ProfileWithRel {
+    var id: Int64 = 0
+    var bio: String = ""
+    var user_id: Int64 = 0
+}
+
+@Refine
+public class UserWithRel {
+    var id: Int64 = 0
+    var name: String = ""
+
+    @Rel[has_one, ProfileWithRel, user_id]
+    var profile: Option<ProfileWithRel> = None
+}
+
 class HookFlag {
     var called: Bool = false
     public init() {}
@@ -1682,6 +1708,245 @@ public class RelationFieldRewriteTest {
         @Expect(p._tagsModified, false)
         @Expect(p.tags.size, 1)
         @Expect(p.tags[0].id, 7)
+    }
+}
+
+@Test
+public class CascadeTraversalTest {
+    @TestCase
+    public func testCascadePreSaveRefToBackfillsFk(): Unit {
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        let p = PostWithRel()
+        let u = User()
+        u.id = 42
+        p.author = Some(u)
+        let r = p.cascadePreSave(tx, ArrayList<Object>())
+        @Expect(p.user_id, 42)
+        @Expect(refEq(r, p), true)
+    }
+
+    @TestCase
+    public func testCascadePreSaveRefToZeroIdClearsFk(): Unit {
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        let p = PostWithRel()
+        let u = User()
+        p.author = Some(u)
+        p.cascadePreSave(tx, ArrayList<Object>())
+        @Expect(p.user_id, 0)
+    }
+
+    @TestCase
+    public func testCascadePreSaveRefToNoneClearsFk(): Unit {
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        let p = PostWithRel()
+        p.user_id = 7
+        p.author = None
+        p.cascadePreSave(tx, ArrayList<Object>())
+        @Expect(p.user_id, 0)
+    }
+
+    @TestCase
+    public func testCascadePreSaveSkipsWhenNotModified(): Unit {
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        let p = PostWithRel()
+        let u = User()
+        u.id = 42
+        p._author = Some(u)
+        p.cascadePreSave(tx, ArrayList<Object>())
+        @Expect(p.user_id, 0)
+    }
+
+    @TestCase
+    public func testCascadePreSaveStringFkBackfills(): Unit {
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        let c = UuidRefComment()
+        let u = UuidPost()
+        u.id = "uuid-1"
+        c.post = Some(u)
+        c.cascadePreSave(tx, ArrayList<Object>())
+        @Expect(c.post_id, "uuid-1")
+    }
+
+    @TestCase
+    public func testCascadePreSaveStringFkClears(): Unit {
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        let c = UuidRefComment()
+        c.post_id = "old"
+        c.post = Some(UuidPost())
+        c.cascadePreSave(tx, ArrayList<Object>())
+        @Expect(c.post_id, "")
+    }
+
+    @TestCase
+    public func testCascadePreSaveStringFkNoneClears(): Unit {
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        let c = UuidRefComment()
+        c.post_id = "old"
+        c.post = None
+        c.cascadePreSave(tx, ArrayList<Object>())
+        @Expect(c.post_id, "")
+    }
+
+    @TestCase
+    public func testCascadePostSaveHasManyNewChildSaves(): Unit {
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        let p = PostWithRel()
+        p.id = 5
+        let c = Comment()
+        let list = ArrayList<Comment>()
+        list.add(c)
+        p.comments = list
+        p.cascadePostSave(tx, ArrayList<Object>())
+        @Expect(c.post_id, 5)
+        @Expect(conn.stmt.capturedSql, "INSERT INTO comment (body, post_id) VALUES (?, ?)")
+    }
+
+    @TestCase
+    public func testCascadePostSaveHasManyExistingChildUpdates(): Unit {
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        let p = PostWithRel()
+        p.id = 5
+        let c = Comment()
+        c.id = 9
+        c.body = "hi"
+        let list = ArrayList<Comment>()
+        list.add(c)
+        p.comments = list
+        p.cascadePostSave(tx, ArrayList<Object>())
+        @Expect(c.post_id, 5)
+        @Expect(conn.stmt.capturedSql, "UPDATE comment SET body = ?, post_id = ? WHERE id = ?")
+    }
+
+    @TestCase
+    public func testCascadePostSaveHasManyNotModifiedSkips(): Unit {
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        let p = PostWithRel()
+        p.id = 5
+        let c = Comment()
+        c.body = "x"
+        p.comments.add(c)
+        p.cascadePostSave(tx, ArrayList<Object>())
+        @Expect(conn.stmt.capturedSqlHistory.size, 0)
+        @Expect(c.post_id, 0)
+    }
+
+    @TestCase
+    public func testCascadePostSaveHasOneSavesChild(): Unit {
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        let u = UserWithRel()
+        u.id = 3
+        let pr = ProfileWithRel()
+        pr.bio = "bio"
+        u.profile = Some(pr)
+        u.cascadePostSave(tx, ArrayList<Object>())
+        @Expect(pr.user_id, 3)
+        @Expect(conn.stmt.capturedSql, "INSERT INTO profileWithRel (bio, user_id) VALUES (?, ?)")
+    }
+
+    @TestCase
+    public func testCascadePostSaveRefManyRebuilds(): Unit {
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        let p = PostWithRel()
+        p.id = 5
+        let t1 = Tag()
+        t1.id = 7
+        let t2 = Tag()
+        t2.id = 8
+        let list = ArrayList<Tag>()
+        list.add(t1)
+        list.add(t2)
+        p.tags = list
+        p.cascadePostSave(tx, ArrayList<Object>())
+        @Expect(conn.stmt.capturedSqlHistory.size, 3)
+        @Expect(conn.stmt.capturedSqlHistory[0], "DELETE FROM post_tags WHERE postWithRel_id = ?")
+        @Expect(conn.stmt.capturedSqlHistory[1], "INSERT INTO post_tags (postWithRel_id, tag_id) VALUES (?, ?)")
+        @Expect(conn.stmt.capturedSqlHistory[2], "INSERT INTO post_tags (postWithRel_id, tag_id) VALUES (?, ?)")
+    }
+
+    @TestCase
+    public func testCascadePostSaveRefManyNotModifiedSkips(): Unit {
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        let p = PostWithRel()
+        p.id = 5
+        let t = Tag()
+        t.id = 7
+        p.tags.add(t)
+        p.cascadePostSave(tx, ArrayList<Object>())
+        @Expect(conn.stmt.capturedSqlHistory.size, 0)
+    }
+
+    @TestCase
+    public func testCascadePostSaveVisitedSkipsDuplicates(): Unit {
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        let p = PostWithRel()
+        p.id = 5
+        let c = Comment()
+        c.body = "x"
+        let list = ArrayList<Comment>()
+        list.add(c)
+        p.comments = list
+        let visited = ArrayList<Object>()
+        visited.add(p)
+        p.cascadePostSave(tx, visited)
+        @Expect(conn.stmt.capturedSqlHistory.size, 0)
+        @Expect(c.post_id, 0)
+    }
+
+    @TestCase
+    public func testCascadeDeleteChildrenThenJunction(): Unit {
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        let p = PostWithRel()
+        p.id = 5
+        let c = Comment()
+        c.id = 9
+        p.comments.add(c)
+        let t = Tag()
+        t.id = 7
+        p.tags.add(t)
+        p.cascadeDelete(tx, ArrayList<Object>())
+        @Expect(conn.stmt.capturedSqlHistory.size, 2)
+        @Expect(conn.stmt.capturedSqlHistory[0], "DELETE FROM comment WHERE id = ?")
+        @Expect(conn.stmt.capturedSqlHistory[1], "DELETE FROM post_tags WHERE postWithRel_id = ?")
+    }
+
+    @TestCase
+    public func testCascadeDeleteVisitedSkipsAlreadySeen(): Unit {
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        let p = PostWithRel()
+        p.id = 5
+        let visited = ArrayList<Object>()
+        visited.add(p)
+        p.cascadeDelete(tx, visited)
+        @Expect(conn.stmt.capturedSqlHistory.size, 0)
+    }
+
+    @TestCase
+    public func testCascadeDeleteRefToNotProcessed(): Unit {
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        let c = UuidRefComment()
+        c.id = 3
+        let u = UuidPost()
+        u.id = "uuid-1"
+        c.post = Some(u)
+        c.cascadeDelete(tx, ArrayList<Object>())
+        @Expect(conn.stmt.capturedSqlHistory.size, 0)
     }
 }
 
