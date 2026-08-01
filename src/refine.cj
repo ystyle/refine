@@ -168,3 +168,10 @@ public func visitedContains(visited: ArrayList<Object>, target: Object): Bool {
     }
     false
 }
+
+public func visitedKeyContains(visited: ArrayList<String>, key: String): Bool {
+    for (k in visited) {
+        if (k == key) { return true }
+    }
+    false
+}

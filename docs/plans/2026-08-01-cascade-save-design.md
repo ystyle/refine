@@ -77,6 +77,7 @@ delete 时只执行第 1 步。
 - 列表移除不自动删库（用户显式 `tx.delete` 或 delete 级联）
 - has_one：`Some(sub)` → 存子；`None` 不处理（用户显式删）
 - has_many 子对象已有 id（跨父迁移，如 `b.posts = [p]`）→ 级联 update 回填子 fk 为当前父 id（见第 5 节阶段 3）
+- **环/菱形保护**：`tx.save/update/delete` 级联递归时，**同一 visited 集合贯穿整个递归路径**（父 save → 子 save → 孙 save 共享一个 visited）。在 save/update/delete 的**操作层**守卫已访问实体（而非仅 cascade body 层），防止环 A↔B 时重复 INSERT/DELETE 或无限递归。子对象落库前检查 visited，已访问则跳过。
 
 ## 4. 关联字段修改标记（宏生成）
 
@@ -136,6 +137,8 @@ delete 顺序：
 2. 清中间表（ref_many）
 3. 再删父
 
+**级联 delete 不依赖内存列表（决策）**：`cascadeDelete` 对 has 系子对象**按 fk 直接执行 SQL**，不遍历内存列表——用户 `tx.delete(user)` 时即使未 `loadPosts`/include，子行也会全部清理，符合直觉且无孤儿行。每个实体生成一个「按 fk 删除自己」的辅助方法（子实体自知是否软删）：物理删实体 `DELETE FROM <table> WHERE <fk> = ?`，软删实体 `UPDATE <table> SET deleted_at = ? WHERE <fk> = ?`。父实体的 `cascadeDelete` 调用子实体的按 fk 删除方法，传入子表 fk 列名与父 id。ref_many 清中间表同理。
+
 ## 6. 边界与约定
 
 - 循环引用：A → has_many B，B → ref_to A。递归时 visited 已含 A，跳过不再处理。
@@ -144,6 +147,10 @@ delete 顺序：
 - 批处理 `batchSave` / `batchUpdate` **不级联**（保持现状），用户需逐个 save 或手动处理。
 - 钩子触发：子对象的 save/update/delete 走正常 `tx.save`/`tx.update`/`tx.delete`，各自触发钩子。
 - 软删除：has 系子对象跟随自身策略（有 deleted_at → 软删）。
+
+## 6.5 已知限制
+
+- **has_one 关联的 String 主键目标实体**：父实体 rowMapper 的 include/JOIN 加载暂不支持（宏层无法跨类内省目标实体主键类型，`result.get<Int64>` 会类型错配导致父实体编译失败）。cascade save/delete 不受影响——has 系走 `loadX(tx)`（含目标实体自身 rowMapper，类型正确）。ref_to 的 String-pk 目标已支持（fk 字段在当前实体上，类型可推导）。
 
 ## 7. 测试策略
 

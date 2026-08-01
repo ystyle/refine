@@ -1715,7 +1715,29 @@ func getDeclFieldType(cd: ClassDecl, name: String): String {
     ""
 }
 
-func buildCascadeMethods(className: String, rels: ArrayList<RelInfo>, fields: ArrayList<FieldInfo>, cd: ClassDecl): Unit {
+// cascadeDelete 环检测基于 (type, id) 而非对象引用：loadX 每次新建实体实例，
+// refEq 无法识别 DB 常驻环（如自引用表数据损坏成 A↔B），必须用 "<ClassName>:<pk...>" 键
+func buildCascadeKeyTokens(className: String, pkFields: ArrayList<FieldInfo>): Tokens {
+    let cnLit = Token(TokenKind.STRING_LITERAL, className + ":")
+    if (pkFields.size == 0) {
+        return quote(
+            var key = $(cnLit) + this.id.toString()
+        )
+    }
+    let firstPk = pkFields.get(0).getOrThrow()
+    var keyTokens = quote(
+        var key = $(cnLit) + this.$(Token(TokenKind.IDENTIFIER, firstPk.name)).toString()
+    )
+    for (i in 1..pkFields.size) {
+        let pk = pkFields.get(i).getOrThrow()
+        keyTokens = keyTokens + Token(TokenKind.NL) + quote(
+            key = key + ":" + this.$(Token(TokenKind.IDENTIFIER, pk.name)).toString()
+        )
+    }
+    keyTokens
+}
+
+func buildCascadeMethods(className: String, rels: ArrayList<RelInfo>, fields: ArrayList<FieldInfo>, pkFields: ArrayList<FieldInfo>, cd: ClassDecl): Unit {
     let cn = Token(TokenKind.IDENTIFIER, className)
 
     // cascadePreSave：阶段 1 ref_to 维护 fk（仅标记 true 的字段）
@@ -1857,10 +1879,12 @@ func buildCascadeMethods(className: String, rels: ArrayList<RelInfo>, fields: Ar
             }
         }
     }
+    let keyTokens = buildCascadeKeyTokens(className, pkFields)
     cd.body.decls.add(FuncDecl(quote(
-        public func cascadeDelete(tx: Tx, visited: ArrayList<Object>): $(cn) {
-            if (visitedContains(visited, this)) { return this }
-            visited.add(this)
+        public func cascadeDelete(tx: Tx, visited: ArrayList<String>): $(cn) {
+            $(keyTokens)
+            if (visitedKeyContains(visited, key)) { return this }
+            visited.add(key)
             $(deleteBody)
             this
         }
@@ -2168,7 +2192,7 @@ public macro Refine(input: Tokens): Tokens {
     let txUpsertExtend = buildTxUpsertExtend(className, mergedFields, tableName, pkFields)
     let rowMapper = buildRowMapper(className, classDecl, mergedRels, internalNames)
     buildRelationMethods(className, mergedRels, classDecl)
-    buildCascadeMethods(className, mergedRels, mergedFields, classDecl)
+    buildCascadeMethods(className, mergedRels, mergedFields, pkFields, classDecl)
     let schemaClass = buildSchemaClass(className, mergedFields, tableName)
     let columnNamesFunc = buildColumnNamesFunc(className, classDecl, internalNames)
     var deleteSQLFunc = buildDeleteSQLFunc(className, tableName, pkFields)

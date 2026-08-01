@@ -2018,7 +2018,7 @@ public class CascadeTraversalTest {
         p.id = 5
         let cols: Array<ColumnInfo> = [MapperMockColumnInfo("id", false), MapperMockColumnInfo("body", false), MapperMockColumnInfo("post_id", false)]
         conn.stmt.queryResult = MapperMockQueryResult(cols, [Array<Any>(3, {i => if (i == 0) { 9 } else if (i == 1) { "hi" } else { 5 }})])
-        p.cascadeDelete(tx, ArrayList<Object>())
+        p.cascadeDelete(tx, ArrayList<String>())
         @Expect(conn.stmt.capturedSqlHistory.size, 3)
         @Expect(conn.stmt.capturedSqlHistory[0], "SELECT * FROM comment WHERE post_id = ?")
         @Expect(conn.stmt.capturedSqlHistory[1], "DELETE FROM comment WHERE id = ?")
@@ -2035,7 +2035,7 @@ public class CascadeTraversalTest {
         u.id = 3
         let cols: Array<ColumnInfo> = [MapperMockColumnInfo("id", false), MapperMockColumnInfo("bio", false), MapperMockColumnInfo("user_id", false)]
         conn.stmt.queryResult = MapperMockQueryResult(cols, [Array<Any>(3, {i => if (i == 0) { 7 } else if (i == 1) { "b" } else { 3 }})])
-        u.cascadeDelete(tx, ArrayList<Object>())
+        u.cascadeDelete(tx, ArrayList<String>())
         @Expect(conn.stmt.capturedSqlHistory.size, 2)
         @Expect(conn.stmt.capturedSqlHistory[0], "SELECT * FROM profileWithRel WHERE user_id = ?")
         @Expect(conn.stmt.capturedSqlHistory[1], "DELETE FROM profileWithRel WHERE id = ?")
@@ -2053,7 +2053,7 @@ public class CascadeTraversalTest {
         conn.stmt.queryResultQueue.add(MapperMockQueryResult(cols, []))
         let root = CategoryWithRel()
         root.id = 5
-        root.cascadeDelete(tx, ArrayList<Object>())
+        root.cascadeDelete(tx, ArrayList<String>())
         @Expect(conn.stmt.capturedSqlHistory.size, 5)
         @Expect(conn.stmt.capturedSqlHistory[0], "SELECT * FROM categoryWithRel WHERE parent_id = ?")
         @Expect(conn.stmt.capturedSqlHistory[1], "SELECT * FROM categoryWithRel WHERE parent_id = ?")
@@ -2065,13 +2065,41 @@ public class CascadeTraversalTest {
     }
 
     @TestCase
+    public func testCascadeDeleteDbCycleTerminates(): Unit {
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        let cols: Array<ColumnInfo> = [MapperMockColumnInfo("id", false), MapperMockColumnInfo("name", false), MapperMockColumnInfo("parent_id", false)]
+        // DB 常驻环：A(id=5) → B(id=9) → A'(id=5) → ... 每次 loadX 都新建实体实例，
+        // 对象引用（refEq）永远匹配不上，必须靠 (type,id) 键终止递归
+        let bRow = Array<Any>(3, {i => if (i == 0) { 9 } else if (i == 1) { "b" } else { 5 }})
+        let aRow = Array<Any>(3, {i => if (i == 0) { 5 } else if (i == 1) { "a" } else { 9 }})
+        for (i in 0..6) {
+            let row = if (i % 2 == 0) { bRow } else { aRow }
+            conn.stmt.queryResultQueue.add(MapperMockQueryResult(cols, [row]))
+        }
+        let root = CategoryWithRel()
+        root.id = 5
+        root.cascadeDelete(tx, ArrayList<String>())
+        // 环在第二层被 "CategoryWithRel:5" 键命中即返回：仅 2 次 SELECT + 2 次 DELETE，不重复删除
+        @Expect(conn.stmt.capturedSqlHistory.size, 4)
+        @Expect(conn.stmt.capturedSqlHistory[0], "SELECT * FROM categoryWithRel WHERE parent_id = ?")
+        @Expect(conn.stmt.capturedSqlHistory[1], "SELECT * FROM categoryWithRel WHERE parent_id = ?")
+        @Expect(conn.stmt.capturedSqlHistory[2], "DELETE FROM categoryWithRel WHERE id = ?")
+        @Expect(conn.stmt.capturedSqlHistory[3], "DELETE FROM categoryWithRel WHERE id = ?")
+        @Expect(capturedInt64(conn.stmt.capturedSetValues, 0), 5)
+        @Expect(capturedInt64(conn.stmt.capturedSetValues, 1), 9)
+        @Expect(capturedInt64(conn.stmt.capturedSetValues, 2), 5)
+        @Expect(capturedInt64(conn.stmt.capturedSetValues, 3), 9)
+    }
+
+    @TestCase
     public func testCascadeDeleteVisitedSkipsAlreadySeen(): Unit {
         let conn = CaptureConnection()
         let tx = Tx(conn)
         let p = PostWithRel()
         p.id = 5
-        let visited = ArrayList<Object>()
-        visited.add(p)
+        let visited = ArrayList<String>()
+        visited.add("PostWithRel:5")
         p.cascadeDelete(tx, visited)
         @Expect(conn.stmt.capturedSqlHistory.size, 0)
     }
@@ -2085,7 +2113,7 @@ public class CascadeTraversalTest {
         let u = UuidPost()
         u.id = "uuid-1"
         c.post = Some(u)
-        c.cascadeDelete(tx, ArrayList<Object>())
+        c.cascadeDelete(tx, ArrayList<String>())
         @Expect(conn.stmt.capturedSqlHistory.size, 0)
     }
 
