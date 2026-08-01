@@ -1611,6 +1611,44 @@ public class RelationFieldRewriteTest {
         p.title = "hello"
         @Expect(p.title, "hello")
     }
+
+    @TestCase
+    public func testRowMapperIncludeDoesNotSetModified(): Unit {
+        let col1: ColumnInfo = MapperMockColumnInfo("id", false)
+        let col2: ColumnInfo = MapperMockColumnInfo("title", false)
+        let col3: ColumnInfo = MapperMockColumnInfo("user_id", false)
+        let col4: ColumnInfo = MapperMockColumnInfo("post_id", false)
+        let col5: ColumnInfo = MapperMockColumnInfo("author.id", false)
+        let cols: Array<ColumnInfo> = [col1, col2, col3, col4, col5]
+        let row = Array<Any>(5, {i => if (i == 0) { 42 } else if (i == 1) { "hello" } else if (i == 2) { 7 } else if (i == 3) { 8 } else { 99 }})
+        let result = MapperMockQueryResult(cols, [row])
+        result.next()
+        let cm = buildColumnMap(cols)
+        let e = PostWithRelRowMapper(result, cm)
+        @Expect(e._authorModified, false)
+        @Expect(e.author.getOrThrow().id, 99)
+    }
+
+    @TestCase
+    public func testRelClassIncludeSetterDoesNotSetModified(): Unit {
+        let p = PostWithRel()
+        let u = User()
+        u.id = 55
+        PostWithRelRel.authorSetter(p, u)
+        @Expect(p._authorModified, false)
+        @Expect(p.author.getOrThrow().id, 55)
+    }
+
+    @TestCase
+    public func testRelClassRefManySetterDoesNotSetModified(): Unit {
+        let p = PostWithRel()
+        let t = Tag()
+        t.id = 7
+        PostWithRelRel.tagsSetter(p, t)
+        @Expect(p._tagsModified, false)
+        @Expect(p.tags.size, 1)
+        @Expect(p.tags[0].id, 7)
+    }
 }
 
 @Test

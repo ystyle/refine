@@ -360,10 +360,11 @@ func buildRelClass(className: String, rels: ArrayList<RelInfo>): Tokens {
         )
         body = body + Token(TokenKind.NL)
         if (r.kind == "ref_to" || r.kind == "has_one") {
+            let backingIdent = Token(TokenKind.IDENTIFIER, "_" + r.fieldName)
             body = body + quote(
                 public static let $(setterIdent) = { entity: Any, target: Any =>
                     let e = (entity as $(cnIdent)).getOrThrow()
-                    e.$(fieldIdent) = target as $(targetType)
+                    e.$(backingIdent) = target as $(targetType)
                 }
             )
         } else {
@@ -1380,13 +1381,13 @@ func buildRowMapper(className: String, cd: ClassDecl, rels: ArrayList<RelInfo>, 
             let prefixCheckLit = Token(TokenKind.STRING_LITERAL, prefixCheck)
             let tmpName = Token(TokenKind.IDENTIFIER, "tmp")
             let targetType = Token(TokenKind.IDENTIFIER, r.target)
-            let fieldIdent = Token(TokenKind.IDENTIFIER, r.fieldName)
+            let backingIdent = Token(TokenKind.IDENTIFIER, "_" + r.fieldName)
             assignments = assignments + Token(TokenKind.NL)
             let check = quote(
                 if (columnMap.contains($(prefixCheckLit))) {
                     let $(tmpName) = $(targetType)()
                     $(tmpName).id = result.get<Int64>(columnMap.get($(prefixCheckLit)).getOrThrow())
-                    entity.$(fieldIdent) = Some($(tmpName))
+                    entity.$(backingIdent) = Some($(tmpName))
                 }
             )
             assignments = assignments + check
@@ -1748,11 +1749,11 @@ func rewriteRelationFields(cd: ClassDecl, rels: ArrayList<RelInfo>): Unit {
                     try {
                         let initToks = vd.expr.toTokens()
                         backingVarTokens = quote(
-                            private var $(backingTok): $(vd.declType) = $(initToks)
+                            internal var $(backingTok): $(vd.declType) = $(initToks)
                         )
                     } catch (e: Exception) {
                         backingVarTokens = quote(
-                            private var $(backingTok): $(vd.declType)
+                            internal var $(backingTok): $(vd.declType)
                         )
                     }
                     cd.body.decls.remove(at: i)
