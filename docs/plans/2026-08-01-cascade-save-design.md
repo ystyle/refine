@@ -67,7 +67,7 @@ delete 时只执行第 1 步。
 ## 2. 递归与循环检测
 
 - 从根实体递归遍历关联图，**无限深度**。
-- 维护已访问集合（`Array<(String, String)>` 记录 `(entityType, id)` 或对象引用集合），环上重复节点跳过不重复处理。
+- 维护已访问集合，**按对象引用（identity）判断，不用 (type, id)**——因为级联中新对象 id 都是 0，用 (type, id) 会把两个不同新对象误判为同一对象而跳过。用对象引用集合（`Array<Any>` 存实体引用，`contains` 判断），环上重复节点跳过不重复处理。
 - 深链示例：Order → items → product → category → ... 自动递归。
 
 ## 3. update 语义
@@ -76,6 +76,7 @@ delete 时只执行第 1 步。
 - 子对象无 id → `tx.save`（含审计 created_at/updated_at、version 0→1）
 - 列表移除不自动删库（用户显式 `tx.delete` 或 delete 级联）
 - has_one：`Some(sub)` → 存子；`None` 不处理（用户显式删）
+- has_many 子对象已有 id（跨父迁移，如 `b.posts = [p]`）→ 级联 update 回填子 fk 为当前父 id（见第 5 节阶段 3）
 
 ## 4. 关联字段修改标记（宏生成）
 
@@ -96,6 +97,8 @@ delete 时只执行第 1 步。
 
 **关键约束**：仓颉 `mut prop` 不能声明在数值/String/Bool/enum 类型上，但 `ArrayList<T>` / `Option<T>` 是引用类型（类），**可以**。已核实属性文档（manual prop.md）。
 
+**rowMapper 不得误置标记（关键）**：宏生成的 `buildRowMapper` 在从数据库加载实体时给关联字段赋值。若走公开 setter（`entity.posts = ...`）会置标记为 true，导致「仅加载未修改」的实体在 update 时也被级联处理（重建中间表、回填 fk 等不期望副作用）。修正：**rowMapper 对关联字段直接赋值私有字段**（`entity._posts = ...`，不触发 setter、不置标记），或加载完成后统一重置标记为 false。加载的实体标记保持 false，只有用户显式赋值才置位。
+
 ### 遍历时机
 
 - `tx.save` / `tx.update`：只处理标记为 true 的关联字段
@@ -115,11 +118,18 @@ delete 时只执行第 1 步。
 2. **buildRelationMethods** 扩展：生成级联遍历辅助函数（`cascadeSave(tx, visited)` / `cascadeDelete(tx, visited)`）
 3. **buildTxSaveExtend** / **buildTxUpdateExtend** / **buildTxDeleteExtend**：钩子之后、SQL 之前/之后插入级联调用
 
-级联顺序：
-1. 先保存父实体（拿 id）
-2. has_many / has_one：回填父 id 到子 fk → 递归存子
-3. ref_to：维护 fk（回填/清零）
-4. ref_many：重建中间表
+级联顺序（save/update 时）：
+
+```
+阶段 1（父 SQL 前）: ref_to 维护 fk——回填 u.id 到 fk（如 post.user_id = u.id），或清空
+阶段 2:            父实体 save/update（此时 fk 已是正确值，一并写入）
+阶段 3（父 SQL 后）: has_many / has_one——回填父 id 到子 fk → 递归存子
+阶段 4:            ref_many——重建中间表
+```
+
+> **ref_to 必须在父 save 前**：ref_to 的 fk 是父表自己的列（如 `post.user_id`）。若在父 INSERT 后才回填，父行写入的 user_id 是旧值（0），还需额外 UPDATE 父行。故阶段 1 先改 fk，阶段 2 父 save 直接把正确 fk 落库。
+
+**has_many fk 回填**：子对象无 id → save 后回填父 id 到子 fk。子对象**已有 id**（如把 post 从 user A 迁移到 user B：`b.posts = [p]`）→ 级联 update 时同样回填 `p.user_id = b.id`（拥有关系下子对象归属跟随父）。
 
 delete 顺序：
 1. 先递归删子（has 系）
@@ -141,14 +151,19 @@ delete 顺序：
 
 - 宏展开：关联字段被改写为 mut prop + 标记；生成级联辅助函数
 - 修改标记：赋值置位、未赋值不置位
+- **rowMapper 不置标记**：从 mock 结果映射实体后，关联字段标记保持 false（仅加载未修改的实体 update 不触发级联）
+- **循环检测用对象引用**：两个无 id 新对象互不误判；A ↔ B 环不死循环
 - SQL 生成：级联遍历生成的 save/update/delete 序列
 
 ### 双库集成测试（example/）
 
 - 保存：User 带 posts + profile → 一次 `tx.save(user)` 全部落库，fk 回填正确
 - 更新：改 user 名 + 改 post 标题 + 新增 post → `tx.update(user)` 分别 update/save
+- **加载后未修改即 update**：load user → 不改关联字段 → `tx.update(user)` 不触发任何关联级联（无中间表重建、无 fk 改动）
+- **跨父迁移**：`b.posts = [p]`（p 已有 id）→ 级联 update 后 `p.user_id == b.id`
+- **ref_to 时机**：`post.author = Some(u)` 后 save → 父行 user_id 直接落库正确（无需二次 UPDATE，可用 SQL 日志或断言验证）
 - 删除：`tx.delete(user)` → posts 级联删、profile 删
-- ref_to：`post.author = Some(u)` → 回填 user_id；`None` → 清零
+- ref_to：`post.author = Some(u)` → 回填 user_id；`None` 或 `Some(0)` → 清零
 - ref_many：`post.tags = [...]` → 中间表重建
 - 循环：A ↔ B 互引不死循环
 - 深链：三层嵌套
