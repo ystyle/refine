@@ -139,22 +139,24 @@ rf.transaction { tx: Tx =>
 
 ### 分页
 
-分页的典型模式：先 `count()` 获取总数，再用 `limit()` + `offset()` 取当前页：
+`page(page, size)` 一步完成分页：自动执行一次 `COUNT(*)` 统计总数 + 一次 `LIMIT/OFFSET` 查询，返回 `Page<T>`：
 
 ```cangjie
-let page: Int64 = 1
-let pageSize: Int64 = 20
-
-// 总记录数（用于计算总页数）
-let total = User.query().using(rf).count()
-
-// 当前页数据
-let users = User.query().using(rf)
+let pg: Page<User> = User.query().using(rf)
     .order([User.col().id.desc()])
-    .limit(pageSize)
-    .offset((page - 1) * pageSize)
-    .all()
+    .page(2, 20)   // 第 2 页，每页 20 条
+
+pg.items        // Array<User> 当前页数据
+pg.total        // Int64 总记录数
+pg.page         // Int64 当前页码
+pg.size         // Int64 每页条数
+pg.totalPages() // Int64 总页数（total 为 0 时为 0）
+pg.hasNext()    // Bool 是否有下一页
 ```
+
+- 页码从 1 开始，`page` 或 `size` 小于 1 时抛异常
+- 内部忽略链式设置的 `limit()` / `offset()`，以 `page`/`size` 为准
+- 若想只取数据、自己维护分页元信息，可改用 `count()` + `limit()` + `offset()` 组合
 
 ### 聚合
 
@@ -168,7 +170,36 @@ let count = User.query().using(rf)
 let exists = User.query().using(rf)
     .filter(User.col().email == "test@example.com")
     .exists()
+
+// 求和 / 均值 / 最小 / 最大（Int64 与 Float64 字段均有重载）
+let totalAge = User.query().using(rf).sum(User.col().age)
+let avgAge   = User.query().using(rf).avg(User.col().age)   // 返回 Float64
+let minAge   = User.query().using(rf).min(User.col().age)
+let maxAge   = User.query().using(rf).max(User.col().age)
 ```
+
+- `sum`/`avg`/`min`/`max` 与 `count` 一样忽略 LIMIT/OFFSET，但保留 `filter`/`groupBy`/`having` 条件
+- `sum` 对 `Col<Int64>` 返回 `Int64`、对 `Col<Float64>` 返回 `Float64`；`avg` 恒返回 `Float64`
+- 满足条件的行数为 0 时，`sum` 返回 0，`min`/`max` 返回 NULL（转换为 0）
+
+### 悲观锁（SELECT ... FOR UPDATE）
+
+`forUpdate()` 为查询加悲观锁，须在事务内使用，锁定本次查询命中行直到事务提交/回滚：
+
+```cangjie
+rf.transaction { tx: Tx =>
+    let found = Post.query().using(tx)
+        .filter(Post.col().id == 1)
+        .forUpdate()
+        .all()
+    // SELECT ... FROM post WHERE id = 1 FOR UPDATE
+    // 其他事务对被锁行执行 UPDATE/DELETE/FOR UPDATE 会阻塞，直到本事务结束
+}
+```
+
+- 必须与 `using(tx)` 配合在事务中使用；在非事务上下文中锁无意义
+- 锁在事务提交或回滚时自动释放，不会在 `closeExecutor` 时提前释放（锁归事务管）
+- SQLite 方言渲染时忽略锁子句（SQLite 不支持行级锁，全库写锁由引擎自行管理）
 
 ## Update
 
@@ -207,6 +238,21 @@ rf.transaction { tx: Tx =>
 - 触发 `TxBeforeUpdate` / `TxAfterUpdate` 钩子（每个实体独立触发）
 - 参数量为 2 × 列数 × 行数 + 主键数，大批量时注意 SQL 长度（业界同款方案，参考 GORM）
 
+### 条件更新
+
+`updateWhere(cols, vals)` 按查询条件批量更新，返回受影响行数：
+
+```cangjie
+let updated: Int64 = Post.query().using(rf)
+    .filter(Post.col().user_id == author.id)
+    .updateWhere(["title"], ["UPDATED"])
+// UPDATE post SET title = ? WHERE user_id = ?
+```
+
+- 列名与值须等长，按序一一对应；条件复用链式 `filter()`，仅 `WHERE`（及 JOIN）生效
+- 返回受影响行数（数据库层面匹配的行数，MySQL 默认按变更行数统计）
+- 不触发实体级 `TxBeforeUpdate` / `TxAfterUpdate` 钩子（未经过实体映射层），如需钩子请逐个实体 `tx.update()`
+
 ## Delete
 
 ```cangjie
@@ -218,4 +264,18 @@ rf.transaction { tx: Tx =>
     tx.delete(user)
 }
 ```
+
+### 条件删除
+
+`deleteWhere()` 按查询条件批量删除，返回受影响行数：
+
+```cangjie
+let deleted: Int64 = Post.query().using(rf)
+    .filter(Post.col().user_id == author.id)
+    .deleteWhere()
+// DELETE FROM post WHERE user_id = ?
+```
+
+- 条件复用链式 `filter()`；若不加条件则删除全表，请务必先确认 `WHERE` 已设置
+- 不触发 `TxBeforeDelete` / `TxAfterDelete` 钩子（未经过实体映射层）
 

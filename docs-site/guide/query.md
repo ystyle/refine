@@ -125,6 +125,21 @@ User.query().using(rf)
 
 ## 分页
 
+`page(page, size)` 一步完成分页（自动 COUNT + LIMIT/OFFSET），返回 `Page<T>`：
+
+```cangjie
+let pg: Page<User> = User.query().using(rf)
+    .order([User.col().id.desc()])
+    .page(2, 20)
+
+pg.items        // 当前页数据
+pg.total        // 总记录数
+pg.totalPages() // 总页数
+pg.hasNext()    // 是否有下一页
+```
+
+手动控制时用 `limit()` + `offset()`：
+
 ```cangjie
 User.query().using(rf)
     .limit(10)
@@ -141,6 +156,29 @@ User.query().using(rf)
     .groupBy([Expr.Column("dept")])
     .having([Expr.Binary(Expr.Column("count"), BinOp.Gt, Expr.Value(5))])
     .all()
+```
+
+内置聚合终止方法（均忽略 LIMIT/OFFSET，保留 filter/groupBy/having 条件）：
+
+```cangjie
+let cnt = User.query().using(rf).count()                 // COUNT(*) → Int64
+let sum = User.query().using(rf).sum(User.col().age)     // Int64 → Int64；Float64 → Float64
+let avg = User.query().using(rf).avg(User.col().age)     // 恒 → Float64
+let min = User.query().using(rf).min(User.col().age)     // → Int64
+let max = User.query().using(rf).max(User.col().age)     // → Int64
+```
+
+## 悲观锁
+
+`forUpdate()` 生成 `SELECT ... FOR UPDATE`，必须在事务中使用：
+
+```cangjie
+rf.transaction { tx: Tx =>
+    User.query().using(tx)
+        .filter(User.col().id == 1)
+        .forUpdate()
+        .all()
+}
 ```
 
 ## 原生 SQL

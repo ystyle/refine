@@ -3,6 +3,7 @@
 - [Refine](/api/refine) — 核心入口
 - [Query\<T\>](/api/query) — 查询构建器
 - [Col\<T\>](/api/col) — 字段描述符
+- [Page\<T\>](/api/page) — 分页结果
 - [Relation](/api/relation) — 关联映射
 - [Transaction](/api/transaction) — 事务
 - [Hook](/api/hook) — 生命周期钩子
