@@ -176,6 +176,18 @@
 - **修法**：宏写路径改为方言感知的引号包裹（与读路径 quoteIdentifier、upsert 一致）。
 - **备注**：由 I2 修复暴露（2026-08-02），列为下一项排期任务。
 
+### I20. save 的 RETURNING 自增主键列未引号化 → PG 驼峰主键列 save 失败
+- **位置**：`src/macros/tx_gen.cj:66`（`" RETURNING " + $(returningColsLit)`）+ `buildAutoPkReturningCols`（`src/macros/sql_gen.cj:347-351`）
+- **问题**：I19 后写路径表名/列名均已引号化，但 save 的自增主键回填（PG `hasReturningSupport` 分支）仍在 INSERT 后追加 `RETURNING <pk.name>`，`buildAutoPkReturningCols` 返回裸主键列名。PG 下驼峰自增主键列（如 `PostId`）折叠小写 → RETURNING 找不到列，save 直接失败。
+- **修法**：RETURNING 列同样经 `dialect.quoteIdentifier` 引号化（与写路径一致）。
+- **备注**：由 I19 修复暴露（2026-08-02），I19 范围外遗留，列为下一项排期任务。
+
+### I21. ref_many 中间表标识符未引号化 → PG 驼峰 via/junction 列读写失败
+- **位置**：`src/macros/relation_gen.cj:46,77,80,83,86`（load 的 JOIN / append 的 INSERT / delete / clear / count SQL）
+- **问题**：ref_many 相关 SQL 仍把裸 via 表名与 junction 列名（`<via>`、`lowerTableName(target)_id`、`<source>_id`）烘焙进编译期字符串。I19 只覆盖主实体写路径，驼峰 via 表（自定义 `via:` 名）或驼峰 junction 列在 PG 上折叠小写 → append/replace/delete/clear/load/count 无法命中中间表。
+- **修法**：junction 相关 SQL 改为运行时 `dialect.quoteIdentifier`（与 I19 写路径一致）。
+- **备注**：由 I19 修复暴露（2026-08-02），I19 范围外遗留，列为下一项排期任务。
+
 ---
 
 ## 四、Minor（Nice to Have）

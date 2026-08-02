@@ -32,6 +32,7 @@ func buildQuotedPkWhereTokens(pkFields: ArrayList<FieldInfo>): Tokens {
         let pkNameArr: Array<String> = $(pkNamesArr)
         var pkWhereParts = ArrayList<String>()
         for (_pw_ in pkNameArr) { pkWhereParts.add(dialect.quoteIdentifier(_pw_) + " = ?") }
+        // 无 pk 退化兜底：`WHERE id = ?` 的裸 id 不加引号（与改造前行为一致，非引号化遗漏）
         let pkWhere = if (pkWhereParts.size == 0) { " WHERE id = ?" } else { " WHERE " + String.join(pkWhereParts.toArray(), delimiter: " AND ") }
     )
 }
