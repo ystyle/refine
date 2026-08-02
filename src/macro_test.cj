@@ -409,7 +409,7 @@ public class MacroSaveTest {
         p.content = "Test Content"
         tx.save(p)
 
-        @Expect(conn.stmt.capturedSql, "INSERT INTO post (title, content) VALUES (?, ?)")
+        @Expect(conn.stmt.capturedSql, "INSERT INTO \"post\" (\"title\", \"content\") VALUES (?, ?)")
     }
 
     @TestCase
@@ -423,7 +423,7 @@ public class MacroSaveTest {
         u.email = "alice@test.com"
         tx.save(u)
 
-        @Expect(conn.stmt.capturedSql, "INSERT INTO user (name, email) VALUES (?, ?)")
+        @Expect(conn.stmt.capturedSql, "INSERT INTO \"user\" (\"name\", \"email\") VALUES (?, ?)")
     }
 
     @TestCase
@@ -438,7 +438,7 @@ public class MacroSaveTest {
         p.content = "Updated Content"
         tx.update(p)
 
-        @Expect(conn.stmt.capturedSql, "UPDATE post SET title = ?, content = ? WHERE id = ?")
+        @Expect(conn.stmt.capturedSql, "UPDATE \"post\" SET \"title\" = ?, \"content\" = ? WHERE \"id\" = ?")
     }
 
     @TestCase
@@ -451,7 +451,7 @@ public class MacroSaveTest {
         p.id = 1
         tx.delete(p)
 
-        @Expect(conn.stmt.capturedSql, "DELETE FROM post WHERE id = ?")
+        @Expect(conn.stmt.capturedSql, "DELETE FROM \"post\" WHERE \"id\" = ?")
     }
 
     @TestCase
@@ -511,7 +511,7 @@ public class MacroSaveTest {
 
         tx.batchSave([p1, p2])
 
-        @Expect(conn.stmt.capturedSql, "INSERT INTO post (title, content) VALUES (?, ?), (?, ?)")
+        @Expect(conn.stmt.capturedSql, "INSERT INTO \"post\" (\"title\", \"content\") VALUES (?, ?), (?, ?)")
     }
 
     @TestCase
@@ -529,7 +529,7 @@ public class MacroSaveTest {
 
         tx.batchSave([u1, u2])
 
-        @Expect(conn.stmt.capturedSql, "INSERT INTO user (name, email) VALUES (?, ?), (?, ?)")
+        @Expect(conn.stmt.capturedSql, "INSERT INTO \"user\" (\"name\", \"email\") VALUES (?, ?), (?, ?)")
     }
 
     @TestCase
@@ -584,7 +584,7 @@ public class MacroSaveTest {
 
         @Expect(p1.id, 0)
         @Expect(p2.id, 0)
-        @Expect(conn.stmt.capturedSql, "INSERT INTO post (title, content) VALUES (?, ?), (?, ?)")
+        @Expect(conn.stmt.capturedSql, "INSERT INTO \"post\" (\"title\", \"content\") VALUES (?, ?), (?, ?)")
     }
 
     @TestCase
@@ -614,7 +614,7 @@ public class MacroSaveTest {
         tx.save(p)
 
         @Expect(p.id != "", true)
-        @Expect(conn.stmt.capturedSql.contains("INSERT INTO uuidPost (id, title, content)"), true)
+        @Expect(conn.stmt.capturedSql.contains("INSERT INTO \"uuidPost\" (\"id\", \"title\", \"content\")"), true)
         @Expect(conn.stmt.capturedSql.contains("VALUES (?, ?, ?)"), true)
     }
 
@@ -650,7 +650,7 @@ public class MacroSaveTest {
         @Expect(p1.id != "", true)
         @Expect(p2.id != "", true)
         @Expect(p1.id != p2.id, true)
-        @Expect(conn.stmt.capturedSql.contains("INSERT INTO uuidPost (id, title, content) VALUES (?, ?, ?), (?, ?, ?)"), true)
+        @Expect(conn.stmt.capturedSql.contains("INSERT INTO \"uuidPost\" (\"id\", \"title\", \"content\") VALUES (?, ?, ?), (?, ?, ?)"), true)
     }
 
     @TestCase
@@ -666,7 +666,7 @@ public class MacroSaveTest {
         tx.save(e)
 
         @Expect(e.key != "", true)
-        @Expect(conn.stmt.capturedSql.contains("INSERT INTO stringKeyEntity (key, name)"), true)
+        @Expect(conn.stmt.capturedSql.contains("INSERT INTO \"stringKeyEntity\" (\"key\", \"name\")"), true)
     }
 
     @TestCase
@@ -684,7 +684,7 @@ public class MacroSaveTest {
         @Expect(e1.key != "", true)
         @Expect(e2.key != "", true)
         @Expect(e1.key != e2.key, true)
-        @Expect(conn.stmt.capturedSql.contains("INSERT INTO stringKeyEntity (key, name)"), true)
+        @Expect(conn.stmt.capturedSql.contains("INSERT INTO \"stringKeyEntity\" (\"key\", \"name\")"), true)
     }
 
     @TestCase
@@ -700,7 +700,7 @@ public class MacroSaveTest {
         tx.save(e)
 
         @Expect(e.uid, 42)
-        @Expect(conn.stmt.capturedSql.contains("INSERT INTO customAutoPkEntity (label)"), true)
+        @Expect(conn.stmt.capturedSql.contains("INSERT INTO \"customAutoPkEntity\" (\"label\")"), true)
     }
 
     // ─── @Id / Compound Key Tests ──────────────────────
@@ -716,7 +716,7 @@ public class MacroSaveTest {
         p.title = "Manual"
         tx.save(p)
 
-        @Expect(conn.stmt.capturedSql.contains("INSERT INTO manualIdPost (id, title)"), true)
+        @Expect(conn.stmt.capturedSql.contains("INSERT INTO \"manualIdPost\" (\"id\", \"title\")"), true)
     }
 
     @TestCase
@@ -732,7 +732,7 @@ public class MacroSaveTest {
         tx.save(p)
 
         @Expect(p.id != 0, true)
-        @Expect(conn.stmt.capturedSql.contains("INSERT INTO manualIdPost (id, title)"), true)
+        @Expect(conn.stmt.capturedSql.contains("INSERT INTO \"manualIdPost\" (\"id\", \"title\")"), true)
     }
 
     @TestCase
@@ -750,7 +750,7 @@ public class MacroSaveTest {
         @Expect(p1.id != 0, true)
         @Expect(p2.id != 0, true)
         @Expect(p1.id != p2.id, true)
-        @Expect(conn.stmt.capturedSql.contains("INSERT INTO manualIdPost (id, title)"), true)
+        @Expect(conn.stmt.capturedSql.contains("INSERT INTO \"manualIdPost\" (\"id\", \"title\")"), true)
     }
 
     @TestCase
@@ -780,8 +780,8 @@ public class MacroSaveTest {
         p.title = "Updated"
         tx.update(p)
 
-        @Expect(conn.stmt.capturedSql.contains("UPDATE manualIdPost SET"), true)
-        @Expect(conn.stmt.capturedSql.contains("WHERE id = ?"), true)
+        @Expect(conn.stmt.capturedSql.contains("UPDATE \"manualIdPost\" SET"), true)
+        @Expect(conn.stmt.capturedSql.contains("WHERE \"id\" = ?"), true)
     }
 
     @TestCase
@@ -794,8 +794,8 @@ public class MacroSaveTest {
         p.id = 1
         tx.delete(p)
 
-        @Expect(conn.stmt.capturedSql.contains("DELETE FROM manualIdPost"), true)
-        @Expect(conn.stmt.capturedSql.contains("WHERE id = ?"), true)
+        @Expect(conn.stmt.capturedSql.contains("DELETE FROM \"manualIdPost\""), true)
+        @Expect(conn.stmt.capturedSql.contains("WHERE \"id\" = ?"), true)
     }
 
     @TestCase
@@ -809,7 +809,7 @@ public class MacroSaveTest {
         ot.tag_id = 2
         tx.save(ot)
 
-        @Expect(conn.stmt.capturedSql.contains("INSERT INTO orderTag (order_id, tag_id)"), true)
+        @Expect(conn.stmt.capturedSql.contains("INSERT INTO \"orderTag\" (\"order_id\", \"tag_id\")"), true)
         @Expect(conn.stmt.capturedSql.contains("VALUES (?, ?)"), true)
     }
 
@@ -824,7 +824,7 @@ public class MacroSaveTest {
         ot.tag_id = 2
         tx.update(ot)
 
-        @Expect(conn.stmt.capturedSql.contains("WHERE order_id = ? AND tag_id = ?"), true)
+        @Expect(conn.stmt.capturedSql.contains("WHERE \"order_id\" = ? AND \"tag_id\" = ?"), true)
     }
 
     @TestCase
@@ -838,7 +838,7 @@ public class MacroSaveTest {
         ot.tag_id = 2
         tx.delete(ot)
 
-        @Expect(conn.stmt.capturedSql.contains("WHERE order_id = ? AND tag_id = ?"), true)
+        @Expect(conn.stmt.capturedSql.contains("WHERE \"order_id\" = ? AND \"tag_id\" = ?"), true)
     }
 
     // ─── Upsert ──────────────────────────────────────
@@ -996,7 +996,7 @@ public class MacroSaveTest {
         p.content = "C"
         tx.save(p)
 
-        @Expect(conn.stmt.capturedSql.contains("INSERT INTO post (title, content) VALUES (?, ?)"), true)
+        @Expect(conn.stmt.capturedSql.contains("INSERT INTO \"post\" (\"title\", \"content\") VALUES (?, ?)"), true)
         @Expect(p.id, 7)
     }
 
@@ -1018,7 +1018,7 @@ public class MacroSaveTest {
         p2.content = "Y"
         tx.batchUpdate([p1, p2])
 
-        @Expect(conn.stmt.capturedSql.contains("UPDATE post SET title = CASE id WHEN ? THEN ? WHEN ? THEN ? END, content = CASE id WHEN ? THEN ? WHEN ? THEN ? END WHERE id IN (?, ?)"), true)
+        @Expect(conn.stmt.capturedSql.contains("UPDATE \"post\" SET \"title\" = CASE \"id\" WHEN ? THEN ? WHEN ? THEN ? END, \"content\" = CASE \"id\" WHEN ? THEN ? WHEN ? THEN ? END WHERE \"id\" IN (?, ?)"), true)
     }
 
     @TestCase
@@ -1067,7 +1067,7 @@ public class MacroSaveTest {
         ot2.quantity = 6
         tx.batchUpdate([ot1, ot2])
 
-        @Expect(conn.stmt.capturedSql.contains("UPDATE orderItemTag SET quantity = CASE WHEN order_id = ? AND item_id = ? THEN ? WHEN order_id = ? AND item_id = ? THEN ? END WHERE (order_id, item_id) IN ((?, ?), (?, ?))"), true)
+        @Expect(conn.stmt.capturedSql.contains("UPDATE \"orderItemTag\" SET \"quantity\" = CASE WHEN \"order_id\" = ? AND \"item_id\" = ? THEN ? WHEN \"order_id\" = ? AND \"item_id\" = ? THEN ? END WHERE (\"order_id\", \"item_id\") IN ((?, ?), (?, ?))"), true)
     }
 
     @TestCase
@@ -1453,7 +1453,7 @@ public class VersionedEntityTest {
         @Expect(p.created_at <= after, true)
         @Expect(p.updated_at >= before, true)
         @Expect(p.updated_at <= after, true)
-        @Expect(conn.stmt.capturedSql.contains("INSERT INTO versionedPost (title, created_at, updated_at, version)"), true)
+        @Expect(conn.stmt.capturedSql.contains("INSERT INTO \"versionedPost\" (\"title\", \"created_at\", \"updated_at\", \"version\")"), true)
         @Expect(conn.stmt.capturedSql.contains("VALUES (?, ?, ?, ?)"), true)
     }
 
@@ -1470,7 +1470,7 @@ public class VersionedEntityTest {
         p.version = 1
         tx.update(p)
 
-        @Expect(conn.stmt.capturedSql, "UPDATE versionedPost SET title = ?, created_at = ?, updated_at = ?, version = version + 1 WHERE id = ? AND version = ?")
+        @Expect(conn.stmt.capturedSql, "UPDATE \"versionedPost\" SET \"title\" = ?, \"created_at\" = ?, \"updated_at\" = ?, \"version\" = \"version\" + 1 WHERE \"id\" = ? AND \"version\" = ?")
         @Expect(p.version, 2)
     }
 
@@ -1493,7 +1493,7 @@ public class VersionedEntityTest {
             @Expect(e.pk, "1")
             @Expect(e.expected, 1)
             @Expect(e.actual, -1)
-            @Expect(conn.stmt.capturedSql, "SELECT version FROM versionedPost WHERE id = ?")
+            @Expect(conn.stmt.capturedSql, "SELECT \"version\" FROM \"versionedPost\" WHERE \"id\" = ?")
         }
     }
 
@@ -1530,7 +1530,7 @@ public class VersionedEntityTest {
         tx.save(e)
 
         @Expect(e.version, 1)
-        @Expect(conn.stmt.capturedSql.contains("INSERT INTO versionedEvent (id, name, version)"), true)
+        @Expect(conn.stmt.capturedSql.contains("INSERT INTO \"versionedEvent\" (\"id\", \"name\", \"version\")"), true)
     }
 
     @TestCase
@@ -1566,7 +1566,7 @@ public class VersionedEntityTest {
         tx.update(p)
 
         let setPart = conn.stmt.capturedSql.split("SET ")[1].split(" WHERE")[0]
-        @Expect(setPart.contains("version = version + 1"), true)
+        @Expect(setPart.contains("\"version\" = \"version\" + 1"), true)
         @Expect(setPart.contains("created_at"), true)
         @Expect(p.version, 4)
     }
@@ -1584,7 +1584,7 @@ public class VersionedEntityTest {
         tx.save(ot)
 
         @Expect(ot.version, 1)
-        @Expect(conn.stmt.capturedSql.contains("INSERT INTO versionedOrderTag (order_id, tag_id, quantity, version)"), true)
+        @Expect(conn.stmt.capturedSql.contains("INSERT INTO \"versionedOrderTag\" (\"order_id\", \"tag_id\", \"quantity\", \"version\")"), true)
     }
 
     @TestCase
@@ -1601,7 +1601,7 @@ public class VersionedEntityTest {
         ot.version = 1
         tx.update(ot)
 
-        @Expect(conn.stmt.capturedSql, "UPDATE versionedOrderTag SET quantity = ?, version = version + 1 WHERE order_id = ? AND tag_id = ? AND version = ?")
+        @Expect(conn.stmt.capturedSql, "UPDATE \"versionedOrderTag\" SET \"quantity\" = ?, \"version\" = \"version\" + 1 WHERE \"order_id\" = ? AND \"tag_id\" = ? AND \"version\" = ?")
         @Expect(ot.version, 2)
     }
 
@@ -1669,7 +1669,7 @@ public class VersionedEntityTest {
         p.version = 2
         tx.update(p)
 
-        @Expect(conn.stmt.capturedSql.contains("version = version + 1"), true)
+        @Expect(conn.stmt.capturedSql.contains("\"version\" = \"version\" + 1"), true)
         @Expect(p.version, 3)
     }
 
@@ -1689,7 +1689,7 @@ public class VersionedEntityTest {
 
         @Expect(p1.version, 1)
         @Expect(p2.version, 1)
-        @Expect(conn.stmt.capturedSql, "INSERT INTO versionedPost (title, created_at, updated_at, version) VALUES (?, ?, ?, ?), (?, ?, ?, ?)")
+        @Expect(conn.stmt.capturedSql, "INSERT INTO \"versionedPost\" (\"title\", \"created_at\", \"updated_at\", \"version\") VALUES (?, ?, ?, ?), (?, ?, ?, ?)")
         @Expect(conn.stmt.capturedSetValues.size, 8)
     }
 
@@ -1709,7 +1709,7 @@ public class VersionedEntityTest {
 
         @Expect(e1.version, 1)
         @Expect(e2.version, 1)
-        @Expect(conn.stmt.capturedSql, "INSERT INTO versionedEvent (id, name, version) VALUES (?, ?, ?), (?, ?, ?)")
+        @Expect(conn.stmt.capturedSql, "INSERT INTO \"versionedEvent\" (\"id\", \"name\", \"version\") VALUES (?, ?, ?), (?, ?, ?)")
     }
 
     @TestCase
@@ -1730,7 +1730,7 @@ public class VersionedEntityTest {
 
         @Expect(ot1.version, 1)
         @Expect(ot2.version, 1)
-        @Expect(conn.stmt.capturedSql, "INSERT INTO versionedOrderTag (order_id, tag_id, quantity, version) VALUES (?, ?, ?, ?), (?, ?, ?, ?)")
+        @Expect(conn.stmt.capturedSql, "INSERT INTO \"versionedOrderTag\" (\"order_id\", \"tag_id\", \"quantity\", \"version\") VALUES (?, ?, ?, ?), (?, ?, ?, ?)")
     }
 
     @TestCase
@@ -1750,9 +1750,9 @@ public class VersionedEntityTest {
         p2.version = 3
         tx.batchUpdate([p1, p2])
 
-        @Expect(conn.stmt.capturedSql, "UPDATE versionedPost SET title = CASE id WHEN ? THEN ? WHEN ? THEN ? END, created_at = CASE id WHEN ? THEN ? WHEN ? THEN ? END, version = CASE id WHEN ? THEN ? WHEN ? THEN ? END, updated_at = CASE id WHEN ? THEN ? WHEN ? THEN ? END WHERE id IN (?, ?)")
-        @Expect(conn.stmt.capturedSql.contains("version = CASE"), true)
-        @Expect(conn.stmt.capturedSql.contains("updated_at = CASE"), true)
+        @Expect(conn.stmt.capturedSql, "UPDATE \"versionedPost\" SET \"title\" = CASE \"id\" WHEN ? THEN ? WHEN ? THEN ? END, \"created_at\" = CASE \"id\" WHEN ? THEN ? WHEN ? THEN ? END, \"version\" = CASE \"id\" WHEN ? THEN ? WHEN ? THEN ? END, \"updated_at\" = CASE \"id\" WHEN ? THEN ? WHEN ? THEN ? END WHERE \"id\" IN (?, ?)")
+        @Expect(conn.stmt.capturedSql.contains("\"version\" = CASE"), true)
+        @Expect(conn.stmt.capturedSql.contains("\"updated_at\" = CASE"), true)
         @Expect(p1.version, 2)
         @Expect(p2.version, 4)
         @Expect(containsInt(conn.stmt.capturedSetValues, 2), true)
@@ -1806,7 +1806,7 @@ public class VersionedEntityTest {
         ot2.version = 2
         tx.batchUpdate([ot1, ot2])
 
-        @Expect(conn.stmt.capturedSql.contains("version = CASE WHEN order_id = ? AND tag_id = ? THEN ? WHEN order_id = ? AND tag_id = ? THEN ? END"), true)
+        @Expect(conn.stmt.capturedSql.contains("\"version\" = CASE WHEN \"order_id\" = ? AND \"tag_id\" = ? THEN ? WHEN \"order_id\" = ? AND \"tag_id\" = ? THEN ? END"), true)
         @Expect(ot1.version, 2)
         @Expect(ot2.version, 3)
         @Expect(containsInt(conn.stmt.capturedSetValues, 2), true)
@@ -2078,7 +2078,7 @@ public class CascadeTraversalTest {
         p.comments = list
         p.cascadePostSave(tx, ArrayList<Object>())
         @Expect(c.post_id, 5)
-        @Expect(conn.stmt.capturedSql, "INSERT INTO comment (body, post_id) VALUES (?, ?)")
+        @Expect(conn.stmt.capturedSql, "INSERT INTO \"comment\" (\"body\", \"post_id\") VALUES (?, ?)")
     }
 
     @TestCase
@@ -2095,7 +2095,7 @@ public class CascadeTraversalTest {
         p.comments = list
         p.cascadePostSave(tx, ArrayList<Object>())
         @Expect(c.post_id, 5)
-        @Expect(conn.stmt.capturedSql, "UPDATE comment SET body = ?, post_id = ? WHERE id = ?")
+        @Expect(conn.stmt.capturedSql, "UPDATE \"comment\" SET \"body\" = ?, \"post_id\" = ? WHERE \"id\" = ?")
     }
 
     @TestCase
@@ -2123,7 +2123,7 @@ public class CascadeTraversalTest {
         u.profile = Some(pr)
         u.cascadePostSave(tx, ArrayList<Object>())
         @Expect(pr.user_id, 3)
-        @Expect(conn.stmt.capturedSql, "INSERT INTO profileWithRel (bio, user_id) VALUES (?, ?)")
+        @Expect(conn.stmt.capturedSql, "INSERT INTO \"profileWithRel\" (\"bio\", \"user_id\") VALUES (?, ?)")
     }
 
     @TestCase
@@ -2292,7 +2292,7 @@ public class CascadeTraversalTest {
         b.cascadePostSave(tx, visited)
         a.cascadePostSave(tx, visited)
         @Expect(conn.stmt.capturedSqlHistory.size, 1)
-        @Expect(conn.stmt.capturedSqlHistory[0], "INSERT INTO categoryWithRel (name, parent_id) VALUES (?, ?)")
+        @Expect(conn.stmt.capturedSqlHistory[0], "INSERT INTO \"categoryWithRel\" (\"name\", \"parent_id\") VALUES (?, ?)")
         @Expect(capturedInt64(conn.stmt.capturedSetValues, 1), 1)
     }
 
@@ -2321,9 +2321,9 @@ public class CascadeTraversalTest {
         d.cascadePostSave(tx, visited)
         c2.cascadePostSave(tx, visited)
         @Expect(conn.stmt.capturedSqlHistory.size, 3)
-        @Expect(conn.stmt.capturedSqlHistory[0], "INSERT INTO categoryWithRel (name, parent_id) VALUES (?, ?)")
-        @Expect(conn.stmt.capturedSqlHistory[1], "INSERT INTO categoryWithRel (name, parent_id) VALUES (?, ?)")
-        @Expect(conn.stmt.capturedSqlHistory[2], "INSERT INTO categoryWithRel (name, parent_id) VALUES (?, ?)")
+        @Expect(conn.stmt.capturedSqlHistory[0], "INSERT INTO \"categoryWithRel\" (\"name\", \"parent_id\") VALUES (?, ?)")
+        @Expect(conn.stmt.capturedSqlHistory[1], "INSERT INTO \"categoryWithRel\" (\"name\", \"parent_id\") VALUES (?, ?)")
+        @Expect(conn.stmt.capturedSqlHistory[2], "INSERT INTO \"categoryWithRel\" (\"name\", \"parent_id\") VALUES (?, ?)")
     }
 
     @TestCase
@@ -2337,7 +2337,7 @@ public class CascadeTraversalTest {
         p.cascadeDelete(tx, ArrayList<String>())
         @Expect(conn.stmt.capturedSqlHistory.size, 3)
         @Expect(conn.stmt.capturedSqlHistory[0], "SELECT * FROM comment WHERE post_id = ?")
-        @Expect(conn.stmt.capturedSqlHistory[1], "DELETE FROM comment WHERE id = ?")
+        @Expect(conn.stmt.capturedSqlHistory[1], "DELETE FROM \"comment\" WHERE \"id\" = ?")
         @Expect(conn.stmt.capturedSqlHistory[2], "DELETE FROM post_tags WHERE postWithRel_id = ?")
         @Expect(capturedInt64(conn.stmt.capturedSetValues, 0), 5)
         @Expect(capturedInt64(conn.stmt.capturedSetValues, 1), 9)
@@ -2354,7 +2354,7 @@ public class CascadeTraversalTest {
         u.cascadeDelete(tx, ArrayList<String>())
         @Expect(conn.stmt.capturedSqlHistory.size, 2)
         @Expect(conn.stmt.capturedSqlHistory[0], "SELECT * FROM profileWithRel WHERE user_id = ?")
-        @Expect(conn.stmt.capturedSqlHistory[1], "DELETE FROM profileWithRel WHERE id = ?")
+        @Expect(conn.stmt.capturedSqlHistory[1], "DELETE FROM \"profileWithRel\" WHERE \"id\" = ?")
         @Expect(capturedInt64(conn.stmt.capturedSetValues, 0), 3)
         @Expect(capturedInt64(conn.stmt.capturedSetValues, 1), 7)
     }
@@ -2374,8 +2374,8 @@ public class CascadeTraversalTest {
         @Expect(conn.stmt.capturedSqlHistory[0], "SELECT * FROM categoryWithRel WHERE parent_id = ?")
         @Expect(conn.stmt.capturedSqlHistory[1], "SELECT * FROM categoryWithRel WHERE parent_id = ?")
         @Expect(conn.stmt.capturedSqlHistory[2], "SELECT * FROM categoryWithRel WHERE parent_id = ?")
-        @Expect(conn.stmt.capturedSqlHistory[3], "DELETE FROM categoryWithRel WHERE id = ?")
-        @Expect(conn.stmt.capturedSqlHistory[4], "DELETE FROM categoryWithRel WHERE id = ?")
+        @Expect(conn.stmt.capturedSqlHistory[3], "DELETE FROM \"categoryWithRel\" WHERE \"id\" = ?")
+        @Expect(conn.stmt.capturedSqlHistory[4], "DELETE FROM \"categoryWithRel\" WHERE \"id\" = ?")
         @Expect(capturedInt64(conn.stmt.capturedSetValues, 3), 12)
         @Expect(capturedInt64(conn.stmt.capturedSetValues, 4), 9)
     }
@@ -2401,7 +2401,7 @@ public class CascadeTraversalTest {
         @Expect(conn.stmt.capturedSqlHistory.size, 3)
         @Expect(conn.stmt.capturedSqlHistory[0], "SELECT * FROM categoryWithRel WHERE parent_id = ?")
         @Expect(conn.stmt.capturedSqlHistory[1], "SELECT * FROM categoryWithRel WHERE parent_id = ?")
-        @Expect(conn.stmt.capturedSqlHistory[2], "DELETE FROM categoryWithRel WHERE id = ?")
+        @Expect(conn.stmt.capturedSqlHistory[2], "DELETE FROM \"categoryWithRel\" WHERE \"id\" = ?")
         @Expect(capturedInt64(conn.stmt.capturedSetValues, 0), 5)
         @Expect(capturedInt64(conn.stmt.capturedSetValues, 1), 9)
         @Expect(capturedInt64(conn.stmt.capturedSetValues, 2), 9)
@@ -2756,8 +2756,8 @@ public class TxCascadeTest {
         p.comments = list
         tx.save(p)
         @Expect(conn.stmt.capturedSqlHistory.size, 2)
-        @Expect(conn.stmt.capturedSqlHistory[0], "INSERT INTO postWithRel (title, user_id, post_id) VALUES (?, ?, ?)")
-        @Expect(conn.stmt.capturedSqlHistory[1], "INSERT INTO comment (body, post_id) VALUES (?, ?)")
+        @Expect(conn.stmt.capturedSqlHistory[0], "INSERT INTO \"postWithRel\" (\"title\", \"user_id\", \"post_id\") VALUES (?, ?, ?)")
+        @Expect(conn.stmt.capturedSqlHistory[1], "INSERT INTO \"comment\" (\"body\", \"post_id\") VALUES (?, ?)")
         @Expect(p.id, 42)
         @Expect(c.post_id, 42)
         @Expect(capturedInt64(conn.stmt.capturedSetValues, 4), 42)
@@ -2775,8 +2775,8 @@ public class TxCascadeTest {
         u.profile = Some(pr)
         tx.save(u)
         @Expect(conn.stmt.capturedSqlHistory.size, 2)
-        @Expect(conn.stmt.capturedSqlHistory[0], "INSERT INTO userWithRel (name) VALUES (?)")
-        @Expect(conn.stmt.capturedSqlHistory[1], "INSERT INTO profileWithRel (bio, user_id) VALUES (?, ?)")
+        @Expect(conn.stmt.capturedSqlHistory[0], "INSERT INTO \"userWithRel\" (\"name\") VALUES (?)")
+        @Expect(conn.stmt.capturedSqlHistory[1], "INSERT INTO \"profileWithRel\" (\"bio\", \"user_id\") VALUES (?, ?)")
         @Expect(u.id, 7)
         @Expect(pr.user_id, 7)
     }
@@ -2800,9 +2800,9 @@ public class TxCascadeTest {
         p.comments = list
         tx.update(p)
         @Expect(conn.stmt.capturedSqlHistory.size, 3)
-        @Expect(conn.stmt.capturedSqlHistory[0], "UPDATE postWithRel SET title = ?, user_id = ?, post_id = ? WHERE id = ?")
-        @Expect(conn.stmt.capturedSqlHistory[1], "UPDATE comment SET body = ?, post_id = ? WHERE id = ?")
-        @Expect(conn.stmt.capturedSqlHistory[2], "INSERT INTO comment (body, post_id) VALUES (?, ?)")
+        @Expect(conn.stmt.capturedSqlHistory[0], "UPDATE \"postWithRel\" SET \"title\" = ?, \"user_id\" = ?, \"post_id\" = ? WHERE \"id\" = ?")
+        @Expect(conn.stmt.capturedSqlHistory[1], "UPDATE \"comment\" SET \"body\" = ?, \"post_id\" = ? WHERE \"id\" = ?")
+        @Expect(conn.stmt.capturedSqlHistory[2], "INSERT INTO \"comment\" (\"body\", \"post_id\") VALUES (?, ?)")
         @Expect(existing.post_id, 5)
         @Expect(fresh.post_id, 5)
     }
@@ -2819,9 +2819,9 @@ public class TxCascadeTest {
         tx.delete(p)
         @Expect(conn.stmt.capturedSqlHistory.size, 4)
         @Expect(conn.stmt.capturedSqlHistory[0], "SELECT * FROM comment WHERE post_id = ?")
-        @Expect(conn.stmt.capturedSqlHistory[1], "DELETE FROM comment WHERE id = ?")
+        @Expect(conn.stmt.capturedSqlHistory[1], "DELETE FROM \"comment\" WHERE \"id\" = ?")
         @Expect(conn.stmt.capturedSqlHistory[2], "DELETE FROM post_tags WHERE postWithRel_id = ?")
-        @Expect(conn.stmt.capturedSqlHistory[3], "DELETE FROM postWithRel WHERE id = ?")
+        @Expect(conn.stmt.capturedSqlHistory[3], "DELETE FROM \"postWithRel\" WHERE \"id\" = ?")
         @Expect(capturedInt64(conn.stmt.capturedSetValues, 0), 5)
         @Expect(capturedInt64(conn.stmt.capturedSetValues, 1), 9)
     }
@@ -2838,8 +2838,8 @@ public class TxCascadeTest {
         tx.delete(p)
         @Expect(conn.stmt.capturedSqlHistory.size, 3)
         @Expect(conn.stmt.capturedSqlHistory[0], "SELECT * FROM softDeleteChild WHERE parent_id = ?")
-        @Expect(conn.stmt.capturedSqlHistory[1].contains("UPDATE softDeleteChild SET deleted_at"), true)
-        @Expect(conn.stmt.capturedSqlHistory[2].contains("UPDATE softDeleteParent SET deleted_at"), true)
+        @Expect(conn.stmt.capturedSqlHistory[1].contains("UPDATE \"softDeleteChild\" SET \"deleted_at\""), true)
+        @Expect(conn.stmt.capturedSqlHistory[2].contains("UPDATE \"softDeleteParent\" SET \"deleted_at\""), true)
     }
 
     @TestCase
@@ -2857,8 +2857,8 @@ public class TxCascadeTest {
         b.children = lb
         tx.save(a)
         @Expect(conn.stmt.capturedSqlHistory.size, 2)
-        @Expect(conn.stmt.capturedSqlHistory[0], "INSERT INTO categoryWithRel (name, parent_id) VALUES (?, ?)")
-        @Expect(conn.stmt.capturedSqlHistory[1], "INSERT INTO categoryWithRel (name, parent_id) VALUES (?, ?)")
+        @Expect(conn.stmt.capturedSqlHistory[0], "INSERT INTO \"categoryWithRel\" (\"name\", \"parent_id\") VALUES (?, ?)")
+        @Expect(conn.stmt.capturedSqlHistory[1], "INSERT INTO \"categoryWithRel\" (\"name\", \"parent_id\") VALUES (?, ?)")
     }
 
     @TestCase
@@ -2872,7 +2872,7 @@ public class TxCascadeTest {
         p.author = Some(u)
         tx.save(p)
         @Expect(conn.stmt.capturedSqlHistory.size, 1)
-        @Expect(conn.stmt.capturedSqlHistory[0], "INSERT INTO postWithRel (title, user_id, post_id) VALUES (?, ?, ?)")
+        @Expect(conn.stmt.capturedSqlHistory[0], "INSERT INTO \"postWithRel\" (\"title\", \"user_id\", \"post_id\") VALUES (?, ?, ?)")
         @Expect(capturedInt64(conn.stmt.capturedSetValues, 1), 5)
     }
 
@@ -2917,7 +2917,7 @@ public class TxCascadeTest {
         p.title = "x"
         tx.update(p)
         @Expect(conn.stmt.capturedSqlHistory.size, 1)
-        @Expect(conn.stmt.capturedSqlHistory[0], "UPDATE postWithRel SET title = ?, user_id = ?, post_id = ? WHERE id = ?")
+        @Expect(conn.stmt.capturedSqlHistory[0], "UPDATE \"postWithRel\" SET \"title\" = ?, \"user_id\" = ?, \"post_id\" = ? WHERE \"id\" = ?")
     }
 
     @TestCase
@@ -2941,7 +2941,7 @@ public class TxCascadeTest {
         p.title = "changed"
         tx.update(p)
         @Expect(conn.stmt.capturedSqlHistory.size, 3)
-        @Expect(conn.stmt.capturedSqlHistory[2], "UPDATE postWithRel SET title = ?, user_id = ?, post_id = ? WHERE id = ?")
+        @Expect(conn.stmt.capturedSqlHistory[2], "UPDATE \"postWithRel\" SET \"title\" = ?, \"user_id\" = ?, \"post_id\" = ? WHERE \"id\" = ?")
     }
 
     @TestCase
@@ -2969,8 +2969,8 @@ public class TxCascadeTest {
         conn.stmt.mockRowCount = 1
         tx.update(p)
         @Expect(conn.stmt.capturedSqlHistory.size, 5)
-        @Expect(conn.stmt.capturedSqlHistory[3], "UPDATE comment SET body = ?, post_id = ? WHERE id = ?")
-        @Expect(conn.stmt.capturedSqlHistory[4], "INSERT INTO comment (body, post_id) VALUES (?, ?)")
+        @Expect(conn.stmt.capturedSqlHistory[3], "UPDATE \"comment\" SET \"body\" = ?, \"post_id\" = ? WHERE \"id\" = ?")
+        @Expect(conn.stmt.capturedSqlHistory[4], "INSERT INTO \"comment\" (\"body\", \"post_id\") VALUES (?, ?)")
         @Expect(p._commentsModified, false)
     }
 
@@ -2991,7 +2991,7 @@ public class TxCascadeTest {
         p.tags = list
         tx.save(p)
         @Expect(conn.stmt.capturedSqlHistory.size, 4)
-        @Expect(conn.stmt.capturedSqlHistory[0], "INSERT INTO postWithRel (title, user_id, post_id) VALUES (?, ?, ?)")
+        @Expect(conn.stmt.capturedSqlHistory[0], "INSERT INTO \"postWithRel\" (\"title\", \"user_id\", \"post_id\") VALUES (?, ?, ?)")
         @Expect(conn.stmt.capturedSqlHistory[1], "DELETE FROM post_tags WHERE postWithRel_id = ?")
         @Expect(conn.stmt.capturedSqlHistory[2], "INSERT INTO post_tags (postWithRel_id, tag_id) VALUES (?, ?)")
         @Expect(conn.stmt.capturedSqlHistory[3], "INSERT INTO post_tags (postWithRel_id, tag_id) VALUES (?, ?)")
@@ -3031,7 +3031,7 @@ public class CascadeBoundaryTest {
         let tx = Tx(conn)
         tx.update(e)
         @Expect(conn.stmt.capturedSqlHistory.size, 1)
-        @Expect(conn.stmt.capturedSqlHistory[0], "UPDATE postWithRel SET title = ?, user_id = ?, post_id = ? WHERE id = ?")
+        @Expect(conn.stmt.capturedSqlHistory[0], "UPDATE \"postWithRel\" SET \"title\" = ?, \"user_id\" = ?, \"post_id\" = ? WHERE \"id\" = ?")
         @Expect(capturedInt64(conn.stmt.capturedSetValues, 3), 5)
     }
 
@@ -3053,9 +3053,9 @@ public class CascadeBoundaryTest {
         p.comments = list
         tx.save(p)
         @Expect(conn.stmt.capturedSqlHistory.size, 3)
-        @Expect(conn.stmt.capturedSqlHistory[0], "INSERT INTO postWithRel (title, user_id, post_id) VALUES (?, ?, ?)")
-        @Expect(conn.stmt.capturedSqlHistory[1], "INSERT INTO comment (body, post_id) VALUES (?, ?)")
-        @Expect(conn.stmt.capturedSqlHistory[2], "INSERT INTO comment (body, post_id) VALUES (?, ?)")
+        @Expect(conn.stmt.capturedSqlHistory[0], "INSERT INTO \"postWithRel\" (\"title\", \"user_id\", \"post_id\") VALUES (?, ?, ?)")
+        @Expect(conn.stmt.capturedSqlHistory[1], "INSERT INTO \"comment\" (\"body\", \"post_id\") VALUES (?, ?)")
+        @Expect(conn.stmt.capturedSqlHistory[2], "INSERT INTO \"comment\" (\"body\", \"post_id\") VALUES (?, ?)")
         @Expect(p.id, 42)
         @Expect(c1.post_id, 42)
         @Expect(c2.post_id, 42)
@@ -3074,7 +3074,7 @@ public class CascadeBoundaryTest {
         p.comments = ArrayList<Comment>()
         tx.save(p)
         @Expect(conn.stmt.capturedSqlHistory.size, 1)
-        @Expect(conn.stmt.capturedSqlHistory[0], "INSERT INTO postWithRel (title, user_id, post_id) VALUES (?, ?, ?)")
+        @Expect(conn.stmt.capturedSqlHistory[0], "INSERT INTO \"postWithRel\" (\"title\", \"user_id\", \"post_id\") VALUES (?, ?, ?)")
     }
 
     @TestCase
@@ -3089,7 +3089,7 @@ public class CascadeBoundaryTest {
         p.comments = ArrayList<Comment>()
         tx.update(p)
         @Expect(conn.stmt.capturedSqlHistory.size, 1)
-        @Expect(conn.stmt.capturedSqlHistory[0], "UPDATE postWithRel SET title = ?, user_id = ?, post_id = ? WHERE id = ?")
+        @Expect(conn.stmt.capturedSqlHistory[0], "UPDATE \"postWithRel\" SET \"title\" = ?, \"user_id\" = ?, \"post_id\" = ? WHERE \"id\" = ?")
     }
 
     @TestCase
@@ -3103,7 +3103,7 @@ public class CascadeBoundaryTest {
         p.tags = ArrayList<Tag>()
         tx.save(p)
         @Expect(conn.stmt.capturedSqlHistory.size, 2)
-        @Expect(conn.stmt.capturedSqlHistory[0], "INSERT INTO postWithRel (title, user_id, post_id) VALUES (?, ?, ?)")
+        @Expect(conn.stmt.capturedSqlHistory[0], "INSERT INTO \"postWithRel\" (\"title\", \"user_id\", \"post_id\") VALUES (?, ?, ?)")
         @Expect(conn.stmt.capturedSqlHistory[1], "DELETE FROM post_tags WHERE postWithRel_id = ?")
         @Expect(capturedInt64(conn.stmt.capturedSetValues, 3), 42)
     }
@@ -3120,7 +3120,7 @@ public class CascadeBoundaryTest {
         p.tags = ArrayList<Tag>()
         tx.update(p)
         @Expect(conn.stmt.capturedSqlHistory.size, 2)
-        @Expect(conn.stmt.capturedSqlHistory[0], "UPDATE postWithRel SET title = ?, user_id = ?, post_id = ? WHERE id = ?")
+        @Expect(conn.stmt.capturedSqlHistory[0], "UPDATE \"postWithRel\" SET \"title\" = ?, \"user_id\" = ?, \"post_id\" = ? WHERE \"id\" = ?")
         @Expect(conn.stmt.capturedSqlHistory[1], "DELETE FROM post_tags WHERE postWithRel_id = ?")
         @Expect(capturedInt64(conn.stmt.capturedSetValues, 4), 5)
     }
@@ -3148,9 +3148,9 @@ public class CascadeBoundaryTest {
         l2.children = l3List
         tx.save(root)
         @Expect(conn.stmt.capturedSqlHistory.size, 3)
-        @Expect(conn.stmt.capturedSqlHistory[0], "INSERT INTO categoryWithRel (name, parent_id) VALUES (?, ?)")
-        @Expect(conn.stmt.capturedSqlHistory[1], "INSERT INTO categoryWithRel (name, parent_id) VALUES (?, ?)")
-        @Expect(conn.stmt.capturedSqlHistory[2], "INSERT INTO categoryWithRel (name, parent_id) VALUES (?, ?)")
+        @Expect(conn.stmt.capturedSqlHistory[0], "INSERT INTO \"categoryWithRel\" (\"name\", \"parent_id\") VALUES (?, ?)")
+        @Expect(conn.stmt.capturedSqlHistory[1], "INSERT INTO \"categoryWithRel\" (\"name\", \"parent_id\") VALUES (?, ?)")
+        @Expect(conn.stmt.capturedSqlHistory[2], "INSERT INTO \"categoryWithRel\" (\"name\", \"parent_id\") VALUES (?, ?)")
         @Expect(root.id, 10)
         @Expect(l2.id, 11)
         @Expect(l3.id, 12)
@@ -3180,8 +3180,8 @@ public class CascadeBoundaryTest {
         order.items = list
         tx.update(order)
         @Expect(conn.stmt.capturedSqlHistory.size, 2)
-        @Expect(conn.stmt.capturedSqlHistory[0], "UPDATE versionedOrder SET name = ?, version = version + 1 WHERE id = ? AND version = ?")
-        @Expect(conn.stmt.capturedSqlHistory[1], "UPDATE versionedOrderItem SET name = ?, order_id = ?, version = version + 1 WHERE id = ? AND version = ?")
+        @Expect(conn.stmt.capturedSqlHistory[0], "UPDATE \"versionedOrder\" SET \"name\" = ?, \"version\" = \"version\" + 1 WHERE \"id\" = ? AND \"version\" = ?")
+        @Expect(conn.stmt.capturedSqlHistory[1], "UPDATE \"versionedOrderItem\" SET \"name\" = ?, \"order_id\" = ?, \"version\" = \"version\" + 1 WHERE \"id\" = ? AND \"version\" = ?")
         @Expect(order.version, 2)
         @Expect(item.version, 2)
         @Expect(item.order_id, 1)
@@ -3215,7 +3215,7 @@ public class CascadeBoundaryTest {
         }
         @Expect(conn.stmt.capturedSqlHistory.size, 3)
         @Expect(conn.stmt.capturedSqlHistory[1].contains("versionedOrderItem"), true)
-        @Expect(conn.stmt.capturedSqlHistory[2], "SELECT version FROM versionedOrderItem WHERE id = ?")
+        @Expect(conn.stmt.capturedSqlHistory[2], "SELECT \"version\" FROM \"versionedOrderItem\" WHERE \"id\" = ?")
     }
 
     @TestCase
@@ -3235,8 +3235,8 @@ public class CascadeBoundaryTest {
         order.items = list
         tx.save(order)
         @Expect(conn.stmt.capturedSqlHistory.size, 2)
-        @Expect(conn.stmt.capturedSqlHistory[0], "INSERT INTO versionedOrder (name, version) VALUES (?, ?)")
-        @Expect(conn.stmt.capturedSqlHistory[1], "INSERT INTO versionedOrderItem (name, version, order_id) VALUES (?, ?, ?)")
+        @Expect(conn.stmt.capturedSqlHistory[0], "INSERT INTO \"versionedOrder\" (\"name\", \"version\") VALUES (?, ?)")
+        @Expect(conn.stmt.capturedSqlHistory[1], "INSERT INTO \"versionedOrderItem\" (\"name\", \"version\", \"order_id\") VALUES (?, ?, ?)")
         @Expect(order.id, 1)
         @Expect(order.version, 1)
         @Expect(item.id, 2)
@@ -3288,8 +3288,226 @@ public class TxPhysicalDeleteCascadeTest {
         tx.physicalDelete(p)
         @Expect(conn.stmt.capturedSqlHistory.size, 3)
         @Expect(conn.stmt.capturedSqlHistory[0], "SELECT * FROM softDeleteChild WHERE parent_id = ?")
-        @Expect(conn.stmt.capturedSqlHistory[1].contains("UPDATE softDeleteChild SET deleted_at"), true)
-        @Expect(conn.stmt.capturedSqlHistory[2], "DELETE FROM softDeleteParent WHERE id = ?")
+        @Expect(conn.stmt.capturedSqlHistory[1].contains("UPDATE \"softDeleteChild\" SET \"deleted_at\""), true)
+        @Expect(conn.stmt.capturedSqlHistory[2], "DELETE FROM \"softDeleteParent\" WHERE \"id\" = ?")
+    }
+}
+
+// ─── I19: 宏层写路径标识符方言感知引号化 ─────────────────────
+// 写路径 SQL（INSERT/UPDATE/DELETE/BATCH）通过 runtime dialect.quoteIdentifier 生成：
+// SQLite 双引号、MySQL 反引号、PG 双引号，驼峰实体在 PG 可读可写。
+// 修复前：宏层把裸表名/列名烘焙进编译期字符串，PG 未加引号标识符折叠小写，
+// 无法命中引号原样建出的驼峰表/列。
+
+@Test
+public class WritePathDialectQuotingTest {
+    private func txWith(dialect: Dialect): (CaptureConnection, Tx) {
+        let conn = CaptureConnection()
+        let tx = Tx(conn, 0, dialect)
+        (conn, tx)
+    }
+
+    @TestCase
+    public func testSaveSQLiteQuotesIdentifiers(): Unit {
+        clearHooks()
+        let (conn, tx) = txWith(SQLiteDialect())
+        let u = CamelUser()
+        u.displayName = "Alice"
+        tx.save(u)
+        @Expect(conn.stmt.capturedSql, "INSERT INTO \"camelUser\" (\"displayName\") VALUES (?)")
+    }
+
+    @TestCase
+    public func testSaveMySQLQuotesIdentifiers(): Unit {
+        clearHooks()
+        let (conn, tx) = txWith(MySQLDialect())
+        let u = CamelUser()
+        u.displayName = "Alice"
+        tx.save(u)
+        @Expect(conn.stmt.capturedSql, "INSERT INTO `camelUser` (`displayName`) VALUES (?)")
+    }
+
+    @TestCase
+    public func testSavePostgresQuotesIdentifiers(): Unit {
+        clearHooks()
+        // ManualIdPost 客户端主键：PG save 不触发 RETURNING，可断言整条 INSERT
+        let (conn, tx) = txWith(PostgreSQLDialect())
+        let p = ManualIdPost()
+        p.id = 1
+        p.title = "T"
+        tx.save(p)
+        @Expect(conn.stmt.capturedSql, "INSERT INTO \"manualIdPost\" (\"id\", \"title\") VALUES (?, ?)")
+    }
+
+    @TestCase
+    public func testSavePostgresAutoPkReturningQuotesIdentifiers(): Unit {
+        clearHooks()
+        let (conn, tx) = txWith(PostgreSQLDialect())
+        conn.stmt.queryResult = RowQueryResult(7)
+        let p = PgPost()
+        p.title = "T"
+        p.content = "C"
+        tx.save(p)
+        @Expect(conn.stmt.capturedSql.contains("INSERT INTO \"pgpost\" (\"title\", \"content\") VALUES (?, ?)"), true)
+        @Expect(conn.stmt.capturedSql.contains("RETURNING"), true)
+        @Expect(p.id, 7)
+    }
+
+    @TestCase
+    public func testBatchSaveSQLiteQuotesIdentifiers(): Unit {
+        clearHooks()
+        let (conn, tx) = txWith(SQLiteDialect())
+        let u1 = CamelUser(); u1.displayName = "A"
+        let u2 = CamelUser(); u2.displayName = "B"
+        tx.batchSave([u1, u2])
+        @Expect(conn.stmt.capturedSql, "INSERT INTO \"camelUser\" (\"displayName\") VALUES (?), (?)")
+    }
+
+    @TestCase
+    public func testBatchSaveMySQLQuotesIdentifiers(): Unit {
+        clearHooks()
+        let (conn, tx) = txWith(MySQLDialect())
+        let u1 = CamelUser(); u1.displayName = "A"
+        let u2 = CamelUser(); u2.displayName = "B"
+        tx.batchSave([u1, u2])
+        @Expect(conn.stmt.capturedSql, "INSERT INTO `camelUser` (`displayName`) VALUES (?), (?)")
+    }
+
+    @TestCase
+    public func testUpdateSQLiteQuotesIdentifiers(): Unit {
+        clearHooks()
+        let (conn, tx) = txWith(SQLiteDialect())
+        let u = CamelUser()
+        u.id = 1
+        u.displayName = "Updated"
+        tx.update(u)
+        @Expect(conn.stmt.capturedSql, "UPDATE \"camelUser\" SET \"displayName\" = ? WHERE \"id\" = ?")
+    }
+
+    @TestCase
+    public func testUpdateMySQLQuotesIdentifiers(): Unit {
+        clearHooks()
+        let (conn, tx) = txWith(MySQLDialect())
+        let u = CamelUser()
+        u.id = 1
+        u.displayName = "Updated"
+        tx.update(u)
+        @Expect(conn.stmt.capturedSql, "UPDATE `camelUser` SET `displayName` = ? WHERE `id` = ?")
+    }
+
+    @TestCase
+    public func testUpdatePostgresQuotesIdentifiers(): Unit {
+        clearHooks()
+        let (conn, tx) = txWith(PostgreSQLDialect())
+        let u = CamelUser()
+        u.id = 1
+        u.displayName = "Updated"
+        tx.update(u)
+        @Expect(conn.stmt.capturedSql, "UPDATE \"camelUser\" SET \"displayName\" = ? WHERE \"id\" = ?")
+    }
+
+    @TestCase
+    public func testUpdateCompoundPkQuotesIdentifiersSQLite(): Unit {
+        clearHooks()
+        let (conn, tx) = txWith(SQLiteDialect())
+        let ot = OrderItemTag()
+        ot.order_id = 1
+        ot.item_id = 2
+        ot.quantity = 5
+        tx.update(ot)
+        @Expect(conn.stmt.capturedSql, "UPDATE \"orderItemTag\" SET \"quantity\" = ? WHERE \"order_id\" = ? AND \"item_id\" = ?")
+    }
+
+    @TestCase
+    public func testDeleteSQLiteQuotesIdentifiers(): Unit {
+        clearHooks()
+        let (conn, tx) = txWith(SQLiteDialect())
+        let u = CamelUser()
+        u.id = 1
+        tx.delete(u)
+        @Expect(conn.stmt.capturedSql, "DELETE FROM \"camelUser\" WHERE \"id\" = ?")
+    }
+
+    @TestCase
+    public func testDeleteCompoundPkSQLiteQuotesIdentifiers(): Unit {
+        clearHooks()
+        let (conn, tx) = txWith(SQLiteDialect())
+        let ot = OrderItemTag()
+        ot.order_id = 1
+        ot.item_id = 2
+        tx.delete(ot)
+        @Expect(conn.stmt.capturedSql, "DELETE FROM \"orderItemTag\" WHERE \"order_id\" = ? AND \"item_id\" = ?")
+    }
+
+    @TestCase
+    public func testSoftDeleteSQLiteQuotesIdentifiers(): Unit {
+        clearHooks()
+        let (conn, tx) = txWith(SQLiteDialect())
+        let u = SoftUser()
+        u.id = 1
+        tx.delete(u)
+        @Expect(conn.stmt.capturedSql, "UPDATE \"softUser\" SET \"deleted_at\" = ? WHERE \"id\" = ?")
+    }
+
+    @TestCase
+    public func testSoftDeletePostgresQuotesIdentifiers(): Unit {
+        clearHooks()
+        let (conn, tx) = txWith(PostgreSQLDialect())
+        let u = SoftUser()
+        u.id = 1
+        tx.delete(u)
+        @Expect(conn.stmt.capturedSql, "UPDATE \"softUser\" SET \"deleted_at\" = ? WHERE \"id\" = ?")
+    }
+
+    @TestCase
+    public func testBatchUpdateSQLiteQuotesIdentifiers(): Unit {
+        clearHooks()
+        let (conn, tx) = txWith(SQLiteDialect())
+        let u1 = CamelUser(); u1.id = 1; u1.displayName = "A"
+        let u2 = CamelUser(); u2.id = 2; u2.displayName = "B"
+        tx.batchUpdate([u1, u2])
+        @Expect(conn.stmt.capturedSql, "UPDATE \"camelUser\" SET \"displayName\" = CASE \"id\" WHEN ? THEN ? WHEN ? THEN ? END WHERE \"id\" IN (?, ?)")
+    }
+
+    @TestCase
+    public func testBatchUpdateMySQLQuotesIdentifiers(): Unit {
+        clearHooks()
+        let (conn, tx) = txWith(MySQLDialect())
+        let u1 = CamelUser(); u1.id = 1; u1.displayName = "A"
+        let u2 = CamelUser(); u2.id = 2; u2.displayName = "B"
+        tx.batchUpdate([u1, u2])
+        @Expect(conn.stmt.capturedSql, "UPDATE `camelUser` SET `displayName` = CASE `id` WHEN ? THEN ? WHEN ? THEN ? END WHERE `id` IN (?, ?)")
+    }
+
+    @TestCase
+    public func testBatchUpdatePostgresQuotesIdentifiers(): Unit {
+        clearHooks()
+        let (conn, tx) = txWith(PostgreSQLDialect())
+        let u1 = CamelUser(); u1.id = 1; u1.displayName = "A"
+        let u2 = CamelUser(); u2.id = 2; u2.displayName = "B"
+        tx.batchUpdate([u1, u2])
+        // PG 批量更新对 String 列追加 ::TEXT 类型转换（与既有 PG 行为一致）
+        @Expect(conn.stmt.capturedSql, "UPDATE \"camelUser\" SET \"displayName\" = CASE \"id\" WHEN ? THEN ?::TEXT WHEN ? THEN ?::TEXT END WHERE \"id\" IN (?, ?)")
+    }
+
+    @TestCase
+    public func testBatchUpdatePostgresCastSuffixQuotesIdentifiers(): Unit {
+        clearHooks()
+        let (conn, tx) = txWith(PostgreSQLDialect())
+        let p1 = PgPost(); p1.id = 1; p1.title = "A"; p1.content = "X"
+        let p2 = PgPost(); p2.id = 2; p2.title = "B"; p2.content = "Y"
+        tx.batchUpdate([p1, p2])
+        @Expect(conn.stmt.capturedSql, "UPDATE \"pgpost\" SET \"title\" = CASE \"id\" WHEN ? THEN ?::TEXT WHEN ? THEN ?::TEXT END, \"content\" = CASE \"id\" WHEN ? THEN ?::TEXT WHEN ? THEN ?::TEXT END WHERE \"id\" IN (?, ?)")
+    }
+
+    @TestCase
+    public func testBatchUpdateCompoundPkSQLiteQuotesIdentifiers(): Unit {
+        clearHooks()
+        let (conn, tx) = txWith(SQLiteDialect())
+        let ot1 = OrderItemTag(); ot1.order_id = 1; ot1.item_id = 2; ot1.quantity = 5
+        let ot2 = OrderItemTag(); ot2.order_id = 3; ot2.item_id = 4; ot2.quantity = 6
+        tx.batchUpdate([ot1, ot2])
+        @Expect(conn.stmt.capturedSql, "UPDATE \"orderItemTag\" SET \"quantity\" = CASE WHEN \"order_id\" = ? AND \"item_id\" = ? THEN ? WHEN \"order_id\" = ? AND \"item_id\" = ? THEN ? END WHERE (\"order_id\", \"item_id\") IN ((?, ?), (?, ?))")
     }
 }
 

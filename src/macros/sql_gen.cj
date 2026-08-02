@@ -3,21 +3,61 @@ macro package refine.macros
 import std.ast.*
 import std.collection.ArrayList
 
-func buildPkWhereClause(pkFields: ArrayList<FieldInfo>): String {
-    var parts = ArrayList<String>()
-    for (pk in pkFields) { parts.add(pk.name + " = ?") }
-    if (parts.size == 0) { return "WHERE id = ?" }
-    " WHERE " + String.join(parts.toArray(), delimiter: " AND ")
+// I19：写路径 SQL 不再把裸标识符烘焙进编译期字符串，而是生成运行时代码，
+// 经 dialect.quoteIdentifier 逐处引号包裹（SQLite/PG 双引号、MySQL 反引号）。
+// 生成的各 SQL 函数均接受 dialect: Dialect 参数（与 BatchUpdateSQL 既有模式一致），
+// 由 tx_gen.cj 的调用方传入 this.getDialect()。
+
+// 生成字符串数组字面量 tokens，如 ["id", "title"]
+func genStringArrayTokens(names: ArrayList<String>): Tokens {
+    var arr = Tokens()
+    arr = arr + Token(TokenKind.LSQUARE)
+    var first = true
+    for (n in names) {
+        if (!first) { arr = arr + Token(TokenKind.COMMA) }
+        arr = arr + Token(TokenKind.STRING_LITERAL, n)
+        first = false
+    }
+    arr = arr + Token(TokenKind.RSQUARE)
+    arr
+}
+
+// 生成运行时 pk WHERE 子句构建代码，声明局部变量 pkWhere（String）。
+// 前置条件：作用域内存在变量 dialect（Dialect 类型）。
+func buildQuotedPkWhereTokens(pkFields: ArrayList<FieldInfo>): Tokens {
+    let pkNames = ArrayList<String>()
+    for (pk in pkFields) { pkNames.add(pk.name) }
+    let pkNamesArr = genStringArrayTokens(pkNames)
+    quote(
+        let pkNameArr: Array<String> = $(pkNamesArr)
+        var pkWhereParts = ArrayList<String>()
+        for (_pw_ in pkNameArr) { pkWhereParts.add(dialect.quoteIdentifier(_pw_) + " = ?") }
+        let pkWhere = if (pkWhereParts.size == 0) { " WHERE id = ?" } else { " WHERE " + String.join(pkWhereParts.toArray(), delimiter: " AND ") }
+    )
 }
 
 func buildInsertSQLFunc(className: String, fields: ArrayList<FieldInfo>, tableName: String): Tokens {
     let funcName = Token(TokenKind.IDENTIFIER, className + "InsertSQL")
     let cn = Token(TokenKind.IDENTIFIER, className)
-    let sqlStr = buildInsertSQLString(fields, tableName)
-    let sqlToken = Token(TokenKind.STRING_LITERAL, sqlStr)
+    let tblLit = Token(TokenKind.STRING_LITERAL, tableName)
+    var colNames = ArrayList<String>()
+    for (f in fields) {
+        if (shouldSkipInInsert(f)) { continue }
+        colNames.add(f.name)
+    }
+    let colArr = genStringArrayTokens(colNames)
+    var placeholders = ArrayList<String>()
+    for (_ in 0..colNames.size) { placeholders.add("?") }
+    let valuesGroup = Token(TokenKind.STRING_LITERAL, "(" + String.join(placeholders.toArray(), delimiter: ", ") + ")")
     let entityArray = buildEntityArrayTokens(fields)
     quote(
-        func $(funcName)(entity: $(cn)): (String, Array<Any>) { ($(sqlToken), $(entityArray)) }
+        func $(funcName)(entity: $(cn), dialect: Dialect): (String, Array<Any>) {
+            let colNameArr: Array<String> = $(colArr)
+            var colQuoted = ArrayList<String>()
+            for (_cq_ in colNameArr) { colQuoted.add(dialect.quoteIdentifier(_cq_)) }
+            let sql = "INSERT INTO " + dialect.quoteIdentifier($(tblLit)) + " (" + String.join(colQuoted.toArray(), delimiter: ", ") + ") VALUES " + $(valuesGroup)
+            (sql, $(entityArray))
+        }
     )
 }
 
@@ -25,6 +65,7 @@ func buildInsertSQLFunc(className: String, fields: ArrayList<FieldInfo>, tableNa
 func buildBatchInsertSQLFunc(className: String, fields: ArrayList<FieldInfo>, tableName: String): Tokens {
     let funcName = Token(TokenKind.IDENTIFIER, className + "BatchInsertSQL")
     let cn = Token(TokenKind.IDENTIFIER, className)
+    let tblLit = Token(TokenKind.STRING_LITERAL, tableName)
 
     var colNames = ArrayList<String>()
     var paramCount = 0
@@ -33,9 +74,7 @@ func buildBatchInsertSQLFunc(className: String, fields: ArrayList<FieldInfo>, ta
         colNames.add(f.name)
         paramCount++
     }
-    let colNamesStr = String.join(colNames.toArray(), delimiter: ", ")
-    let sqlPrefix = "INSERT INTO " + tableName + " (" + colNamesStr + ") VALUES "
-    let sqlPrefixToken = Token(TokenKind.STRING_LITERAL, sqlPrefix)
+    let colArr = genStringArrayTokens(colNames)
 
     var qParts = ArrayList<String>()
     for (_ in 0..paramCount) { qParts.add("?") }
@@ -51,7 +90,7 @@ func buildBatchInsertSQLFunc(className: String, fields: ArrayList<FieldInfo>, ta
     }
 
     quote(
-        func $(funcName)(entities: Array<$(cn)>): (String, Array<Any>) {
+        func $(funcName)(entities: Array<$(cn)>, dialect: Dialect): (String, Array<Any>) {
             var allParams = ArrayList<Any>()
             for (_i_ in 0..entities.size) {
                 $(addParams)
@@ -60,7 +99,11 @@ func buildBatchInsertSQLFunc(className: String, fields: ArrayList<FieldInfo>, ta
             for (_j_ in 0..entities.size) {
                 placeholders.add($(placeholderGroupToken))
             }
-            ($(sqlPrefixToken) + String.join(placeholders.toArray(), delimiter: ", "), allParams.toArray())
+            var colQuoted = ArrayList<String>()
+            let colNameArr: Array<String> = $(colArr)
+            for (_cq_ in colNameArr) { colQuoted.add(dialect.quoteIdentifier(_cq_)) }
+            let sql = "INSERT INTO " + dialect.quoteIdentifier($(tblLit)) + " (" + String.join(colQuoted.toArray(), delimiter: ", ") + ") VALUES " + String.join(placeholders.toArray(), delimiter: ", ")
+            (sql, allParams.toArray())
         }
     )
 }
@@ -84,19 +127,8 @@ func buildBatchUpdateSQLFunc(className: String, fields: ArrayList<FieldInfo>, ta
     }
     var pkNames = ArrayList<String>()
     for (pk in pkFields) { pkNames.add(pk.name) }
-    let singlePk = (pkNames.size == 1)
-    // CASE 开头的 pk 表达式（编译期）：单 pk -> "CASE pk"；复合 -> "CASE WHEN pk1 = ? AND pk2 = ?"
-    var pkCondParts = ArrayList<String>()
-    var pkInParts = ArrayList<String>()
-    for (n in pkNames) { pkCondParts.add(n + " = ?"); pkInParts.add("?") }
-    let pkCond = String.join(pkCondParts.toArray(), delimiter: " AND ")
-    let pkIn = String.join(pkInParts.toArray(), delimiter: ", ")
-    let caseHead = if (singlePk) { "CASE " + pkNames[0] } else { "CASE" }
-    // WHEN 重复子句（运行时按实体数重复）
-    let whenClause = if (singlePk) { "WHEN ? THEN ?" } else { "WHEN " + pkCond + " THEN ?" }
-    // WHERE IN 的每实体占位：单 pk -> "?"；复合 -> "(?, ?)"
-    let inItem = if (singlePk) { "?" } else { "(" + pkIn + ")" }
-    let whereHead = if (singlePk) { " WHERE " + pkNames[0] + " IN (" } else { " WHERE (" + String.join(pkNames.toArray(), delimiter: ", ") + ") IN (" }
+    // pk 名称数组字面量（运行时经 quoteIdentifier 逐一包裹后，再拼 CASE / WHEN / WHERE IN）
+    let pkNamesArrTok = genStringArrayTokens(pkNames)
 
     // 列名数组字面量（运行时遍历拼 SET 子句）
     var colArr = Tokens()
@@ -154,26 +186,23 @@ func buildBatchUpdateSQLFunc(className: String, fields: ArrayList<FieldInfo>, ta
         }
     )
 
-    let caseHeadLit = Token(TokenKind.STRING_LITERAL, caseHead)
-    let whenClauseLit = Token(TokenKind.STRING_LITERAL, whenClause)
-    let inItemLit = Token(TokenKind.STRING_LITERAL, inItem)
-    let whereHeadLit = Token(TokenKind.STRING_LITERAL, whereHead)
     let castArrTok = castArr
 
-    // 额外的 SET 子句（version / updated_at 独立 CASE）
+    // 额外的 SET 子句（version / updated_at 独立 CASE）：caseHead/whenClause 为运行时
+    // 局部变量（由上方 pkQuoted 推导），列名经 quoteIdentifier 包裹
     var extraSetParts = Tokens()
     if (versionName != "") {
         let vNameLit = Token(TokenKind.STRING_LITERAL, versionName)
         let vCastLit = Token(TokenKind.STRING_LITERAL, "::" + pgCastTypeOf("Int64"))
         extraSetParts = extraSetParts + quote(
             var vCaseParts = ArrayList<String>()
-            vCaseParts.add($(caseHeadLit))
+            vCaseParts.add(caseHead)
             let vCastSuffix = if (isPostgres) { $(vCastLit) } else { "" }
             for (_k_ in 0..entities.size) {
-                vCaseParts.add($(whenClauseLit) + vCastSuffix)
+                vCaseParts.add(whenClause + vCastSuffix)
             }
             vCaseParts.add("END")
-            setParts.add($(vNameLit) + " = " + String.join(vCaseParts.toArray(), delimiter: " "))
+            setParts.add(dialect.quoteIdentifier($(vNameLit)) + " = " + String.join(vCaseParts.toArray(), delimiter: " "))
         )
     }
     if (hasUpdatedAt) {
@@ -181,13 +210,13 @@ func buildBatchUpdateSQLFunc(className: String, fields: ArrayList<FieldInfo>, ta
         let uCastLit = Token(TokenKind.STRING_LITERAL, "::" + pgCastTypeOf("DateTime"))
         extraSetParts = extraSetParts + quote(
             var uCaseParts = ArrayList<String>()
-            uCaseParts.add($(caseHeadLit))
+            uCaseParts.add(caseHead)
             let uCastSuffix = if (isPostgres) { $(uCastLit) } else { "" }
             for (_k_ in 0..entities.size) {
-                uCaseParts.add($(whenClauseLit) + uCastSuffix)
+                uCaseParts.add(whenClause + uCastSuffix)
             }
             uCaseParts.add("END")
-            setParts.add($(uNameLit) + " = " + String.join(uCaseParts.toArray(), delimiter: " "))
+            setParts.add(dialect.quoteIdentifier($(uNameLit)) + " = " + String.join(uCaseParts.toArray(), delimiter: " "))
         )
     }
     // 是否还有常规可更新列（编译期判断：colNames 为空且无 version/updated_at 时才抛错）
@@ -200,25 +229,40 @@ func buildBatchUpdateSQLFunc(className: String, fields: ArrayList<FieldInfo>, ta
             if (colNames.size == 0 && !$(hasExtraSetLit)) { throw Exception("no updatable columns for batchUpdate") }
             let colCastTypes: Array<String> = $(castArrTok)
             let isPostgres = (dialect.name() == "postgresql")
+            // pk 标识符运行时引号化，派生 CASE/WHEN/IN 各片段（单 pk 与复合 pk 分支见下）
+            let pkNameArr: Array<String> = $(pkNamesArrTok)
+            var pkQuoted = ArrayList<String>()
+            for (_pq_ in pkNameArr) { pkQuoted.add(dialect.quoteIdentifier(_pq_)) }
+            let singlePk = (pkQuoted.size == 1)
+            var pkCondParts = ArrayList<String>()
+            for (_pc_ in 0..pkQuoted.size) { pkCondParts.add(pkQuoted[_pc_] + " = ?") }
+            let pkCond = String.join(pkCondParts.toArray(), delimiter: " AND ")
+            var pkInParts = ArrayList<String>()
+            for (_pi_ in 0..pkQuoted.size) { pkInParts.add("?") }
+            let pkIn = String.join(pkInParts.toArray(), delimiter: ", ")
+            let caseHead = if (singlePk) { "CASE " + pkQuoted[0] } else { "CASE" }
+            let whenClause = if (singlePk) { "WHEN ? THEN ?" } else { "WHEN " + pkCond + " THEN ?" }
+            let inItem = if (singlePk) { "?" } else { "(" + pkIn + ")" }
+            let whereHead = if (singlePk) { " WHERE " + pkQuoted[0] + " IN (" } else { " WHERE (" + String.join(pkQuoted.toArray(), delimiter: ", ") + ") IN (" }
             var allParams = ArrayList<Any>()
             $(addParams)
             var setParts = ArrayList<String>()
             for (_ci_ in 0..colNames.size) {
                 var caseParts = ArrayList<String>()
-                caseParts.add($(caseHeadLit))
+                caseParts.add(caseHead)
                 let castSuffix = if (isPostgres) { "::" + colCastTypes[_ci_] } else { "" }
                 for (_k_ in 0..entities.size) {
-                    caseParts.add($(whenClauseLit) + castSuffix)
+                    caseParts.add(whenClause + castSuffix)
                 }
                 caseParts.add("END")
-                setParts.add(colNames[_ci_] + " = " + String.join(caseParts.toArray(), delimiter: " "))
+                setParts.add(dialect.quoteIdentifier(colNames[_ci_]) + " = " + String.join(caseParts.toArray(), delimiter: " "))
             }
             $(extraSetParts)
             var inParts = ArrayList<String>()
             for (_k_ in 0..entities.size) {
-                inParts.add($(inItemLit))
+                inParts.add(inItem)
             }
-            ("UPDATE " + $(tableNameLit) + " SET " + String.join(setParts.toArray(), delimiter: ", ") + $(whereHeadLit) + String.join(inParts.toArray(), delimiter: ", ") + ")", allParams.toArray())
+            ("UPDATE " + dialect.quoteIdentifier($(tableNameLit)) + " SET " + String.join(setParts.toArray(), delimiter: ", ") + whereHead + String.join(inParts.toArray(), delimiter: ", ") + ")", allParams.toArray())
         }
     )
 }
@@ -227,11 +271,30 @@ func buildBatchUpdateSQLFunc(className: String, fields: ArrayList<FieldInfo>, ta
 func buildUpdateSQLFunc(className: String, fields: ArrayList<FieldInfo>, tableName: String, pkFields: ArrayList<FieldInfo>): Tokens {
     let funcName = Token(TokenKind.IDENTIFIER, className + "UpdateSQL")
     let cn = Token(TokenKind.IDENTIFIER, className)
-    let sqlStr = buildUpdateSQLString(fields, tableName, pkFields)
-    let sqlToken = Token(TokenKind.STRING_LITERAL, sqlStr)
+    let tblLit = Token(TokenKind.STRING_LITERAL, tableName)
+    let versionName = findVersionField(fields)
+    var setCols = ArrayList<String>()
+    for (f in fields) {
+        if (f.isPk || isRelationField(f.typeName) || f.isVersion) { continue }
+        setCols.add(f.name)
+    }
+    let setColArr = genStringArrayTokens(setCols)
+    let versionLit = Token(TokenKind.STRING_LITERAL, versionName)
+    let hasVersion = (versionName != "")
+    let hasVersionLit = Token(TokenKind.IDENTIFIER, if (hasVersion) { "true" } else { "false" })
+    let pkWhereTok = buildQuotedPkWhereTokens(pkFields)
     let entityArray = buildUpdateEntityArrayTokens(fields, pkFields)
     quote(
-        func $(funcName)(entity: $(cn)): (String, Array<Any>) { ($(sqlToken), $(entityArray)) }
+        func $(funcName)(entity: $(cn), dialect: Dialect): (String, Array<Any>) {
+            let setColNameArr: Array<String> = $(setColArr)
+            var setParts = ArrayList<String>()
+            for (_su_ in setColNameArr) { setParts.add(dialect.quoteIdentifier(_su_) + " = ?") }
+            $(pkWhereTok)
+            let versionSet = if ($(hasVersionLit)) { ", " + dialect.quoteIdentifier($(versionLit)) + " = " + dialect.quoteIdentifier($(versionLit)) + " + 1" } else { "" }
+            let versionCheck = if ($(hasVersionLit)) { " AND " + dialect.quoteIdentifier($(versionLit)) + " = ?" } else { "" }
+            let sql = "UPDATE " + dialect.quoteIdentifier($(tblLit)) + " SET " + String.join(setParts.toArray(), delimiter: ", ") + versionSet + pkWhere + versionCheck
+            (sql, $(entityArray))
+        }
     )
 }
 
@@ -239,20 +302,30 @@ func buildUpdateSQLFunc(className: String, fields: ArrayList<FieldInfo>, tableNa
 func buildDeleteSQLFunc(className: String, tableName: String, pkFields: ArrayList<FieldInfo>): Tokens {
     let funcName = Token(TokenKind.IDENTIFIER, className + "DeleteSQL")
     let cn = Token(TokenKind.IDENTIFIER, className)
-    let sqlToken = Token(TokenKind.STRING_LITERAL, buildDeleteSQLString(tableName, pkFields))
+    let tblLit = Token(TokenKind.STRING_LITERAL, tableName)
+    let pkWhereTok = buildQuotedPkWhereTokens(pkFields)
     let entityArray = buildDeleteEntityParamsToken(pkFields)
     quote(
-        func $(funcName)(entity: $(cn)): (String, Array<Any>) { ($(sqlToken), $(entityArray)) }
+        func $(funcName)(entity: $(cn), dialect: Dialect): (String, Array<Any>) {
+            $(pkWhereTok)
+            let sql = "DELETE FROM " + dialect.quoteIdentifier($(tblLit)) + pkWhere
+            (sql, $(entityArray))
+        }
     )
 }
 
 func buildSoftDeleteSQLFunc(className: String, tableName: String, pkFields: ArrayList<FieldInfo>): Tokens {
     let funcName = Token(TokenKind.IDENTIFIER, className + "SoftDeleteSQL")
     let cn = Token(TokenKind.IDENTIFIER, className)
-    let sqlStr = buildSoftDeleteSQLString(tableName, pkFields)
+    let tblLit = Token(TokenKind.STRING_LITERAL, tableName)
+    let pkWhereTok = buildQuotedPkWhereTokens(pkFields)
     let entityArray = buildSoftDeleteEntityParamsToken(pkFields)
     quote(
-        func $(funcName)(entity: $(cn)): (String, Array<Any>) { ($(Token(TokenKind.STRING_LITERAL, sqlStr)), $(entityArray)) }
+        func $(funcName)(entity: $(cn), dialect: Dialect): (String, Array<Any>) {
+            $(pkWhereTok)
+            let sql = "UPDATE " + dialect.quoteIdentifier($(tblLit)) + " SET " + dialect.quoteIdentifier("deleted_at") + " = ?" + pkWhere
+            (sql, $(entityArray))
+        }
     )
 }
 
@@ -287,38 +360,4 @@ func pgCastTypeOf(typeName: String): String {
         case "DateTime" => "TIMESTAMP"
         case _ => "TEXT"
     }
-}
-
-func buildInsertSQLString(fields: ArrayList<FieldInfo>, tableName: String): String {
-    var colNames = ArrayList<String>()
-    var placeholders = ArrayList<String>()
-    for (f in fields) {
-        if (shouldSkipInInsert(f)) { continue }
-        colNames.add(f.name)
-        placeholders.add("?")
-    }
-    "INSERT INTO " + tableName + " (" + String.join(colNames.toArray(), delimiter: ", ") +
-        ") VALUES (" + String.join(placeholders.toArray(), delimiter: ", ") + ")"
-}
-
-func buildUpdateSQLString(fields: ArrayList<FieldInfo>, tableName: String, pkFields: ArrayList<FieldInfo>): String {
-    var setClauses = ArrayList<String>()
-    for (f in fields) {
-        if (f.isPk || isRelationField(f.typeName) || f.isVersion) { continue }
-        setClauses.add(f.name + " = ?")
-    }
-    let versionName = findVersionField(fields)
-    if (versionName != "") { setClauses.add(versionName + " = " + versionName + " + 1") }
-    var sql = "UPDATE " + tableName + " SET " + String.join(setClauses.toArray(), delimiter: ", ") + buildPkWhereClause(pkFields)
-    if (versionName != "") { sql = sql + " AND " + versionName + " = ?" }
-    sql
-}
-
-
-func buildDeleteSQLString(tableName: String, pkFields: ArrayList<FieldInfo>): String {
-    "DELETE FROM " + tableName + buildPkWhereClause(pkFields)
-}
-
-func buildSoftDeleteSQLString(tableName: String, pkFields: ArrayList<FieldInfo>): String {
-    "UPDATE " + tableName + " SET deleted_at = ?" + buildPkWhereClause(pkFields)
 }

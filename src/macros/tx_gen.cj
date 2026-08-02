@@ -35,7 +35,7 @@ func buildTxSaveExtend(className: String, pkFields: ArrayList<FieldInfo>, hasCli
                     scope.db = Some(this)
                     if (this.ref.isSome()) { this.ref.getOrThrow().executeHooks($(nameLit), HookKind.TxBeforeCreate, scope) }
                     if (scope.aborted) { throw scope.error.getOrThrow() }
-                    let (sql, params) = $(insertSQLFuncName)(entity)
+                    let (sql, params) = $(insertSQLFuncName)(entity, this.getDialect())
                     let _ = this.execute(sql, params)
                     $(cascadePost)
                     let afterScope = Scope<$(cn)>(entity)
@@ -61,7 +61,7 @@ func buildTxSaveExtend(className: String, pkFields: ArrayList<FieldInfo>, hasCli
                     scope.db = Some(this)
                     if (this.ref.isSome()) { this.ref.getOrThrow().executeHooks($(nameLit), HookKind.TxBeforeCreate, scope) }
                     if (scope.aborted) { throw scope.error.getOrThrow() }
-                    let (sql, params) = $(insertSQLFuncName)(entity)
+                    let (sql, params) = $(insertSQLFuncName)(entity, this.getDialect())
                     if (this.getDialect().hasReturningSupport()) {
                         let qr = this.query(sql + " RETURNING " + $(returningColsLit), params)
                         if (qr.next()) { $(returningTokens) }
@@ -90,7 +90,7 @@ func buildTxSaveExtend(className: String, pkFields: ArrayList<FieldInfo>, hasCli
                     scope.db = Some(this)
                     if (this.ref.isSome()) { this.ref.getOrThrow().executeHooks($(nameLit), HookKind.TxBeforeCreate, scope) }
                     if (scope.aborted) { throw scope.error.getOrThrow() }
-                    let (sql, params) = $(insertSQLFuncName)(entity)
+                    let (sql, params) = $(insertSQLFuncName)(entity, this.getDialect())
                     let _ = this.execute(sql, params)
                     $(cascadePost)
                     let afterScope = Scope<$(cn)>(entity)
@@ -308,7 +308,7 @@ func buildTxBatchSaveExtend(className: String, pkFields: ArrayList<FieldInfo>, h
                         if (this.ref.isSome()) { this.ref.getOrThrow().executeHooks($(nameLit), HookKind.TxBeforeCreate, scope) }
                         if (scope.aborted) { throw scope.error.getOrThrow() }
                     }
-                    let (sql, params) = $(batchInsertSQLFuncName)(entities)
+                    let (sql, params) = $(batchInsertSQLFuncName)(entities, this.getDialect())
                     let _ = this.execute(sql, params)
                     for (_bi_ in 0..entities.size) {
                         let afterScope = Scope<$(cn)>(entities[_bi_])
@@ -331,7 +331,7 @@ func buildTxBatchSaveExtend(className: String, pkFields: ArrayList<FieldInfo>, h
                         if (this.ref.isSome()) { this.ref.getOrThrow().executeHooks($(nameLit), HookKind.TxBeforeCreate, scope) }
                         if (scope.aborted) { throw scope.error.getOrThrow() }
                     }
-                    let (sql, params) = $(batchInsertSQLFuncName)(entities)
+                    let (sql, params) = $(batchInsertSQLFuncName)(entities, this.getDialect())
                     let _ = this.execute(sql, params)
                     for (_bi_ in 0..entities.size) {
                         let afterScope = Scope<$(cn)>(entities[_bi_])
@@ -372,7 +372,7 @@ func buildTxUpdateExtend(className: String, fields: ArrayList<FieldInfo>, tableN
                     scope.db = Some(this)
                     if (this.ref.isSome()) { this.ref.getOrThrow().executeHooks($(nameLit), HookKind.TxBeforeUpdate, scope) }
                     if (scope.aborted) { throw scope.error.getOrThrow() }
-                    let (sql, params) = $(updateSQLFuncName)(entity)
+                    let (sql, params) = $(updateSQLFuncName)(entity, this.getDialect())
                     this.execute(sql, params)
                     $(cascadePost)
                     let afterScope = Scope<$(cn)>(entity)
@@ -383,8 +383,9 @@ func buildTxUpdateExtend(className: String, fields: ArrayList<FieldInfo>, tableN
         )
     } else {
         let versionIdent = Token(TokenKind.IDENTIFIER, versionName)
-        let versionSelectSQL = "SELECT " + versionName + " FROM " + tableName + buildPkWhereClause(pkFields)
-        let versionSelectSQLToken = Token(TokenKind.STRING_LITERAL, versionSelectSQL)
+        let versionColLit = Token(TokenKind.STRING_LITERAL, versionName)
+        let tableNameLit = Token(TokenKind.STRING_LITERAL, tableName)
+        let pkWhereTok = buildQuotedPkWhereTokens(pkFields)
         let pkParams = buildDeleteEntityParamsToken(pkFields)
         let pkValueExpr = buildPkValueExprTokens(pkFields)
         quote(
@@ -399,10 +400,12 @@ func buildTxUpdateExtend(className: String, fields: ArrayList<FieldInfo>, tableN
                     scope.db = Some(this)
                     if (this.ref.isSome()) { this.ref.getOrThrow().executeHooks($(nameLit), HookKind.TxBeforeUpdate, scope) }
                     if (scope.aborted) { throw scope.error.getOrThrow() }
-                    let (sql, params) = $(updateSQLFuncName)(entity)
+                    let (sql, params) = $(updateSQLFuncName)(entity, this.getDialect())
                     let result = this.execute(sql, params)
                     if (result.rowCount == 0) {
-                        let qr = this.query($(versionSelectSQLToken), $(pkParams))
+                        let dialect = this.getDialect()
+                        $(pkWhereTok)
+                        let qr = this.query("SELECT " + dialect.quoteIdentifier($(versionColLit)) + " FROM " + dialect.quoteIdentifier($(tableNameLit)) + pkWhere, $(pkParams))
                         var actual: Int64 = -1
                         if (qr.next()) { actual = qr.get<Int64>(0 + this.getParamOffset()) }
                         qr.close()
@@ -447,7 +450,7 @@ func buildTxSoftDeleteExtend(className: String, pkFields: ArrayList<FieldInfo>):
             public func deleteCascade(entity: $(cn), visited: ArrayList<String>): Unit {
                 $(deleteHookHead)
                 entity.cascadeDelete(this, visited)
-                let (sql, params) = $(softDeleteSQLFuncName)(entity)
+                let (sql, params) = $(softDeleteSQLFuncName)(entity, this.getDialect())
                 this.execute(sql, params)
                 $(deleteAfterHooks)
             }
@@ -458,7 +461,7 @@ func buildTxSoftDeleteExtend(className: String, pkFields: ArrayList<FieldInfo>):
             public func physicalDeleteCascade(entity: $(cn), visited: ArrayList<String>): Unit {
                 $(deleteHookHead)
                 entity.cascadeDelete(this, visited)
-                let (sql, params) = $(deleteSQLFuncName)(entity)
+                let (sql, params) = $(deleteSQLFuncName)(entity, this.getDialect())
                 this.execute(sql, params)
                 $(deleteAfterHooks)
             }
@@ -484,7 +487,7 @@ func buildTxDeleteExtend(className: String, pkFields: ArrayList<FieldInfo>): Tok
                 if (this.ref.isSome()) { this.ref.getOrThrow().executeHooks($(nameLit), HookKind.TxBeforeDelete, scope) }
                 if (scope.aborted) { throw scope.error.getOrThrow() }
                 entity.cascadeDelete(this, visited)
-                let (sql, params) = $(deleteSQLFuncName)(entity)
+                let (sql, params) = $(deleteSQLFuncName)(entity, this.getDialect())
                 this.execute(sql, params)
                 let afterScope = Scope<$(cn)>(entity)
                 afterScope.db = Some(this)

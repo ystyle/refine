@@ -342,6 +342,82 @@ public class PostgreSQLIntegrationTest {
         }
     }
 
+    // ─── I19: 宏写路径标识符方言感知引号化，驼峰实体 PG 可读可写 ───────────────────
+    // 修复前：宏层写路径把裸表名/列名烘焙进编译期字符串，PG 折叠小写，tx.save/update/
+    // delete 无法命中引号原样建出的驼峰表/列（I2 测试只能用引号 SQL 手工写入）。
+    // 修复后：写路径 SQL 经 dialect.quoteIdentifier 生成，下面直接走 tx 写 API 端到端验证。
+
+    @TestCase
+    public func testCamelCaseWritePathRoundtrip(): Unit {
+        match (tryPostgres()) {
+            case Some(rf) =>
+                rf.transaction { tx: Tx =>
+                    tx.execute("DROP TABLE IF EXISTS \"camelPost\"", [])
+                    tx.execute("DROP TABLE IF EXISTS \"camelUser\"", [])
+                }
+                let m = rf.migrator()
+                m.autoMigrate([CamelUserSchema(), CamelPostSchema()])
+                @Expect(m.hasTable("camelUser"), true)
+                @Expect(m.hasTable("camelPost"), true)
+
+                // save：驼峰表/列 INSERT 直接命中（此前此处需手工引号 SQL）
+                let u = CamelUser()
+                u.displayName = "Alice"
+                rf.transaction { tx: Tx => tx.save(u) }
+                @Expect(u.id > 0, true)
+                let uid = u.id
+                let p = CamelPost()
+                p.title = "Post"
+                p.authorId = uid
+                rf.transaction { tx: Tx => tx.save(p) }
+                @Expect(p.id > 0, true)
+
+                // 回读验证
+                let found = CamelUser.query().using(rf).filter(CamelUser.col().id == uid).one()
+                @Expect(found.isSome(), true)
+                @Expect(found.getOrThrow().displayName, "Alice")
+                let postFound = CamelPost.query().using(rf).filter(CamelPost.col().authorId == uid).one()
+                @Expect(postFound.isSome(), true)
+                @Expect(postFound.getOrThrow().title, "Post")
+
+                // update：驼峰 SET / WHERE 列
+                let up = found.getOrThrow()
+                up.displayName = "Alice2"
+                rf.transaction { tx: Tx => tx.update(up) }
+                let afterUpdate = CamelUser.query().using(rf).filter(CamelUser.col().id == uid).one()
+                @Expect(afterUpdate.isSome(), true)
+                @Expect(afterUpdate.getOrThrow().displayName, "Alice2")
+
+                // delete：驼峰 WHERE 主键
+                rf.transaction { tx: Tx => tx.delete(afterUpdate.getOrThrow()) }
+                let gone = CamelUser.query().using(rf).filter(CamelUser.col().id == uid).one()
+                @Expect(gone.isNone(), true)
+
+                // batchSave + batchUpdate：驼峰批量写路径（batchSave 不回填自增 id，经查询取回）
+                let u2 = CamelUser(); u2.displayName = "B"
+                let u3 = CamelUser(); u3.displayName = "C"
+                rf.transaction { tx: Tx => tx.batchSave([u2, u3]) }
+                let savedB = CamelUser.query().using(rf).filter(CamelUser.col().displayName == "B").one()
+                let savedC = CamelUser.query().using(rf).filter(CamelUser.col().displayName == "C").one()
+                @Expect(savedB.isSome() && savedC.isSome(), true)
+                let b = savedB.getOrThrow()
+                let c = savedC.getOrThrow()
+                b.displayName = "B2"
+                c.displayName = "C2"
+                rf.transaction { tx: Tx => tx.batchUpdate([b, c]) }
+                let all = CamelUser.query().using(rf).filter(CamelUser.col().id == b.id).all()
+                @Expect(all.size, 1)
+                @Expect(all[0].displayName, "B2")
+
+                // 收尾（非软删实体 delete 即物理删除）
+                rf.transaction { tx: Tx => tx.delete(b) }
+                rf.transaction { tx: Tx => tx.delete(c) }
+                rf.transaction { tx: Tx => tx.delete(postFound.getOrThrow()) }
+                rf.close()
+            case None => @Expect(true, true)
+        }
+    }
+
     // ─── I2: include 别名保留大小写，stripPrefix 按原大小写匹配到关系字段 ───────────────────
 
     @TestCase
