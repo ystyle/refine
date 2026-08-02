@@ -149,9 +149,13 @@ func buildRowMapper(className: String, cd: ClassDecl, rels: ArrayList<RelInfo>, 
             assignments = assignments + Token(TokenKind.NL)
             let check = quote(
                 if (columnMap.contains($(prefixCheckLit))) {
-                    let $(tmpName) = $(targetType)()
-                    $(tmpName).id = result.get<$(idTypeTok)>(columnMap.get($(prefixCheckLit)).getOrThrow())
-                    entity.$(backingIdent) = Some($(tmpName))
+                    match (result.getOrNull<$(idTypeTok)>(columnMap.get($(prefixCheckLit)).getOrThrow())) {
+                        case Some(id) =>
+                            let $(tmpName) = $(targetType)()
+                            $(tmpName).id = id
+                            entity.$(backingIdent) = Some($(tmpName))
+                        case None => ()
+                    }
                 }
             )
             assignments = assignments + check

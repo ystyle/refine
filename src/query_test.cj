@@ -19,6 +19,12 @@ private func checkStr(v: Any, expected: String): Bool {
     }
 }
 
+// 模拟驱动 SQL NULL 单元格：值是 Option<Int64>.None，任何 get<T> 类型匹配都失败
+// （get<T> 抛类型不匹配，getOrNull<T> 返回 None），与真实驱动对 NULL 列的行为一致。
+private func sqlNull(): Any {
+    Option<Int64>.None
+}
+
 @Test
 public class QueryTest {
     @TestCase
@@ -1034,6 +1040,89 @@ public class C4PageCollectionTest {
         @Expect(entities.size, 1)
         @Expect(entities[0].id, 5)
         @Expect(entities[0].comments.size, 0)
+    }
+
+    // I7 follow-up: 真实 LEFT JOIN 无匹配时，目标 id 列「存在但为 NULL」。
+    // 之前的 I7/C2 用例只覆盖「列缺失」或「自定义 base mapper」，未覆盖生成 base mapper
+    // 先于 wrapMapper.isNullId 读取 NULL 列的真实路径（生成代码 result.get<Int64> 会抛异常）。
+    // 此处走默认 auto mapper（生成 RowMapper + wrapMapper 链），author.id 用 None 模拟驱动 NULL：
+    // get<Int64> 抛类型不匹配（旧代码崩溃），getOrNull<Int64> 返回 None（新代码不挂载）。
+    @TestCase
+    public func testRefToIncludeNullTargetIdDefaultMapperNoCrash(): Unit {
+        clearHooks()
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        let cols: Array<SqlColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("title", false),
+            MapperMockColumnInfo("user_id", false),
+            MapperMockColumnInfo("post_id", false),
+            MapperMockColumnInfo("author.id", false),
+            MapperMockColumnInfo("author.name", false),
+            MapperMockColumnInfo("author.email", false),
+        ]
+        // author.* 全为 NULL（sqlNull 模拟驱动 NULL，非 Int64 → get<Int64> 抛、getOrNull<Int64> → None）
+        let row = Array<Any>(7, {i =>
+            if (i == 0) { 5 } else if (i == 1) { "orphan" } else if (i == 2) { 99 } else if (i == 3) { 0 }
+            else { sqlNull() }
+        })
+        conn.stmt.queryResult = MapperMockQueryResult(cols, [row])
+        let q = PostWithRel.query().include(PostWithRelRel.author).using(tx)
+        let entities = q.all()
+        @Expect(entities.size, 1)
+        @Expect(entities[0].id, 5)
+        @Expect(entities[0].author.isNone(), true)
+    }
+
+    @TestCase
+    public func testHasOneIncludeNullTargetIdDefaultMapperNoCrash(): Unit {
+        clearHooks()
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        let cols: Array<SqlColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("name", false),
+            MapperMockColumnInfo("profile.id", false),
+            MapperMockColumnInfo("profile.bio", false),
+            MapperMockColumnInfo("profile.user_id", false),
+        ]
+        // profile.* 全为 NULL（has_one 无匹配：LEFT JOIN 目标侧全 NULL）
+        let row = Array<Any>(5, {i =>
+            if (i == 0) { 7 } else if (i == 1) { "nobody" }
+            else { sqlNull() }
+        })
+        conn.stmt.queryResult = MapperMockQueryResult(cols, [row])
+        let q = UserWithRel.query().include(UserWithRelRel.profile).using(tx)
+        let entities = q.all()
+        @Expect(entities.size, 1)
+        @Expect(entities[0].id, 7)
+        @Expect(entities[0].profile.isNone(), true)
+    }
+
+    @TestCase
+    public func testRefToStringPkIncludeNullTargetIdDefaultMapperNoCrash(): Unit {
+        clearHooks()
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        let cols: Array<SqlColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("body", false),
+            MapperMockColumnInfo("post_id", false),
+            MapperMockColumnInfo("post.id", false),
+            MapperMockColumnInfo("post.title", false),
+            MapperMockColumnInfo("post.content", false),
+        ]
+        // String-pk 目标（UuidPost）：post.id 为 NULL，getOrNull<String> → None
+        let row = Array<Any>(6, {i =>
+            if (i == 0) { 5 } else if (i == 1) { "orphan" } else if (i == 2) { "nope" }
+            else { sqlNull() }
+        })
+        conn.stmt.queryResult = MapperMockQueryResult(cols, [row])
+        let q = UuidRefComment.query().include(UuidRefCommentRel.post).using(tx)
+        let entities = q.all()
+        @Expect(entities.size, 1)
+        @Expect(entities[0].id, 5)
+        @Expect(entities[0].post.isNone(), true)
     }
 }
 

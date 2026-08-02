@@ -451,4 +451,32 @@ public class PostgreSQLIntegrationTest {
             case None => @Expect(true, true)
         }
     }
+
+    // I7 follow-up: 真实 LEFT JOIN 无匹配（authorId 指向不存在的用户），目标列「存在但为 NULL」。
+    // 生成 base mapper 用 getOrNull<Int64> 读取 NULL → None 不挂载，不崩溃；
+    // wrapMapper.isNullId 用 getOrNull<String> 读同一 NULL 列 → true 跳过目标映射。
+    // 修复前生成代码 result.get<Int64>(NULL) 在真实驱动上抛异常。
+    @TestCase
+    public func testCamelCaseIncludeRefToNullAuthorNoCrash(): Unit {
+        match (tryPostgres()) {
+            case Some(rf) =>
+                rf.transaction { tx: Tx =>
+                    tx.execute("DROP TABLE IF EXISTS \"camelPost\"", [])
+                    tx.execute("DROP TABLE IF EXISTS \"camelUser\"", [])
+                }
+                let m = rf.migrator()
+                m.autoMigrate([CamelUserSchema(), CamelPostSchema()])
+                // authorId=999999 无对应 camelUser → LEFT JOIN 目标侧全 NULL
+                let postParams: Array<Any> = ["OrphanPost", 999999]
+                rf.transaction { tx: Tx => tx.execute("INSERT INTO \"camelPost\" (\"title\", \"authorId\") VALUES (?, ?)", postParams) }
+                let found = CamelPost.query().include(CamelPostRel.authorProfile).using(rf).filter(CamelPost.col().title == "OrphanPost").one()
+                @Expect(found.isSome(), true)
+                let post = found.getOrThrow()
+                @Expect(post.title, "OrphanPost")
+                @Expect(post.authorId, 999999)
+                @Expect(post.authorProfile.isNone(), true)
+                rf.close()
+            case None => @Expect(true, true)
+        }
+    }
 }
