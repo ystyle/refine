@@ -264,6 +264,12 @@ public class Query<T> {
         this
     }
 
+    private func qualifyExprs(exprs: Array<Expr>, table: String, dialect: Dialect): Array<Expr> {
+        var qualified = ArrayList<Expr>()
+        for (e in exprs) { qualified.add(qualifyExpr(e, table, dialect)) }
+        qualified.toArray()
+    }
+
     public func processIncluded(dialect: Dialect): Unit {
         if (included.size == 0) { return }
         let sourceTable = getSourceTable()
@@ -325,21 +331,13 @@ public class Query<T> {
             for (i in 0..stmt.clauses.size) {
                 match (stmt.clauses[i]) {
                     case Clause.WhereClause(predicates) =>
-                        var qualified = ArrayList<Expr>()
-                        for (p in predicates) { qualified.add(qualifyExpr(p, sourceTable, dialect)) }
-                        stmt.clauses[i] = WhereClause(qualified.toArray())
+                        stmt.clauses[i] = WhereClause(qualifyExprs(predicates, sourceTable, dialect))
                     case Clause.OrderByClause(fields) =>
-                        var qualified = ArrayList<Expr>()
-                        for (f in fields) { qualified.add(qualifyExpr(f, sourceTable, dialect)) }
-                        stmt.clauses[i] = OrderByClause(qualified.toArray())
+                        stmt.clauses[i] = OrderByClause(qualifyExprs(fields, sourceTable, dialect))
                     case Clause.GroupByClause(fields) =>
-                        var qualified = ArrayList<Expr>()
-                        for (f in fields) { qualified.add(qualifyExpr(f, sourceTable, dialect)) }
-                        stmt.clauses[i] = GroupByClause(qualified.toArray())
+                        stmt.clauses[i] = GroupByClause(qualifyExprs(fields, sourceTable, dialect))
                     case Clause.HavingClause(predicates) =>
-                        var qualified = ArrayList<Expr>()
-                        for (p in predicates) { qualified.add(qualifyExpr(p, sourceTable, dialect)) }
-                        stmt.clauses[i] = HavingClause(qualified.toArray())
+                        stmt.clauses[i] = HavingClause(qualifyExprs(predicates, sourceTable, dialect))
                     case _ => ()
                 }
             }
@@ -460,6 +458,16 @@ public class Query<T> {
         cnt
     }
 
+    // countWith/exists()/aggregate 复用的数据子句拷贝：仅保留 FROM/WHERE/JOIN。
+    private func copyDataClauses(source: Statement, target: Statement): Unit {
+        for (clause in source.clauses) {
+            match (clause) {
+                case FromClause(_) | WhereClause(_) | JoinClause(_, _, _) => target.addClause(clause)
+                case _ => ()
+            }
+        }
+    }
+
     private func countWith(exec: ExecutionContext, dialect: Dialect): Int64 {
         let countStmt = Statement()
         // 集合 include（has_many / ref_many）的 LEFT JOIN 会按子行展开，COUNT(*) 会放大 total。
@@ -473,14 +481,7 @@ public class Query<T> {
         } else {
             countStmt.addClause(SelectClause([Raw("COUNT(*)")]))
         }
-        for (clause in stmt.clauses) {
-            match (clause) {
-                case FromClause(_) => countStmt.addClause(clause)
-                case WhereClause(_) => countStmt.addClause(clause)
-                case JoinClause(_, _, _) => countStmt.addClause(clause)
-                case _ => ()
-            }
-        }
+        copyDataClauses(stmt, countStmt)
         let (sql, params) = dialect.render(countStmt)
         Logger.logSQL(sql, params)
         let start = MonoTime.now()
@@ -499,14 +500,7 @@ public class Query<T> {
         let dialect = getDialect()
         let existsStmt = Statement()
         existsStmt.addClause(SelectClause([Raw("1")]))
-        for (clause in stmt.clauses) {
-            match (clause) {
-                case FromClause(_) => existsStmt.addClause(clause)
-                case WhereClause(_) => existsStmt.addClause(clause)
-                case JoinClause(_, _, _) => existsStmt.addClause(clause)
-                case _ => ()
-            }
-        }
+        copyDataClauses(stmt, existsStmt)
         existsStmt.addClause(LimitClause(1))
         let (sql, params) = dialect.render(existsStmt)
         Logger.logSQL(sql, params)
@@ -539,12 +533,7 @@ public class Query<T> {
         let exec = requireExecutor()
         let aggStmt = Statement()
         aggStmt.addClause(SelectClause([Raw(fn + "(" + colName + ")")]))
-        for (clause in stmt.clauses) {
-            match (clause) {
-                case FromClause(_) | WhereClause(_) | JoinClause(_, _, _) => aggStmt.addClause(clause)
-                case _ => ()
-            }
-        }
+        copyDataClauses(stmt, aggStmt)
         let dialect = getDialect()
         let (sql, params) = dialect.render(aggStmt)
         Logger.logSQL(sql, params)
