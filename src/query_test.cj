@@ -157,7 +157,7 @@ public class QueryTest {
     public func testInclude(): Unit {
         let fk = Col<Any>("user_id")
         let fields = [Col<Any>("id"), Col<Any>("name")]
-        let rel: IRelation = RefTo<RelUser>("author", fk, fields, "reluser", dummyMapper, dummySetter, dummyFkExtractor)
+        let rel: IRelation = RefTo<RelUser>("author", fk, fields, "reluser", dummyMapper, dummySetter, dummyFkExtractor, dummyTargetIdExtractor)
         let q = Query<Int64>()
         q.include(rel)
         @Expect(q.included.size, 1)
@@ -221,7 +221,7 @@ public class QueryTest {
         @Expect(q.included.size, 0)
         // Add RefTo - not a collection
         let fk = Col<Any>("user_id")
-        let refTo: IRelation = RefTo<Int64>("author", fk, [Col<Any>("id")], "users", dummyMapper, dummySetter, dummyFkExtractor)
+        let refTo: IRelation = RefTo<Int64>("author", fk, [Col<Any>("id")], "users", dummyMapper, dummySetter, dummyFkExtractor, dummyTargetIdExtractor)
         q.include(refTo)
         @Expect(q.included.size, 1)
     }
@@ -229,14 +229,14 @@ public class QueryTest {
     @TestCase
     public func testIncludeRegistersHasMany(): Unit {
         let q = Query<Int64>()
-        let rel: IRelation = HasMany<Int64>("posts", "user_id", [Col<Any>("id")], "posts", dummyMapper, dummySetter)
+        let rel: IRelation = HasMany<Int64>("posts", "user_id", [Col<Any>("id")], "posts", dummyMapper, dummySetter, dummyTargetIdExtractor)
         q.include(rel)
         @Expect(q.included.size, 1)
     }
 
     @TestCase
     public func testFieldOverrideRelationResolve(): Unit {
-        let inner: IRelation = HasMany<Int64>("tags", "post_id", [Col<Any>("id")], "tags", dummyMapper, dummySetter)
+        let inner: IRelation = HasMany<Int64>("tags", "post_id", [Col<Any>("id")], "tags", dummyMapper, dummySetter, dummyTargetIdExtractor)
         let wrapper = FieldOverrideRelation(inner, [Col<Any>("name")])
         let (kind, name, _, fk, _, fields) = wrapper.resolve()
         @Expect(kind, RelationKind.HasManyRel)
@@ -321,7 +321,7 @@ public class QueryTest {
     @TestCase
     public func testIncludeWithFieldsOverride(): Unit {
         let q = Query<Int64>()
-        let rel: IRelation = HasMany<Int64>("posts", "user_id", [Col<Any>("id")], "posts", dummyMapper, dummySetter)
+        let rel: IRelation = HasMany<Int64>("posts", "user_id", [Col<Any>("id")], "posts", dummyMapper, dummySetter, dummyTargetIdExtractor)
         q.include(rel, [Col<Any>("title"), Col<Any>("body")])
         @Expect(q.included.size, 1)
         let (_, _, _, _, _, fields) = q.included[0].resolve()
@@ -833,7 +833,7 @@ public class QueryTest {
         ]
         conn.stmt.queryResultQueue.add(MapperMockQueryResult(batchCols, batchRows))
         let rel2: IRelation = RefMany<Int64>("moreTags", "post_tags",
-            [Col<Any>("name")], "tag", dummyMapper, dummySetter, "tag_id")
+            [Col<Any>("name")], "tag", dummyMapper, dummySetter, "tag_id", dummyTargetIdExtractor)
         let q = PostWithRel.query().include(PostWithRelRel.tags).include(rel2).using(tx)
         let entities = q.all()
         // 主查询 + 1 条合并的 junction 批量查询
@@ -927,7 +927,7 @@ public class QueryTest {
         let mainRows = [Array<Any>(2, {i => if (i == 0) { 1 } else { "p" }})]
         conn.stmt.queryResultQueue.add(MapperMockQueryResult(mainCols, mainRows))
         let rel: IRelation = RefMany<Int64>("tags", "post_tags",
-            [Col<Any>("id")], "tag", dummyMapper, dummySetter, "")
+            [Col<Any>("id")], "tag", dummyMapper, dummySetter, "", dummyTargetIdExtractor)
         let q = PostWithRel.query().include(rel).using(tx)
         try {
             let _ = q.all()
@@ -949,7 +949,7 @@ public class QueryTest {
         let mainRows = [Array<Any>(1, {i => 1})]
         conn.stmt.queryResult = MapperMockQueryResult(mainCols, mainRows)
         let rel: IRelation = RefMany<Int64>("tags", "post_tags",
-            [Col<Any>("id")], "tag", dummyMapper, dummySetter, "tag_id")
+            [Col<Any>("id")], "tag", dummyMapper, dummySetter, "tag_id", dummyTargetIdExtractor)
         let q = Query<Int64>()
         q.select([Expr.Column("id")])
         q.setMapper({ r: QueryResult, cm: HashMap<String, Int64> => 0 })
@@ -1019,7 +1019,7 @@ public class QueryTest {
         let q = Query<Int64>()
         q.select([Expr.Column("id")])
         let fk = Col<Any>("user_id")
-        let rel: IRelation = RefTo<Int64>("author", fk, [Col<Any>("id")], "users", dummyMapper, dummySetter, dummyFkExtractor)
+        let rel: IRelation = RefTo<Int64>("author", fk, [Col<Any>("id")], "users", dummyMapper, dummySetter, dummyFkExtractor, dummyTargetIdExtractor)
         q.include(rel)
         let dialect = SQLiteDialect()
         q.processIncluded(dialect)
@@ -1205,7 +1205,7 @@ public class C4PageCollectionTest {
     private func commentsRel(): IRelation {
         HasMany<UuidComment>("comments", "post_id",
             [Col<Any>("id"), Col<Any>("body")], "uuidComment",
-            UuidCommentRowMapper, UuidPostWithRelRel.commentsSetter)
+            UuidCommentRowMapper, UuidPostWithRelRel.commentsSetter, dummyTargetIdExtractor)
     }
 
     // Task 4 批量协议：page() = count + 主查询（LIMIT/OFFSET）+ 批量 has_many 查询三次。
@@ -1545,7 +1545,7 @@ public class C4PageCollectionTest {
         }
         let editor = RefTo<User>("editor", Col<Any>("post_id"),
             [Col<Any>("id"), Col<Any>("name")], "user",
-            dummyMapper, editorSetter, { e: Any => (e as PostWithRel).getOrThrow().post_id })
+            dummyMapper, editorSetter, { e: Any => (e as PostWithRel).getOrThrow().post_id }, dummyTargetIdExtractor)
         let q = PostWithRel.query()
             .include(PostWithRelRel.author)
             .include(editor)
@@ -1598,10 +1598,10 @@ public class C4PageCollectionTest {
         }
         let author = RefTo<User>("author", Col<Any>("user_id"),
             [Col<Any>("id"), Col<Any>("name")], "user",
-            UserRowMapper, authorSetter, { e: Any => (e as PostWithRel).getOrThrow().user_id })
+            UserRowMapper, authorSetter, { e: Any => (e as PostWithRel).getOrThrow().user_id }, dummyTargetIdExtractor)
         let editor = RefTo<User>("editor", Col<Any>("post_id"),
             [Col<Any>("id"), Col<Any>("email")], "user",
-            UserRowMapper, editorSetter, { e: Any => (e as PostWithRel).getOrThrow().post_id })
+            UserRowMapper, editorSetter, { e: Any => (e as PostWithRel).getOrThrow().post_id }, dummyTargetIdExtractor)
         let q = PostWithRel.query().include(author).include(editor).using(tx)
         let entities = q.all()
         @Expect(conn.stmt.capturedSqlHistory.size, 2)
@@ -1653,7 +1653,7 @@ public class C4CollectionIncludeOrderTest {
     private func commentsRel(): IRelation {
         HasMany<UuidComment>("comments", "post_id",
             [Col<Any>("id"), Col<Any>("body")], "uuidComment",
-            UuidCommentRowMapper, UuidPostWithRelRel.commentsSetter)
+            UuidCommentRowMapper, UuidPostWithRelRel.commentsSetter, dummyTargetIdExtractor)
     }
 
     @TestCase
@@ -1796,7 +1796,7 @@ public class C4CollectionBatchTest {
         }
         let moderated = HasMany<Comment>("moderated", "post_id",
             [Col<Any>("id"), Col<Any>("body")], "comment",
-            CommentRowMapper, secondSetter)
+            CommentRowMapper, secondSetter, dummyTargetIdExtractor)
         let q = PostWithRel.query()
             .include(PostWithRelRel.comments)
             .include(moderated)
@@ -1901,7 +1901,7 @@ public class C4CollectionBatchTest {
         let conn = CaptureConnection()
         let tx = Tx(conn)
         let rel: IRelation = HasMany<Int64>("posts", "user_id",
-            [Col<Any>("id")], "posts", dummyMapper, dummySetter)
+            [Col<Any>("id")], "posts", dummyMapper, dummySetter, dummyTargetIdExtractor)
         let q = Query<Int64>()
         q.select([Expr.Column("id")])
         q.from("users")
@@ -1944,7 +1944,7 @@ public class C4CollectionBatchTest {
         }
         let rel = HasMany<UuidKeyComment>("comments", "post_key",
             [Col<Any>("id"), Col<Any>("body")], "uuidKeyComment",
-            UuidKeyCommentRowMapper, setter)
+            UuidKeyCommentRowMapper, setter, dummyTargetIdExtractor)
         let q = Query<Int64>()
         q.select([Expr.Column("key")])
         q.from("uuidKeyPost")
@@ -2011,5 +2011,379 @@ public class C4CollectionBatchTest {
         @Expect(entities.size, 1)
         @Expect(entities[0].comments.size, 1)
         @Expect(entities[0].comments[0].id, 10)
+    }
+}
+
+// ─── Task 6: 嵌套 include 递归装配（withInclude 链 + 深度守卫） ─────────────────
+
+// 深度守卫测试用自定义 IRelation：getNested() 返回自身形成 include 环。没有深度守卫时
+// 递归装配将无限循环（每层发一条批量查询）；MaxNestedDepth 超限后抛 QueryException。
+// 公开 withInclude 链（clone-on-write + 去重）无法构造环，只能经自定义 IRelation 触发。
+class CyclicNestedRelation <: IRelation {
+    public func resolve(): (RelationKind, String, String, String, Option<String>, Array<Col<Any>>) {
+        (RelationKind.HasManyRel, "cycle", "cycleTable", "parent_id", None, [])
+    }
+    public func getTargetMapper(): (QueryResult, HashMap<String, Int64>) -> Any { dummyMapper }
+    public func getFieldSetter(): (Any, Any) -> Unit { dummySetter }
+    public func getForeignKeyExtractor(): (Any) -> Any { dummyFkExtractor }
+    public func getTargetIdExtractor(): (Any) -> Any { { t: Any => 1 } }
+    public func getJunctionTargetCol(): String { "" }
+    public func withInclude(rel: IRelation): IRelation { this }
+    public func getNested(): Array<IRelation> { [this] }
+    public func isBatchSupported(): Bool { true }
+}
+
+@Test
+public class NestedIncludeTest {
+
+    // 宏层生成的目标 id 提取器：从 Any 目标实体读主键（嵌套层主实体是上一级装配结果）。
+    // 提取器按关系目标类型强转：NestedPostRel.author 的目标是 NestedUser，故传 NestedUser。
+    @TestCase
+    public func testGeneratedTargetIdExtractorReadsEntityId(): Unit {
+        let u = NestedUser()
+        u.id = 77
+        match (NestedPostRel.author.getTargetIdExtractor()(u)) {
+            case v: Int64 => @Expect(v, 77)
+            case _ => @Fail("expected Int64 id")
+        }
+    }
+
+    // 两层 ref_to → has_one：Post.author（ref_to User）装配后，对装配出的 User 目标
+    // 递归装配其嵌套 profile（has_one）→ 主查询 + author 批量 + profile 批量三次查询。
+    @TestCase
+    public func testNestedRefToThenHasOne(): Unit {
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        let mainCols: Array<SqlColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("title", false),
+            MapperMockColumnInfo("user_id", false),
+        ]
+        let mainRow = Array<Any>(3, {i => if (i == 0) { 1 } else if (i == 1) { "p1" } else { 99 }})
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(mainCols, [mainRow]))
+        let userCols: Array<SqlColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("name", false),
+        ]
+        let userRow = Array<Any>(2, {i => if (i == 0) { 99 } else { "Alice" }})
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(userCols, [userRow]))
+        let profileCols: Array<SqlColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("user_id", false),
+            MapperMockColumnInfo("bio", false),
+        ]
+        let profileRow = Array<Any>(3, {i => if (i == 0) { 5 } else if (i == 1) { 99 } else { "engineer" }})
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(profileCols, [profileRow]))
+        let q = NestedPost.query()
+            .include(NestedPostRel.author.withInclude(NestedUserRel.profile))
+            .using(tx)
+        let entities = q.all()
+        // 主查询 + author 批量 + profile 批量 = 三次查询
+        @Expect(conn.stmt.capturedSqlHistory.size, 3)
+        @Expect(conn.stmt.capturedSqlHistory[0].contains("LEFT JOIN"), false)
+        @Expect(conn.stmt.capturedSqlHistory[1].contains("FROM \"nestedUser\""), true)
+        @Expect(conn.stmt.capturedSqlHistory[1].contains("IN (?)"), true)
+        @Expect(conn.stmt.capturedSqlHistory[2].contains("FROM \"nestedProfile\""), true)
+        @Expect(conn.stmt.capturedSqlHistory[2].contains("WHERE \"user_id\" IN (?)"), true)
+        @Expect(entities.size, 1)
+        @Expect(entities[0].author.isSome(), true)
+        @Expect(entities[0].author.getOrThrow().id, 99)
+        @Expect(entities[0].author.getOrThrow().name, "Alice")
+        @Expect(entities[0].author.getOrThrow().profile.isSome(), true)
+        @Expect(entities[0].author.getOrThrow().profile.getOrThrow().id, 5)
+        @Expect(entities[0].author.getOrThrow().profile.getOrThrow().bio, "engineer")
+    }
+
+    // 两层 ref_to → has_many：Post.author 装配后递归装配 author 的 comments（has_many），
+    // 嵌套层 mainIds 来自 author 目标实体的 getTargetIdExtractor。
+    @TestCase
+    public func testNestedRefToThenHasMany(): Unit {
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        let mainCols: Array<SqlColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("title", false),
+            MapperMockColumnInfo("user_id", false),
+        ]
+        let mainRow = Array<Any>(3, {i => if (i == 0) { 1 } else if (i == 1) { "p1" } else { 99 }})
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(mainCols, [mainRow]))
+        let userCols: Array<SqlColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("name", false),
+        ]
+        let userRow = Array<Any>(2, {i => if (i == 0) { 99 } else { "Alice" }})
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(userCols, [userRow]))
+        let commentCols: Array<SqlColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("user_id", false),
+            MapperMockColumnInfo("body", false),
+        ]
+        let commentRows = [
+            Array<Any>(3, {i => if (i == 0) { 10 } else if (i == 1) { 99 } else { "c1" }}),
+            Array<Any>(3, {i => if (i == 0) { 11 } else if (i == 1) { 99 } else { "c2" }}),
+        ]
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(commentCols, commentRows))
+        let q = NestedPost.query()
+            .include(NestedPostRel.author.withInclude(NestedUserRel.comments))
+            .using(tx)
+        let entities = q.all()
+        @Expect(conn.stmt.capturedSqlHistory.size, 3)
+        @Expect(conn.stmt.capturedSqlHistory[2].contains("FROM \"nestedComment\""), true)
+        @Expect(conn.stmt.capturedSqlHistory[2].contains("WHERE \"user_id\" IN (?)"), true)
+        @Expect(entities.size, 1)
+        @Expect(entities[0].author.getOrThrow().id, 99)
+        @Expect(entities[0].author.getOrThrow().comments.size, 2)
+        @Expect(entities[0].author.getOrThrow().comments[0].id, 10)
+        @Expect(entities[0].author.getOrThrow().comments[0].body, "c1")
+        @Expect(entities[0].author.getOrThrow().comments[1].id, 11)
+    }
+
+    // 三层：Post.author → User.profile → Profile.skills。每层一条批量查询，共 4 次。
+    @TestCase
+    public func testNestedThreeLevels(): Unit {
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        let mainCols: Array<SqlColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("title", false),
+            MapperMockColumnInfo("user_id", false),
+        ]
+        let mainRow = Array<Any>(3, {i => if (i == 0) { 1 } else if (i == 1) { "p1" } else { 99 }})
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(mainCols, [mainRow]))
+        let userCols: Array<SqlColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("name", false),
+        ]
+        let userRow = Array<Any>(2, {i => if (i == 0) { 99 } else { "Alice" }})
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(userCols, [userRow]))
+        let profileCols: Array<SqlColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("user_id", false),
+            MapperMockColumnInfo("bio", false),
+        ]
+        let profileRow = Array<Any>(3, {i => if (i == 0) { 5 } else if (i == 1) { 99 } else { "engineer" }})
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(profileCols, [profileRow]))
+        let skillCols: Array<SqlColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("profile_id", false),
+            MapperMockColumnInfo("name", false),
+        ]
+        let skillRow = Array<Any>(3, {i => if (i == 0) { 100 } else if (i == 1) { 5 } else { "cangjie" }})
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(skillCols, [skillRow]))
+        let q = NestedPost.query()
+            .include(NestedPostRel.author
+                .withInclude(NestedUserRel.profile.withInclude(NestedProfileRel.skills)))
+            .using(tx)
+        let entities = q.all()
+        @Expect(conn.stmt.capturedSqlHistory.size, 4)
+        @Expect(conn.stmt.capturedSqlHistory[2].contains("FROM \"nestedProfile\""), true)
+        @Expect(conn.stmt.capturedSqlHistory[3].contains("FROM \"nestedSkill\""), true)
+        @Expect(conn.stmt.capturedSqlHistory[3].contains("WHERE \"profile_id\" IN (?)"), true)
+        @Expect(entities.size, 1)
+        let profile = entities[0].author.getOrThrow().profile.getOrThrow()
+        @Expect(profile.id, 5)
+        @Expect(profile.skills.size, 1)
+        @Expect(profile.skills[0].id, 100)
+        @Expect(profile.skills[0].name, "cangjie")
+    }
+
+    // 多个主实体引用同一目标（两篇 Post 同一 author）：ref_to 装配的目标按关系去重，
+    // 递归层只对唯一目标发一次批量查询（3 次而非 4 次），且共享的 author 实例同时可见 profile。
+    @TestCase
+    public func testNestedSharedTargetDedup(): Unit {
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        let mainCols: Array<SqlColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("title", false),
+            MapperMockColumnInfo("user_id", false),
+        ]
+        let mainRows = [
+            Array<Any>(3, {i => if (i == 0) { 1 } else if (i == 1) { "p1" } else { 99 }}),
+            Array<Any>(3, {i => if (i == 0) { 2 } else if (i == 1) { "p2" } else { 99 }}),
+        ]
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(mainCols, mainRows))
+        let userCols: Array<SqlColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("name", false),
+        ]
+        let userRow = Array<Any>(2, {i => if (i == 0) { 99 } else { "Alice" }})
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(userCols, [userRow]))
+        let profileCols: Array<SqlColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("user_id", false),
+            MapperMockColumnInfo("bio", false),
+        ]
+        let profileRow = Array<Any>(3, {i => if (i == 0) { 5 } else if (i == 1) { 99 } else { "engineer" }})
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(profileCols, [profileRow]))
+        let q = NestedPost.query()
+            .include(NestedPostRel.author.withInclude(NestedUserRel.profile))
+            .using(tx)
+        let entities = q.all()
+        // 主查询 + author 批量 + profile 批量（去重后 author 目标仅一个）→ 仍 3 次
+        @Expect(conn.stmt.capturedSqlHistory.size, 3)
+        @Expect(entities.size, 2)
+        @Expect(entities[0].author.getOrThrow().profile.getOrThrow().bio, "engineer")
+        @Expect(entities[1].author.getOrThrow().profile.getOrThrow().bio, "engineer")
+    }
+
+    // 顶层 has_many 的嵌套：Category.children.withInclude(Category.children)，
+    // 第二层 mainIds 来自第一层子分类实体（getTargetIdExtractor）。
+    @TestCase
+    public func testNestedHasManyTopLevel(): Unit {
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        let mainCols: Array<SqlColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("name", false),
+            MapperMockColumnInfo("parent_id", false),
+        ]
+        let mainRow = Array<Any>(3, {i => if (i == 0) { 1 } else if (i == 1) { "root" } else { 0 }})
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(mainCols, [mainRow]))
+        let childCols: Array<SqlColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("parent_id", false),
+            MapperMockColumnInfo("name", false),
+        ]
+        let childRow = Array<Any>(3, {i => if (i == 0) { 10 } else if (i == 1) { 1 } else { "child" }})
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(childCols, [childRow]))
+        let grandRow = Array<Any>(3, {i => if (i == 0) { 20 } else if (i == 1) { 10 } else { "grandchild" }})
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(childCols, [grandRow]))
+        let q = CategoryWithRel.query()
+            .include(CategoryWithRelRel.children.withInclude(CategoryWithRelRel.children))
+            .using(tx)
+        let entities = q.all()
+        @Expect(conn.stmt.capturedSqlHistory.size, 3)
+        @Expect(conn.stmt.capturedSqlHistory[1].contains("FROM \"categoryWithRel\""), true)
+        @Expect(conn.stmt.capturedSqlHistory[2].contains("WHERE \"parent_id\" IN (?)"), true)
+        @Expect(entities.size, 1)
+        @Expect(entities[0].children.size, 1)
+        @Expect(entities[0].children[0].id, 10)
+        @Expect(entities[0].children[0].children.size, 1)
+        @Expect(entities[0].children[0].children[0].id, 20)
+        @Expect(entities[0].children[0].children[0].name, "grandchild")
+    }
+
+    // 嵌套层的字段子集：withInclude(FieldOverrideRelation(profile, [id, bio]))，
+    // 批量查询按子集 SELECT（强制 id + user_id 分组键 + 子集 bio）。
+    @TestCase
+    public func testNestedFieldSubset(): Unit {
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        let mainCols: Array<SqlColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("title", false),
+            MapperMockColumnInfo("user_id", false),
+        ]
+        let mainRow = Array<Any>(3, {i => if (i == 0) { 1 } else if (i == 1) { "p1" } else { 99 }})
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(mainCols, [mainRow]))
+        let userCols: Array<SqlColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("name", false),
+        ]
+        let userRow = Array<Any>(2, {i => if (i == 0) { 99 } else { "Alice" }})
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(userCols, [userRow]))
+        let profileCols: Array<SqlColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("user_id", false),
+            MapperMockColumnInfo("bio", false),
+        ]
+        let profileRow = Array<Any>(3, {i => if (i == 0) { 5 } else if (i == 1) { 99 } else { "engineer" }})
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(profileCols, [profileRow]))
+        let q = NestedPost.query()
+            .include(NestedPostRel.author
+                .withInclude(FieldOverrideRelation(NestedUserRel.profile, [Col<Any>("id"), Col<Any>("bio")])))
+            .using(tx)
+        let entities = q.all()
+        @Expect(conn.stmt.capturedSqlHistory.size, 3)
+        @Expect(conn.stmt.capturedSqlHistory[2].contains("SELECT \"id\", \"user_id\", \"bio\" FROM \"nestedProfile\""), true)
+        @Expect(entities.size, 1)
+        @Expect(entities[0].author.getOrThrow().profile.getOrThrow().bio, "engineer")
+    }
+
+    // 两层 ref_to → ref_to：NestedCommentPost.author（ref_to NestedUserRef）装配后递归
+    // 装配 author 的 team（ref_to NestedTeamRef）——嵌套层 assembleRefTo 在 Array<Any>
+    // 目标实体上读 fk（getForeignKeyExtractor）批量装配。
+    @TestCase
+    public func testNestedRefToThenRefTo(): Unit {
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        let mainCols: Array<SqlColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("body", false),
+            MapperMockColumnInfo("author_id", false),
+        ]
+        let mainRow = Array<Any>(3, {i => if (i == 0) { 1 } else if (i == 1) { "c1" } else { 99 }})
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(mainCols, [mainRow]))
+        let userCols: Array<SqlColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("name", false),
+            MapperMockColumnInfo("team_id", false),
+        ]
+        let userRow = Array<Any>(3, {i => if (i == 0) { 99 } else if (i == 1) { "Alice" } else { 7 }})
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(userCols, [userRow]))
+        let teamCols: Array<SqlColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("name", false),
+        ]
+        let teamRow = Array<Any>(2, {i => if (i == 0) { 7 } else { "eng" }})
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(teamCols, [teamRow]))
+        let q = NestedCommentPost.query()
+            .include(NestedCommentPostRel.author.withInclude(NestedUserRefRel.team))
+            .using(tx)
+        let entities = q.all()
+        @Expect(conn.stmt.capturedSqlHistory.size, 3)
+        @Expect(conn.stmt.capturedSqlHistory[1].contains("FROM \"nestedUserRef\""), true)
+        @Expect(conn.stmt.capturedSqlHistory[2].contains("FROM \"nestedTeamRef\""), true)
+        @Expect(conn.stmt.capturedSqlHistory[2].contains("WHERE \"id\" IN (?)"), true)
+        @Expect(entities.size, 1)
+        @Expect(entities[0].author.isSome(), true)
+        @Expect(entities[0].author.getOrThrow().name, "Alice")
+        @Expect(entities[0].author.getOrThrow().team.isSome(), true)
+        @Expect(entities[0].author.getOrThrow().team.getOrThrow().id, 7)
+        @Expect(entities[0].author.getOrThrow().team.getOrThrow().name, "eng")
+    }
+
+    // 嵌套 include 环（自定义 IRelation getNested 返回自身）：深度守卫必须终止递归并抛错。
+    @TestCase
+    public func testNestedCycleDepthGuard(): Unit {
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        let mainCols: Array<SqlColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("title", false),
+            MapperMockColumnInfo("user_id", false),
+        ]
+        let mainRow = Array<Any>(3, {i => if (i == 0) { 1 } else if (i == 1) { "p1" } else { 99 }})
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(mainCols, [mainRow]))
+        let userCols: Array<SqlColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("name", false),
+        ]
+        let userRow = Array<Any>(2, {i => if (i == 0) { 99 } else { "Alice" }})
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(userCols, [userRow]))
+        // 环每层发一条批量查询，预置超过 MaxNestedDepth 的结果。每层查询的 IN 主键集合：
+        // 第 1 层 = author 目标实体 id（99）；第 2 层起 = CyclicNestedRelation 提取器返回 1。
+        // 故第 1 条 mock 行的 fk 用 99 命中分组、其余用 1 命中，确保每层都有目标实体、
+        // 递归持续进行直到深度守卫抛错。
+        let cycleCols: Array<SqlColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("parent_id", false),
+        ]
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(cycleCols,
+            [Array<Any>(2, {i => if (i == 0) { 1 } else { 99 }})]))
+        for (i in 0..30) {
+            conn.stmt.queryResultQueue.add(MapperMockQueryResult(cycleCols,
+                [Array<Any>(2, {i => if (i == 0) { 1 } else { 1 }})]))
+        }
+        let q = NestedPost.query()
+            .include(NestedPostRel.author.withInclude(CyclicNestedRelation()))
+            .using(tx)
+        try {
+            q.all()
+            @Fail("expected QueryException from nested include depth guard")
+        } catch (e: QueryException) {
+            @Expect(e.message.contains("depth"), true)
+        }
     }
 }

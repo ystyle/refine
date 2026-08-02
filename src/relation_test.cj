@@ -14,7 +14,7 @@ public class RelationTest {
     public func testRefToConstruction(): Unit {
         let fk = Col<Any>("user_id")
         let fields = [Col<Any>("id"), Col<Any>("name")]
-        let rel = RefTo<RelUser>("author", fk, fields, "reluser", dummyMapper, dummySetter, dummyFkExtractor)
+        let rel = RefTo<RelUser>("author", fk, fields, "reluser", dummyMapper, dummySetter, dummyFkExtractor, dummyTargetIdExtractor)
         @Expect(rel.name, "author")
         @Expect(rel.kind, RelationKind.RefToRel)
         @Expect(rel.foreignKey, "user_id")
@@ -27,7 +27,7 @@ public class RelationTest {
     @TestCase
     public func testRefManyConstruction(): Unit {
         let fields = [Col<Any>("id"), Col<Any>("name")]
-        let rel = RefMany<RelTag>("tags", "post_tags", fields, "reltag", dummyMapper, dummySetter, "reltag_id")
+        let rel = RefMany<RelTag>("tags", "post_tags", fields, "reltag", dummyMapper, dummySetter, "reltag_id", dummyTargetIdExtractor)
         @Expect(rel.name, "tags")
         @Expect(rel.kind, RelationKind.RefManyRel)
         match (rel.via) {
@@ -42,7 +42,7 @@ public class RelationTest {
     public func testIRelationResolveRefTo(): Unit {
         let fk = Col<Any>("user_id")
         let fields = [Col<Any>("id"), Col<Any>("name")]
-        let rel: IRelation = RefTo<RelUser>("author", fk, fields, "reluser", dummyMapper, dummySetter, dummyFkExtractor)
+        let rel: IRelation = RefTo<RelUser>("author", fk, fields, "reluser", dummyMapper, dummySetter, dummyFkExtractor, dummyTargetIdExtractor)
         let (kind, name, targetTable, foreignKey, via, resolvedFields) = rel.resolve()
         @Expect(kind, RelationKind.RefToRel)
         @Expect(name, "author")
@@ -56,7 +56,7 @@ public class RelationTest {
     @TestCase
     public func testIRelationResolveRefMany(): Unit {
         let fields = [Col<Any>("id"), Col<Any>("name")]
-        let rel: IRelation = RefMany<RelTag>("tags", "post_tags", fields, "reltag", dummyMapper, dummySetter, "reltag_id")
+        let rel: IRelation = RefMany<RelTag>("tags", "post_tags", fields, "reltag", dummyMapper, dummySetter, "reltag_id", dummyTargetIdExtractor)
         let (kind, name, targetTable, foreignKey, via, resolvedFields) = rel.resolve()
         @Expect(kind, RelationKind.RefManyRel)
         @Expect(name, "tags")
@@ -70,7 +70,7 @@ public class RelationTest {
     public func testRelationFieldsOverride(): Unit {
         let fk = Col<Any>("user_id")
         let fields = [Col<Any>("id"), Col<Any>("name")]
-        let rel = RefTo<RelUser>("author", fk, fields, "reluser", dummyMapper, dummySetter, dummyFkExtractor)
+        let rel = RefTo<RelUser>("author", fk, fields, "reluser", dummyMapper, dummySetter, dummyFkExtractor, dummyTargetIdExtractor)
         let extra = [Col<Any>("email")]
         rel.setFields(extra)
         @Expect(rel.fields[0].name, "email")
@@ -88,7 +88,7 @@ public class RelationTest {
     public func testHasOne(): Unit {
         let mapper: (QueryResult, HashMap<String, Int64>) -> Any = { r, cm => 1 }
         let setter: (Any, Any) -> Unit = { e, t => () }
-        let rel = HasOne<Int64>("profile", "user_id", [Col<Any>("id")], "profiles", mapper, setter)
+        let rel = HasOne<Int64>("profile", "user_id", [Col<Any>("id")], "profiles", mapper, setter, dummyTargetIdExtractor)
         let (kind, name, table, fk, via, fields) = rel.resolve()
         @Expect(kind, RelationKind.HasOneRel)
         @Expect(name, "profile")
@@ -105,7 +105,7 @@ public class RelationTest {
     public func testHasMany(): Unit {
         let mapper: (QueryResult, HashMap<String, Int64>) -> Any = { r, cm => 1 }
         let setter: (Any, Any) -> Unit = { e, t => () }
-        let rel = HasMany<String>("posts", "user_id", [Col<Any>("id")], "posts", mapper, setter)
+        let rel = HasMany<String>("posts", "user_id", [Col<Any>("id")], "posts", mapper, setter, dummyTargetIdExtractor)
         let (kind, name, _, fk, _, _) = rel.resolve()
         @Expect(kind, RelationKind.HasManyRel)
         @Expect(name, "posts")
@@ -117,7 +117,7 @@ public class RelationTest {
     public func testFieldOverrideRelation(): Unit {
         let mapper: (QueryResult, HashMap<String, Int64>) -> Any = { r, cm => 1 }
         let setter: (Any, Any) -> Unit = { e, t => () }
-        let inner = HasMany<String>("tags", "post_id", [Col<Any>("id")], "tags", mapper, setter)
+        let inner = HasMany<String>("tags", "post_id", [Col<Any>("id")], "tags", mapper, setter, dummyTargetIdExtractor)
         let overrides = [Col<Any>("name"), Col<Any>("color")]
         let wrapper = FieldOverrideRelation(inner, overrides)
         let (kind, name, _, fk, _, fields) = wrapper.resolve()
@@ -132,8 +132,8 @@ public class RelationTest {
     public func testWithIncludeAppendsNested(): Unit {
         let fk = Col<Any>("user_id")
         let fields = [Col<Any>("id"), Col<Any>("name")]
-        let author = RefTo<RelUser>("author", fk, fields, "reluser", dummyMapper, dummySetter, dummyFkExtractor)
-        let profile = HasOne<RelUser>("profile", "user_id", [Col<Any>("id")], "relprofile", dummyMapper, dummySetter)
+        let author = RefTo<RelUser>("author", fk, fields, "reluser", dummyMapper, dummySetter, dummyFkExtractor, dummyTargetIdExtractor)
+        let profile = HasOne<RelUser>("profile", "user_id", [Col<Any>("id")], "relprofile", dummyMapper, dummySetter, dummyTargetIdExtractor)
         let returned = author.withInclude(profile)
         @Expect(author.getNested().size, 0)
         @Expect(author.isBatchSupported(), true)
@@ -144,9 +144,9 @@ public class RelationTest {
     public func testWithIncludeChaining(): Unit {
         let fk = Col<Any>("user_id")
         let fields = [Col<Any>("id"), Col<Any>("name")]
-        let author = RefTo<RelUser>("author", fk, fields, "reluser", dummyMapper, dummySetter, dummyFkExtractor)
-        let profile = HasOne<RelUser>("profile", "user_id", [Col<Any>("id")], "relprofile", dummyMapper, dummySetter)
-        let tags = HasMany<RelTag>("tags", "post_id", [Col<Any>("id")], "reltag", dummyMapper, dummySetter)
+        let author = RefTo<RelUser>("author", fk, fields, "reluser", dummyMapper, dummySetter, dummyFkExtractor, dummyTargetIdExtractor)
+        let profile = HasOne<RelUser>("profile", "user_id", [Col<Any>("id")], "relprofile", dummyMapper, dummySetter, dummyTargetIdExtractor)
+        let tags = HasMany<RelTag>("tags", "post_id", [Col<Any>("id")], "reltag", dummyMapper, dummySetter, dummyTargetIdExtractor)
         let chained: IRelation = author.withInclude(profile).withInclude(tags)
         @Expect(author.getNested().size, 0)
         @Expect(chained.getNested().size, 2)
@@ -156,7 +156,7 @@ public class RelationTest {
     public func testNestedEmptyByDefault(): Unit {
         let fk = Col<Any>("user_id")
         let fields = [Col<Any>("id"), Col<Any>("name")]
-        let author = RefTo<RelUser>("author", fk, fields, "reluser", dummyMapper, dummySetter, dummyFkExtractor)
+        let author = RefTo<RelUser>("author", fk, fields, "reluser", dummyMapper, dummySetter, dummyFkExtractor, dummyTargetIdExtractor)
         @Expect(author.getNested().size, 0)
         @Expect(author.isBatchSupported(), true)
     }
@@ -165,8 +165,8 @@ public class RelationTest {
     public func testHasManyInheritsNesting(): Unit {
         let mapper: (QueryResult, HashMap<String, Int64>) -> Any = { r, cm => 1 }
         let setter: (Any, Any) -> Unit = { e, t => () }
-        let posts = HasMany<String>("posts", "user_id", [Col<Any>("id")], "posts", mapper, setter)
-        let author = RefTo<RelUser>("author", Col<Any>("user_id"), [Col<Any>("id")], "reluser", dummyMapper, dummySetter, dummyFkExtractor)
+        let posts = HasMany<String>("posts", "user_id", [Col<Any>("id")], "posts", mapper, setter, dummyTargetIdExtractor)
+        let author = RefTo<RelUser>("author", Col<Any>("user_id"), [Col<Any>("id")], "reluser", dummyMapper, dummySetter, dummyFkExtractor, dummyTargetIdExtractor)
         let returned = posts.withInclude(author)
         @Expect(posts.getNested().size, 0)
         @Expect(posts.isBatchSupported(), true)
@@ -177,11 +177,11 @@ public class RelationTest {
     public func testFieldOverrideRelationDelegatesNesting(): Unit {
         let mapper: (QueryResult, HashMap<String, Int64>) -> Any = { r, cm => 1 }
         let setter: (Any, Any) -> Unit = { e, t => () }
-        let inner = HasMany<String>("tags", "post_id", [Col<Any>("id")], "tags", mapper, setter)
+        let inner = HasMany<String>("tags", "post_id", [Col<Any>("id")], "tags", mapper, setter, dummyTargetIdExtractor)
         let wrapper = FieldOverrideRelation(inner, [Col<Any>("name")])
         @Expect(wrapper.isBatchSupported(), true)
         @Expect(wrapper.getNested().size, 0)
-        let rel = RefTo<RelUser>("author", Col<Any>("user_id"), [Col<Any>("id")], "reluser", dummyMapper, dummySetter, dummyFkExtractor)
+        let rel = RefTo<RelUser>("author", Col<Any>("user_id"), [Col<Any>("id")], "reluser", dummyMapper, dummySetter, dummyFkExtractor, dummyTargetIdExtractor)
         let newWrapper = wrapper.withInclude(rel)
         @Expect(wrapper.getNested().size, 0)
         @Expect(inner.getNested().size, 0)
@@ -192,8 +192,8 @@ public class RelationTest {
     public func testWithIncludeDoesNotMutateSource(): Unit {
         let fk = Col<Any>("user_id")
         let fields = [Col<Any>("id"), Col<Any>("name")]
-        let author = RefTo<RelUser>("author", fk, fields, "reluser", dummyMapper, dummySetter, dummyFkExtractor)
-        let profile = HasOne<RelUser>("profile", "user_id", [Col<Any>("id")], "relprofile", dummyMapper, dummySetter)
+        let author = RefTo<RelUser>("author", fk, fields, "reluser", dummyMapper, dummySetter, dummyFkExtractor, dummyTargetIdExtractor)
+        let profile = HasOne<RelUser>("profile", "user_id", [Col<Any>("id")], "relprofile", dummyMapper, dummySetter, dummyTargetIdExtractor)
         let _ = author.withInclude(profile)
         @Expect(author.getNested().size, 0)
     }
@@ -202,9 +202,9 @@ public class RelationTest {
     public func testWithIncludeIndependentChains(): Unit {
         let fk = Col<Any>("user_id")
         let fields = [Col<Any>("id"), Col<Any>("name")]
-        let author = RefTo<RelUser>("author", fk, fields, "reluser", dummyMapper, dummySetter, dummyFkExtractor)
-        let profile = HasOne<RelUser>("profile", "user_id", [Col<Any>("id")], "relprofile", dummyMapper, dummySetter)
-        let tags = HasMany<RelTag>("tags", "post_id", [Col<Any>("id")], "reltag", dummyMapper, dummySetter)
+        let author = RefTo<RelUser>("author", fk, fields, "reluser", dummyMapper, dummySetter, dummyFkExtractor, dummyTargetIdExtractor)
+        let profile = HasOne<RelUser>("profile", "user_id", [Col<Any>("id")], "relprofile", dummyMapper, dummySetter, dummyTargetIdExtractor)
+        let tags = HasMany<RelTag>("tags", "post_id", [Col<Any>("id")], "reltag", dummyMapper, dummySetter, dummyTargetIdExtractor)
         let chainA = author.withInclude(profile)
         let chainB = author.withInclude(tags)
         @Expect(author.getNested().size, 0)
@@ -216,8 +216,8 @@ public class RelationTest {
     public func testWithIncludeDedup(): Unit {
         let fk = Col<Any>("user_id")
         let fields = [Col<Any>("id"), Col<Any>("name")]
-        let author = RefTo<RelUser>("author", fk, fields, "reluser", dummyMapper, dummySetter, dummyFkExtractor)
-        let profile = HasOne<RelUser>("profile", "user_id", [Col<Any>("id")], "relprofile", dummyMapper, dummySetter)
+        let author = RefTo<RelUser>("author", fk, fields, "reluser", dummyMapper, dummySetter, dummyFkExtractor, dummyTargetIdExtractor)
+        let profile = HasOne<RelUser>("profile", "user_id", [Col<Any>("id")], "relprofile", dummyMapper, dummySetter, dummyTargetIdExtractor)
         let chain = author.withInclude(profile).withInclude(profile)
         @Expect(chain.getNested().size, 1)
     }
@@ -226,9 +226,9 @@ public class RelationTest {
     public func testClonePreservesExistingNested(): Unit {
         let fk = Col<Any>("user_id")
         let fields = [Col<Any>("id"), Col<Any>("name")]
-        let author = RefTo<RelUser>("author", fk, fields, "reluser", dummyMapper, dummySetter, dummyFkExtractor)
-        let profile = HasOne<RelUser>("profile", "user_id", [Col<Any>("id")], "relprofile", dummyMapper, dummySetter)
-        let tags = HasMany<RelTag>("tags", "post_id", [Col<Any>("id")], "reltag", dummyMapper, dummySetter)
+        let author = RefTo<RelUser>("author", fk, fields, "reluser", dummyMapper, dummySetter, dummyFkExtractor, dummyTargetIdExtractor)
+        let profile = HasOne<RelUser>("profile", "user_id", [Col<Any>("id")], "relprofile", dummyMapper, dummySetter, dummyTargetIdExtractor)
+        let tags = HasMany<RelTag>("tags", "post_id", [Col<Any>("id")], "reltag", dummyMapper, dummySetter, dummyTargetIdExtractor)
         let chain = author.withInclude(profile).withInclude(tags)
         @Expect(chain.getNested().size, 2)
         let nested = chain.getNested()
@@ -245,7 +245,7 @@ public class RelationTest {
     @TestCase
     public func testRefToExposesFkExtractor(): Unit {
         let extractor: (Any) -> Any = { e: Any => 7 }
-        let rel = RefTo<RelUser>("author", Col<Any>("user_id"), [Col<Any>("id")], "reluser", dummyMapper, dummySetter, extractor)
+        let rel = RefTo<RelUser>("author", Col<Any>("user_id"), [Col<Any>("id")], "reluser", dummyMapper, dummySetter, extractor, dummyTargetIdExtractor)
         let got = rel.getForeignKeyExtractor()
         match (got("x")) {
             case v: Int64 => @Expect(v, 7)
@@ -257,7 +257,7 @@ public class RelationTest {
     public func testNonRefToHasNoFkExtractor(): Unit {
         let mapper: (QueryResult, HashMap<String, Int64>) -> Any = { r, cm => 1 }
         let setter: (Any, Any) -> Unit = { e, t => () }
-        let rel = HasMany<RelTag>("tags", "post_id", [Col<Any>("id")], "reltag", mapper, setter)
+        let rel = HasMany<RelTag>("tags", "post_id", [Col<Any>("id")], "reltag", mapper, setter, dummyTargetIdExtractor)
         try {
             let _ = rel.getForeignKeyExtractor()
             @Fail("expected RefineException")
@@ -269,7 +269,7 @@ public class RelationTest {
     @TestCase
     public func testFieldOverrideRelationDelegatesFkExtractor(): Unit {
         let extractor: (Any) -> Any = { e: Any => 7 }
-        let inner: IRelation = RefTo<RelUser>("author", Col<Any>("user_id"), [Col<Any>("id")], "reluser", dummyMapper, dummySetter, extractor)
+        let inner: IRelation = RefTo<RelUser>("author", Col<Any>("user_id"), [Col<Any>("id")], "reluser", dummyMapper, dummySetter, extractor, dummyTargetIdExtractor)
         let wrapper = FieldOverrideRelation(inner, [Col<Any>("id")])
         match (wrapper.getForeignKeyExtractor()("x")) {
             case v: Int64 => @Expect(v, 7)
@@ -280,13 +280,71 @@ public class RelationTest {
     @TestCase
     public func testClonePreservesFkExtractor(): Unit {
         let extractor: (Any) -> Any = { e: Any => 7 }
-        let author = RefTo<RelUser>("author", Col<Any>("user_id"), [Col<Any>("id")], "reluser", dummyMapper, dummySetter, extractor)
-        let profile = HasOne<RelUser>("profile", "user_id", [Col<Any>("id")], "relprofile", dummyMapper, dummySetter)
+        let author = RefTo<RelUser>("author", Col<Any>("user_id"), [Col<Any>("id")], "reluser", dummyMapper, dummySetter, extractor, dummyTargetIdExtractor)
+        let profile = HasOne<RelUser>("profile", "user_id", [Col<Any>("id")], "relprofile", dummyMapper, dummySetter, dummyTargetIdExtractor)
         // withInclude 走 clone-on-write，fkExtractor 必须随克隆保留
         let chain = author.withInclude(profile)
         match (chain.getForeignKeyExtractor()("x")) {
             case v: Int64 => @Expect(v, 7)
             case _ => @Fail("expected Int64 fk value")
+        }
+    }
+
+    // ─── Task 6: 目标 id 提取器（嵌套 include 递归装配读取目标实体主键） ───
+
+    @TestCase
+    public func testRefToExposesTargetIdExtractor(): Unit {
+        let extractor: (Any) -> Any = { t: Any => 42 }
+        let rel = RefTo<RelUser>("author", Col<Any>("user_id"), [Col<Any>("id")], "reluser", dummyMapper, dummySetter, dummyFkExtractor, extractor)
+        match (rel.getTargetIdExtractor()("x")) {
+            case v: Int64 => @Expect(v, 42)
+            case _ => @Fail("expected Int64 target id value")
+        }
+    }
+
+    // 所有关系种类都必须携带目标 id 提取器（任意关系的目标实体都可能再声明嵌套 include）
+    @TestCase
+    public func testAllRelationKindsExposeTargetIdExtractor(): Unit {
+        let extractor: (Any) -> Any = { t: Any => 7 }
+        let one = HasOne<RelUser>("profile", "user_id", [Col<Any>("id")], "relprofile", dummyMapper, dummySetter, extractor)
+        let many = HasMany<RelTag>("tags", "post_id", [Col<Any>("id")], "reltag", dummyMapper, dummySetter, extractor)
+        let manyRef = RefMany<RelTag>("tags2", "post_tags", [Col<Any>("id")], "reltag", dummyMapper, dummySetter, "reltag_id", extractor)
+        match (one.getTargetIdExtractor()("x")) {
+            case v: Int64 => @Expect(v, 7)
+            case _ => @Fail("expected Int64")
+        }
+        match (many.getTargetIdExtractor()("x")) {
+            case v: Int64 => @Expect(v, 7)
+            case _ => @Fail("expected Int64")
+        }
+        match (manyRef.getTargetIdExtractor()("x")) {
+            case v: Int64 => @Expect(v, 7)
+            case _ => @Fail("expected Int64")
+        }
+    }
+
+    @TestCase
+    public func testClonePreservesTargetIdExtractor(): Unit {
+        let extractor: (Any) -> Any = { t: Any => 9 }
+        let author = RefTo<RelUser>("author", Col<Any>("user_id"), [Col<Any>("id")], "reluser", dummyMapper, dummySetter, dummyFkExtractor, extractor)
+        let profile = HasOne<RelUser>("profile", "user_id", [Col<Any>("id")], "relprofile", dummyMapper, dummySetter, dummyTargetIdExtractor)
+        // withInclude 走 clone-on-write，targetIdExtractor 必须随克隆保留
+        let chain = author.withInclude(profile)
+        match (chain.getTargetIdExtractor()("x")) {
+            case v: Int64 => @Expect(v, 9)
+            case _ => @Fail("expected Int64 target id value")
+        }
+    }
+
+    // FieldOverrideRelation（include(rel, fields) 字段子集包装）必须透传目标 id 提取器
+    @TestCase
+    public func testFieldOverrideRelationDelegatesTargetIdExtractor(): Unit {
+        let extractor: (Any) -> Any = { t: Any => 3 }
+        let inner: IRelation = HasOne<RelUser>("profile", "user_id", [Col<Any>("id")], "relprofile", dummyMapper, dummySetter, extractor)
+        let wrapper = FieldOverrideRelation(inner, [Col<Any>("id")])
+        match (wrapper.getTargetIdExtractor()("x")) {
+            case v: Int64 => @Expect(v, 3)
+            case _ => @Fail("expected Int64 target id value")
         }
     }
 }

@@ -43,8 +43,26 @@ func buildRelClass(className: String, rels: ArrayList<RelInfo>): Tokens {
         let setterIdent = Token(TokenKind.IDENTIFIER, r.fieldName + "Setter")
         let mapperFuncIdent = Token(TokenKind.IDENTIFIER, r.target + "RowMapper")
         let cnIdent = Token(TokenKind.IDENTIFIER, className)
+        let targetIdExtractorIdent = Token(TokenKind.IDENTIFIER, r.fieldName + "TargetIdExtractor")
+        let targetTypeIdent = Token(TokenKind.IDENTIFIER, r.target)
+        let targetIdFieldIdent = Token(TokenKind.IDENTIFIER, "id")
         body = body + quote(
             public static let $(mapperIdent) = $(mapperFuncIdent)
+        )
+        body = body + Token(TokenKind.NL)
+        // Task 6: 目标实体主键读取器。嵌套 include 递归装配时，上一层装配出的目标实体
+        // （Array<Any>，如 Post.author 装配出的 User）作为下一层的「主实体」，其 id 是
+        // 下一层 has_many/ref_many 批量查询的 IN 主键集合。宏层已知目标类名（r.target），
+        // 生成 `{ target: Any => (target as 目标类).getOrThrow().id }` 闭包读目标实体主键。
+        // 限制：目标类必须有名为 `id` 的字段（@Id 自定义主键目标类暂不支持，同 rawIdExtractor
+        // 范围）；复合主键目标类无 `id` 字段会编译失败，属已知限制。
+        // id 字段用 $(targetIdFieldIdent) 拼接而非裸写 `t.id`：与 fkExtractor 的字段访问
+        // 风格一致（裸写 `t.id` 在 quote 渲染下会丢失成员访问语义，运行时 cast 返回 None）。
+        body = body + quote(
+            public static let $(targetIdExtractorIdent): (Any) -> Any = { target: Any =>
+                let t = (target as $(targetTypeIdent)).getOrThrow()
+                t.$(targetIdFieldIdent)
+            }
         )
         body = body + Token(TokenKind.NL)
         if (r.kind == "ref_to" || r.kind == "has_one") {
@@ -91,17 +109,17 @@ func buildRelClass(className: String, rels: ArrayList<RelInfo>): Tokens {
             )
             body = body + Token(TokenKind.NL)
             body = body + quote(
-                public static let $(fieldIdent) = RefTo<$(targetType)>($(nameLit), Col<Any>($(fkLit)), $(fieldsTok), $(targetTableExpr), $(mapperIdent), $(setterIdent), $(extractorIdent))
+                public static let $(fieldIdent) = RefTo<$(targetType)>($(nameLit), Col<Any>($(fkLit)), $(fieldsTok), $(targetTableExpr), $(mapperIdent), $(setterIdent), $(extractorIdent), $(targetIdExtractorIdent))
             )
         } else if (r.kind == "has_one") {
             let fkLit = Token(TokenKind.STRING_LITERAL, r.by)
             body = body + quote(
-                public static let $(fieldIdent) = HasOne<$(targetType)>($(nameLit), $(fkLit), $(fieldsTok), $(targetTableExpr), $(mapperIdent), $(setterIdent))
+                public static let $(fieldIdent) = HasOne<$(targetType)>($(nameLit), $(fkLit), $(fieldsTok), $(targetTableExpr), $(mapperIdent), $(setterIdent), $(targetIdExtractorIdent))
             )
         } else if (r.kind == "has_many") {
             let fkLit = Token(TokenKind.STRING_LITERAL, r.by)
             body = body + quote(
-                public static let $(fieldIdent) = HasMany<$(targetType)>($(nameLit), $(fkLit), $(fieldsTok), $(targetTableExpr), $(mapperIdent), $(setterIdent))
+                public static let $(fieldIdent) = HasMany<$(targetType)>($(nameLit), $(fkLit), $(fieldsTok), $(targetTableExpr), $(mapperIdent), $(setterIdent), $(targetIdExtractorIdent))
             )
         } else {
             let viaLit = Token(TokenKind.STRING_LITERAL, r.via)
@@ -110,7 +128,7 @@ func buildRelClass(className: String, rels: ArrayList<RelInfo>): Tokens {
             // 否则 @Table 覆盖目标表名时列名不一致）。宏层在编译期计算并传入 RefMany。
             let junctionTargetColLit = Token(TokenKind.STRING_LITERAL, lowerTableName(r.target) + "_id")
             body = body + quote(
-                public static let $(fieldIdent) = RefMany<$(targetType)>($(nameLit), $(viaLit), $(fieldsTok), $(targetTableExpr), $(mapperIdent), $(setterIdent), $(junctionTargetColLit))
+                public static let $(fieldIdent) = RefMany<$(targetType)>($(nameLit), $(viaLit), $(fieldsTok), $(targetTableExpr), $(mapperIdent), $(setterIdent), $(junctionTargetColLit), $(targetIdExtractorIdent))
             )
         }
         first = false

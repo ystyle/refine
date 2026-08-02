@@ -32,6 +32,10 @@ class FieldOverrideRelation <: IRelation {
         inner.getForeignKeyExtractor()
     }
 
+    public func getTargetIdExtractor(): (Any) -> Any {
+        inner.getTargetIdExtractor()
+    }
+
     public func withInclude(rel: IRelation): IRelation {
         FieldOverrideRelation(inner.withInclude(rel), overrides)
     }
@@ -310,20 +314,29 @@ public class Query<T> {
     }
 
     // Task 3: ref_to 批量装配。主查询返回实体后调用：
-    //   1. 按目标表分组（保持 included 顺序），同表多个 ref_to 关系合并为一条批量查询；
+    //   1. 按目标表分组（保持 rels 顺序），同表多个 ref_to 关系合并为一条批量查询；
     //   2. 收集各实体外键值（getForeignKeyExtractor），去重并过滤 0/"" 未设置值；
     //   3. 空集合跳过（不产生额外查询）；
     //   4. `SELECT <字段并集> FROM <目标表> WHERE "id" IN (?, ...)` 批量取目标；
     //   5. 目标 id → 实体 映射，按各关系 fk 值命中回填（未命中保持未挂载，不抛错）。
+    // Task 6 扩展：返回各关系实际装配到的目标实体数组（按关系去重——同一目标实体被
+    // 多个主实体引用时只收集一次），供嵌套 include 递归装配下一层关联使用。
+    // E 泛型：顶层为 Array<T>（主查询实体），嵌套层为 Array<Any>（上一层装配结果）。
     // 批量 SQL 采用手写占位符（与 relation_gen.cj 一致）：IN 列表不是 Expr 模型的一部分
     // （Expr.Value 数组渲染为单个参数，无法展开为 ?,?,...），且在 scope 内不允许改动
     // 三方言 renderExpr 为 IN 列表新增变体，故 SELECT/FROM 走 Statement 机器，
     // WHERE 的 IN 部分由 buildInClause 手写占位符生成。
-    private func assembleRefTo(exec: ExecutionContext, dialect: Dialect, entities: Array<T>): Unit {
-        if (included.size == 0 || entities.size == 0) { return }
+    private func assembleRefTo<E>(
+        exec: ExecutionContext,
+        dialect: Dialect,
+        entities: Array<E>,
+        rels: Array<IRelation>
+    ): ArrayList<(IRelation, Array<Any>)> {
+        let result = ArrayList<(IRelation, Array<Any>)>()
+        if (rels.size == 0 || entities.size == 0) { return result }
 
         var groups = ArrayList<(String, ArrayList<IRelation>)>()
-        for (inc in included) {
+        for (inc in rels) {
             let (kind, _, targetTable, _, _, _) = inc.resolve()
             if (kind != RelationKind.RefToRel) { continue }
             var found = false
@@ -335,20 +348,20 @@ public class Query<T> {
                 }
             }
             if (!found) {
-                let rels = ArrayList<IRelation>()
-                rels.add(inc)
-                groups.add((targetTable, rels))
+                let rels2 = ArrayList<IRelation>()
+                rels2.add(inc)
+                groups.add((targetTable, rels2))
             }
         }
 
         for (i in 0..groups.size) {
             let targetTable = groups[i][0]
-            let rels = groups[i][1]
+            let rels2 = groups[i][1]
 
             // 1. 收集该目标表全部 fk 值（跨关系去重、过滤 0/""）
             var ids = ArrayList<Any>()
             var seen = HashMap<String, Bool>()
-            for (rel in rels) {
+            for (rel in rels2) {
                 let extractor = rel.getForeignKeyExtractor()
                 for (entity in entities) {
                     let v = extractor(entity)
@@ -363,40 +376,50 @@ public class Query<T> {
             if (ids.size == 0) { continue }
 
             // 2. 字段并集 + 强制目标主键列（装配查表与回填都用），批量查询
-            let cols = buildBatchSelectCols(rels, ["id"])
+            let cols = buildBatchSelectCols(rels2, ["id"])
             let (inSQL, inParams) = buildInClause(dialect, "id", ids.toArray())
-            let result = execBatchQuery(exec, dialect, targetTable, cols, inSQL, inParams)
+            let result2 = execBatchQuery(exec, dialect, targetTable, cols, inSQL, inParams)
 
             // 3. 目标 id → 实体 映射（同表关系共享同一目标 RowMapper）
-            let columnMap = buildColumnMap(result.columnInfos, exec.getParamOffset())
+            let columnMap = buildColumnMap(result2.columnInfos, exec.getParamOffset())
             let idIdx = columnMap.get("id").getOrThrow()
             let isStringPk = fkIsString(ids[0])
-            let targetMapper = rels[0].getTargetMapper()
+            let targetMapper = rels2[0].getTargetMapper()
             var targetMap = HashMap<String, Any>()
-            while (result.next()) {
+            while (result2.next()) {
                 let idKey = if (isStringPk) {
-                    result.get<String>(idIdx)
+                    result2.get<String>(idIdx)
                 } else {
-                    result.get<Int64>(idIdx).toString()
+                    result2.get<Int64>(idIdx).toString()
                 }
-                targetMap[idKey] = targetMapper(result, columnMap)
+                targetMap[idKey] = targetMapper(result2, columnMap)
             }
 
-            // 4. 回填：fk 命中即挂载，未命中（目标被删）保持未挂载
-            for (rel in rels) {
+            // 4. 回填：fk 命中即挂载，未命中（目标被删）保持未挂载；同时收集该关系
+            //    装配到的目标实体（按 fkKey 去重：多个主实体引用同一目标只收集一次）。
+            for (rel in rels2) {
                 let extractor = rel.getForeignKeyExtractor()
                 let setter = rel.getFieldSetter()
+                var targets = ArrayList<Any>()
+                var targetSeen = HashMap<String, Bool>()
                 for (entity in entities) {
                     let v = extractor(entity)
                     if (isEmptyFk(v)) { continue }
                     let key = fkKey(v)
                     match (targetMap.get(key)) {
-                        case Some(t) => setter(entity, t)
+                        case Some(t) =>
+                            setter(entity, t)
+                            if (!targetSeen.contains(key)) {
+                                targetSeen[key] = true
+                                targets.add(t)
+                            }
                         case None => ()
                     }
                 }
+                result.add((rel, targets.toArray()))
             }
         }
+        result
     }
 
     // 构建 `col IN (?, ?...)` 子句。契约：返回的 (fragment, params) 必须一体追加——
@@ -729,19 +752,87 @@ public class Query<T> {
         (list.toArray(), rawIds.toArray())
     }
 
-    // 批量装配调度：ref_to 先行、集合（has_one / has_many / ref_many）随后，三者独立、
-    // 顺序保持一致。rawIds 与 entities 按索引对齐，仅在 needsCollectionAssembly() 时有意义。
+    // Task 6: 嵌套 include 递归深度上限。正常 include 链（withInclude 链式构建）受
+    // clone-on-write 约束天然无环且深度有限，但深度守卫是防御性保障：用户自定义 IRelation
+    // 实现（getNested 自引用形成环）或未来 API 演化可能产生无限递归，深度超过该值即抛
+    // QueryException 终止（避免栈溢出 / 死循环）。16 层足够覆盖任何实际嵌套场景。
+    private let MaxNestedDepth: Int64 = 16
+
+    // 批量装配调度：统一递归引擎入口（Task 6 起 ref_to / has_one / has_many / ref_many
+    // 与嵌套 include 共用同一条递归路径，见 assembleRecursive）。顶层 rels = included，
+    // depth = 0；rawIds 与 entities 按索引对齐，仅在 needsCollectionAssembly() 时有意义。
     private func assembleIncludes(
         exec: ExecutionContext,
         dialect: Dialect,
         entities: Array<T>,
         rawIds: Array<Any>
     ): Unit {
-        assembleRefTo(exec, dialect, entities)
-        if (needsCollectionAssembly()) {
-            assembleCollections(exec, dialect, entities, rawIds)
-            assembleRefMany(exec, dialect, entities, rawIds)
+        assembleRecursive(exec, dialect, entities, included.toArray(), rawIds, 0)
+    }
+
+    // Task 6: 嵌套 include 统一装配引擎（递归）。对 entities（E 泛型：顶层为 Array<T>
+    // 主实体、嵌套层为 Array<Any> 上一层装配结果）装配 rels 中声明的关联，并递归装配
+    // 各关联目标实体的嵌套 include（rel.getNested()）。按 kind 分派三条协议：
+    //   ref_to 组 → 读实体 fk（getForeignKeyExtractor）→ `WHERE 目标."id" IN (fk 集合)`
+    //   has_one/has_many 组 → 读实体原始主键（mainIds，与 entities 按索引对齐）
+    //     → `WHERE 目标."fk" IN (主键集合)`
+    //   ref_many 组 → junction 中间表批量查询
+    // 三条协议各返回 (relation, 该关系装配到的目标实体数组)；对每条声明了嵌套的关系，
+    // 用父关系 getTargetIdExtractor 读目标实体主键作为下一层 mainIds，递归下一层。
+    // 深度超过 MaxNestedDepth 抛 QueryException（含 include 环时终止递归）。
+    private func assembleRecursive<E>(
+        exec: ExecutionContext,
+        dialect: Dialect,
+        entities: Array<E>,
+        rels: Array<IRelation>,
+        mainIds: Array<Any>,
+        depth: Int64
+    ): Unit {
+        if (depth > MaxNestedDepth) {
+            throw QueryException("nested include exceeds max depth " + MaxNestedDepth.toString() +
+                "; check for include cycles")
         }
+        if (rels.size == 0 || entities.size == 0) { return }
+
+        // 1. 按 kind 分组（保持各组内 rels 顺序；ref_to → 集合 → ref_many 三条协议依次执行）
+        var refToRels = ArrayList<IRelation>()
+        var collRels = ArrayList<IRelation>()
+        var refManyRels = ArrayList<IRelation>()
+        for (rel in rels) {
+            let (kind, _, _, _, _, _) = rel.resolve()
+            match (kind) {
+                case RelationKind.RefToRel => refToRels.add(rel)
+                case RelationKind.RefManyRel => refManyRels.add(rel)
+                case RelationKind.HasOneRel | RelationKind.HasManyRel => collRels.add(rel)
+            }
+        }
+
+        // 2. 三条协议依次装配，收集各关系装配到的目标实体
+        var pairs = ArrayList<(IRelation, Array<Any>)>()
+        let refToPairs = assembleRefTo(exec, dialect, entities, refToRels.toArray())
+        for (p in refToPairs) { pairs.add(p) }
+        if (collRels.size > 0 || refManyRels.size > 0) {
+            let collPairs = assembleCollections(exec, dialect, entities, mainIds, collRels.toArray())
+            for (p in collPairs) { pairs.add(p) }
+            let refManyPairs = assembleRefMany(exec, dialect, entities, mainIds, refManyRels.toArray())
+            for (p in refManyPairs) { pairs.add(p) }
+        }
+
+        // 3. 递归装配各关系的嵌套 include（目标实体为空时下一层早退，不产生额外查询）
+        for ((rel, targets) in pairs) {
+            let nested = rel.getNested()
+            if (nested.size == 0) { continue }
+            let targetIds = collectTargetIds(rel, targets)
+            assembleRecursive(exec, dialect, targets, nested, targetIds, depth + 1)
+        }
+    }
+
+    // 递归层的 mainIds：用父关系 getTargetIdExtractor 逐目标读取主键，与 targets 按索引对齐。
+    private func collectTargetIds(rel: IRelation, targets: Array<Any>): Array<Any> {
+        let extractor = rel.getTargetIdExtractor()
+        var ids = ArrayList<Any>()
+        for (t in targets) { ids.add(extractor(t)) }
+        ids.toArray()
     }
 
     // 是否有需要批量装配的集合 include（has_one / has_many / ref_many）。
@@ -781,27 +872,32 @@ public class Query<T> {
 
     // Task 4: has_one/has_many 批量装配。主查询返回实体后调用：
     //   1. 按 (目标表, fk) 分组（has_one 与 has_many 共享同一 fk 可合并一条批量查询）；
-    //   2. 收集主实体主键原始值（rawIds，映射循环内已按实体对齐收集），去重并过滤 0/""；
+    //   2. 收集主实体主键原始值（rawIds，与 entities 按索引对齐），去重并过滤 0/""；
     //   3. 空集合跳过（不产生额外查询）；
     //   4. `SELECT <目标主键 + fk + 字段并集> FROM <目标表> WHERE <fk> IN (?, ...)` 批量取目标，
     //      fk 列不在字段子集里也必须强制选中（分组键）；
     //   5. 按 fk 值分组建 HashMap<FK, Array<TargetEntity>>；
     //   6. 回填：主实体按各自主键命中分组，has_many 逐个 add、has_one 取组内第一条。
     //      fk 不匹配任何主实体（脏数据/查询边界）的组不会被装配，主实体不受影响。
-    private func assembleCollections(
+    // Task 6 扩展：返回各关系实际装配到的目标实体数组（has_many 取组内全部、has_one 取
+    // 每条已装配实体的 ts[0]），供嵌套 include 递归装配下一层关联。rawIds 顶层来自
+    // rawIdExtractor（主查询映射循环收集）、嵌套层来自父关系的 getTargetIdExtractor。
+    private func assembleCollections<E>(
         exec: ExecutionContext,
         dialect: Dialect,
-        entities: Array<T>,
-        rawIds: Array<Any>
-    ): Unit {
-        if (included.size == 0 || entities.size == 0) { return }
+        entities: Array<E>,
+        rawIds: Array<Any>,
+        rels: Array<IRelation>
+    ): ArrayList<(IRelation, Array<Any>)> {
+        let result = ArrayList<(IRelation, Array<Any>)>()
+        if (rels.size == 0 || entities.size == 0) { return result }
         if (rawIds.size != entities.size) {
             throw QueryException("internal error: rawId collection size mismatch in assembleCollections")
         }
 
         // 1. 按 (目标表, fk) 分组 has_one/has_many 关系
         var groups = ArrayList<(String, String, ArrayList<IRelation>)>()
-        for (inc in included) {
+        for (inc in rels) {
             let (kind, _, targetTable, fk, _, _) = inc.resolve()
             if (kind != RelationKind.HasManyRel && kind != RelationKind.HasOneRel) { continue }
             var found = false
@@ -813,12 +909,12 @@ public class Query<T> {
                 }
             }
             if (!found) {
-                let rels = ArrayList<IRelation>()
-                rels.add(inc)
-                groups.add((targetTable, fk, rels))
+                let rels2 = ArrayList<IRelation>()
+                rels2.add(inc)
+                groups.add((targetTable, fk, rels2))
             }
         }
-        if (groups.size == 0) { return }
+        if (groups.size == 0) { return result }
 
         // 2. 收集主实体 id（去重、过滤 0/"" 未设置值）
         var ids = ArrayList<Any>()
@@ -831,35 +927,35 @@ public class Query<T> {
                 ids.add(id)
             }
         }
-        if (ids.size == 0) { return }
+        if (ids.size == 0) { return result }
 
         for (i in 0..groups.size) {
             let targetTable = groups[i][0]
             let fk = groups[i][1]
-            let rels = groups[i][2]
+            let rels2 = groups[i][2]
 
             // 3. 字段并集 + 强制目标主键 id + 强制 fk 分组键（fk 不在字段子集里也必须选中）
-            let cols = buildBatchSelectCols(rels, ["id", fk])
+            let cols = buildBatchSelectCols(rels2, ["id", fk])
 
             // 4. 批量查询：SELECT <cols> FROM <table> WHERE <fk> IN (?, ...)
             let (inSQL, inParams) = buildInClause(dialect, fk, ids.toArray())
-            let result = execBatchQuery(exec, dialect, targetTable, cols, inSQL, inParams)
+            let result2 = execBatchQuery(exec, dialect, targetTable, cols, inSQL, inParams)
 
             // 5. 按 fk 值分组成目标实体列表（fk 类型跟随主实体主键：Int64 或 String）。
             //    可空 fk 的脏行（驱动返回 NULL）用 getOrNull 判空跳过，不抛异常（旧 isNullId 防御）。
-            let columnMap = buildColumnMap(result.columnInfos, exec.getParamOffset())
+            let columnMap = buildColumnMap(result2.columnInfos, exec.getParamOffset())
             let fkIdx = columnMap.get(fk).getOrThrow()
             let isStringPk = fkIsString(ids[0])
-            let targetMapper = rels[0].getTargetMapper()
+            let targetMapper = rels2[0].getTargetMapper()
             var groupMap = HashMap<String, ArrayList<Any>>()
-            while (result.next()) {
+            while (result2.next()) {
                 let keyOpt: Option<String> = if (isStringPk) {
-                    match (result.getOrNull<String>(fkIdx)) {
+                    match (result2.getOrNull<String>(fkIdx)) {
                         case Some(v) => Some(fkKey(v))
                         case None => None
                     }
                 } else {
-                    match (result.getOrNull<Int64>(fkIdx)) {
+                    match (result2.getOrNull<Int64>(fkIdx)) {
                         case Some(v) => Some(fkKey(v))
                         case None => None
                     }
@@ -873,15 +969,17 @@ public class Query<T> {
                                 groupMap[key] = ng
                                 ng
                         }
-                        group.add(targetMapper(result, columnMap))
+                        group.add(targetMapper(result2, columnMap))
                     case None => ()
                 }
             }
 
-            // 6. 回填：has_many 逐目标 add；has_one 取组内第一条（重复 fk 时取先读到的行）
-            for (rel in rels) {
+            // 6. 回填：has_many 逐目标 add；has_one 取组内第一条（重复 fk 时取先读到的行）。
+            //    同时收集该关系装配到的目标实体（has_many 取组内全部、has_one 取 ts[0]）。
+            for (rel in rels2) {
                 let (kind, _, _, _, _, _) = rel.resolve()
                 let setter = rel.getFieldSetter()
+                var targets = ArrayList<Any>()
                 for (ei in 0..entities.size) {
                     let rawId = rawIds[ei]
                     if (isEmptyFk(rawId)) { continue }
@@ -889,20 +987,23 @@ public class Query<T> {
                     match (groupMap.get(key)) {
                         case Some(ts) =>
                             if (kind == RelationKind.HasManyRel) {
-                                for (t in ts) { setter(entities[ei], t) }
+                                for (t in ts) { setter(entities[ei], t); targets.add(t) }
                             } else {
                                 setter(entities[ei], ts[0])
+                                targets.add(ts[0])
                             }
                         case None => ()
                     }
                 }
+                result.add((rel, targets.toArray()))
             }
         }
+        result
     }
 
     // Task 5: ref_many 批量装配（多对多，经 junction 中间表）。主查询返回实体后调用：
     //   1. 按 (via 中间表, 目标表) 分组，同组多个 ref_many 关系合并为一条批量查询；
-    //   2. 复用主实体主键原始值（rawIds，映射循环内已按实体对齐收集），去重并过滤 0/""；
+    //   2. 复用主实体主键原始值（rawIds，与 entities 按索引对齐），去重并过滤 0/""；
     //   3. 空集合跳过（不产生额外查询）；
     //   4. `SELECT 目标表."id", 目标表.<字段...>, 中间表."<源表>_id" FROM 中间表 JOIN 目标表
     //      ON 中间表."<目标类>_id" = 目标表."id" WHERE 中间表."<源表>_id" IN (?, ...)` 批量取
@@ -914,6 +1015,8 @@ public class Query<T> {
     //   5. 按中间表源 id 值分组建 HashMap<srcId, Array<TargetEntity>>；
     //   6. 回填：主实体按各自主键命中分组，逐个 add。孤儿行（中间表行指向已删目标）
     //      由 INNER JOIN 天然排除，不装配、不抛错。
+    // Task 6 扩展：返回各关系实际装配到的目标实体数组（逐目标 add 时收集），
+    // 供嵌套 include 递归装配下一层关联。
     // 中间表列名与 buildJunctionSchema / relation_gen.cj 一致：
     //   源列 = <源表名>_id（源表名取主查询 FROM，getSourceTable），
     //   目标列 = lowerTableName(目标类) + "_id"（由宏层随 RefMany 构造传入，
@@ -921,13 +1024,15 @@ public class Query<T> {
     // SQL 手写（quoteIdentifier + 占位符，对齐 relation_gen.cj 的 ref_many 单行查询风格）：
     // junction JOIN 语义必须是 INNER JOIN（孤儿行跳过），而 Statement/方言渲染只支持
     // LEFT JOIN 且 FromClause 无别名，无法表达该 JOIN；IN 列带表限定也超出 buildInClause。
-    private func assembleRefMany(
+    private func assembleRefMany<E>(
         exec: ExecutionContext,
         dialect: Dialect,
-        entities: Array<T>,
-        rawIds: Array<Any>
-    ): Unit {
-        if (included.size == 0 || entities.size == 0) { return }
+        entities: Array<E>,
+        rawIds: Array<Any>,
+        rels: Array<IRelation>
+    ): ArrayList<(IRelation, Array<Any>)> {
+        let result = ArrayList<(IRelation, Array<Any>)>()
+        if (rels.size == 0 || entities.size == 0) { return result }
         if (rawIds.size != entities.size) {
             throw QueryException("internal error: rawId collection size mismatch in assembleRefMany")
         }
@@ -944,7 +1049,7 @@ public class Query<T> {
         // 1. 按 (via 中间表, 目标表) 分组。分组键不含关系名/源表：若两个不同类 @Table
         //    映射到同一表且声明同一 via（极罕见），会误合并为一条批量查询——视为已知限制。
         var groups = ArrayList<(String, String, ArrayList<IRelation>)>()
-        for (inc in included) {
+        for (inc in rels) {
             let (kind, _, targetTable, _, via, _) = inc.resolve()
             if (kind != RelationKind.RefManyRel) { continue }
             let viaTable = via.getOrThrow()
@@ -957,12 +1062,12 @@ public class Query<T> {
                 }
             }
             if (!found) {
-                let rels = ArrayList<IRelation>()
-                rels.add(inc)
-                groups.add((viaTable, targetTable, rels))
+                let rels2 = ArrayList<IRelation>()
+                rels2.add(inc)
+                groups.add((viaTable, targetTable, rels2))
             }
         }
-        if (groups.size == 0) { return }
+        if (groups.size == 0) { return result }
 
         // 2. 收集主实体 id（去重、过滤 0/"" 未设置值），同 assembleCollections
         var ids = ArrayList<Any>()
@@ -975,20 +1080,20 @@ public class Query<T> {
                 ids.add(id)
             }
         }
-        if (ids.size == 0) { return }
+        if (ids.size == 0) { return result }
 
         let srcCol = sourceTable + "_id"
 
         for (i in 0..groups.size) {
             let viaTable = groups[i][0]
             let targetTable = groups[i][1]
-            let rels = groups[i][2]
+            let rels2 = groups[i][2]
 
             // 3. 目标字段并集 + 强制目标主键 id；另强制中间表源 id 列（分组键）
-            let cols = buildBatchSelectCols(rels, ["id"])
-            let tgtCol = rels[0].getJunctionTargetCol()
+            let cols = buildBatchSelectCols(rels2, ["id"])
+            let tgtCol = rels2[0].getJunctionTargetCol()
             if (tgtCol == "") {
-                throw QueryException("ref_many relation '" + rels[0].resolve()[1] +
+                throw QueryException("ref_many relation '" + rels2[0].resolve()[1] +
                     "' has empty junction target column; RefMany requires junctionTargetCol")
             }
 
@@ -1011,23 +1116,23 @@ public class Query<T> {
                 " = " + dialect.quoteIdentifier(targetTable) + "." + dialect.quoteIdentifier("id") +
                 " WHERE " + inSQL
             Logger.logSQL(sql, inParams)
-            let result = exec.query(sql, inParams)
+            let result2 = exec.query(sql, inParams)
 
             // 5. 按中间表源 id 值分组成目标实体列表（源 id 类型跟随主实体主键：Int64 或 String）。
             //    INNER JOIN 已排除孤儿行；中间表源 id 列非空，getOrNull 仅防御。
-            let columnMap = buildColumnMap(result.columnInfos, exec.getParamOffset())
+            let columnMap = buildColumnMap(result2.columnInfos, exec.getParamOffset())
             let srcIdx = columnMap.get(srcCol).getOrThrow()
             let isStringPk = fkIsString(ids[0])
-            let targetMapper = rels[0].getTargetMapper()
+            let targetMapper = rels2[0].getTargetMapper()
             var groupMap = HashMap<String, ArrayList<Any>>()
-            while (result.next()) {
+            while (result2.next()) {
                 let keyOpt: Option<String> = if (isStringPk) {
-                    match (result.getOrNull<String>(srcIdx)) {
+                    match (result2.getOrNull<String>(srcIdx)) {
                         case Some(v) => Some(fkKey(v))
                         case None => None
                     }
                 } else {
-                    match (result.getOrNull<Int64>(srcIdx)) {
+                    match (result2.getOrNull<Int64>(srcIdx)) {
                         case Some(v) => Some(fkKey(v))
                         case None => None
                     }
@@ -1041,24 +1146,28 @@ public class Query<T> {
                                 groupMap[key] = ng
                                 ng
                         }
-                        group.add(targetMapper(result, columnMap))
+                        group.add(targetMapper(result2, columnMap))
                     case None => ()
                 }
             }
 
-            // 6. 回填：逐目标 add
-            for (rel in rels) {
+            // 6. 回填：逐目标 add；同时收集该关系装配到的目标实体
+            for (rel in rels2) {
                 let setter = rel.getFieldSetter()
+                var targets = ArrayList<Any>()
                 for (ei in 0..entities.size) {
                     let rawId = rawIds[ei]
                     if (isEmptyFk(rawId)) { continue }
                     let key = fkKey(rawId)
                     match (groupMap.get(key)) {
-                        case Some(ts) => for (t in ts) { setter(entities[ei], t) }
+                        case Some(ts) =>
+                            for (t in ts) { setter(entities[ei], t); targets.add(t) }
                         case None => ()
                     }
                 }
+                result.add((rel, targets.toArray()))
             }
         }
+        result
     }
 }

@@ -244,6 +244,85 @@ public class CategoryWithRel {
     var children: ArrayList<CategoryWithRel> = ArrayList<CategoryWithRel>()
 }
 
+// Task 6: 嵌套 include 递归装配 fixture 链。
+// NestedPost.author (ref_to NestedUser) → NestedUser.profile (has_one NestedProfile)
+//                                          NestedUser.comments (has_many NestedComment)
+// NestedProfile.skills (has_many NestedSkill) → 三层。
+@Refine
+public class NestedPost {
+    var id: Int64 = 0
+    var title: String = ""
+    var user_id: Int64 = 0
+
+    @Ref[NestedUser, user_id]
+    var author: Option<NestedUser> = None
+}
+
+@Refine
+public class NestedUser {
+    var id: Int64 = 0
+    var name: String = ""
+
+    @Rel[has_one, NestedProfile, user_id]
+    var profile: Option<NestedProfile> = None
+
+    @Rel[has_many, NestedComment, user_id]
+    var comments: ArrayList<NestedComment> = ArrayList<NestedComment>()
+}
+
+@Refine
+public class NestedProfile {
+    var id: Int64 = 0
+    var bio: String = ""
+    var user_id: Int64 = 0
+
+    @Rel[has_many, NestedSkill, profile_id]
+    var skills: ArrayList<NestedSkill> = ArrayList<NestedSkill>()
+}
+
+@Refine
+public class NestedSkill {
+    var id: Int64 = 0
+    var name: String = ""
+    var profile_id: Int64 = 0
+}
+
+@Refine
+public class NestedComment {
+    var id: Int64 = 0
+    var body: String = ""
+    var user_id: Int64 = 0
+}
+
+// Task 6: 嵌套 ref_to → ref_to fixture 链（NestedCommentPost.author 是 ref_to NestedUserRef，
+// NestedUserRef.team 也是 ref_to NestedTeamRef）——覆盖嵌套层 assembleRefTo（在 Array<Any>
+// 目标实体上读 fk 批量装配）。
+@Refine
+public class NestedCommentPost {
+    var id: Int64 = 0
+    var body: String = ""
+    var author_id: Int64 = 0
+
+    @Ref[NestedUserRef, author_id]
+    var author: Option<NestedUserRef> = None
+}
+
+@Refine
+public class NestedUserRef {
+    var id: Int64 = 0
+    var name: String = ""
+    var team_id: Int64 = 0
+
+    @Ref[NestedTeamRef, team_id]
+    var team: Option<NestedTeamRef> = None
+}
+
+@Refine
+public class NestedTeamRef {
+    var id: Int64 = 0
+    var name: String = ""
+}
+
 @Refine
 public class SoftDeleteParent {
     var id: Int64 = 0
@@ -3537,7 +3616,7 @@ public class C2IncludePreloadTest {
         let rel = RefTo<UuidPost>("post", Col<Any>("post_id"),
             [Col<Any>("id"), Col<Any>("title")], "uuidPost",
             UuidRefCommentRel.postMapper, UuidRefCommentRel.postSetter,
-            { e: Any => (e as UuidRefComment).getOrThrow().post_id })
+            { e: Any => (e as UuidRefComment).getOrThrow().post_id }, dummyTargetIdExtractor)
         let q = UuidRefComment.query().include(rel, [Col<Any>("id"), Col<Any>("title")]).using(tx)
         let entities = q.all()
         @Expect(entities.size, 1)
@@ -3571,7 +3650,7 @@ public class C2IncludePreloadTest {
         let rel = RefTo<UuidPost>("post", Col<Any>("post_id"),
             [Col<Any>("id"), Col<Any>("title")], "uuidPost",
             UuidRefCommentRel.postMapper, UuidRefCommentRel.postSetter,
-            { e: Any => (e as UuidRefComment).getOrThrow().post_id })
+            { e: Any => (e as UuidRefComment).getOrThrow().post_id }, dummyTargetIdExtractor)
         let q = UuidRefComment.query().include(rel, [Col<Any>("id"), Col<Any>("title")]).using(tx)
         let entities = q.all()
         @Expect(entities.size, 1)
@@ -3603,7 +3682,7 @@ public class C2IncludePreloadTest {
         conn.stmt.queryResultQueue.add(MapperMockQueryResult(batchCols, batchRows))
         let rel = HasMany<UuidComment>("comments", "post_id",
             [Col<Any>("id"), Col<Any>("body")], "uuidComment",
-            UuidCommentRowMapper, UuidPostWithRelRel.commentsSetter)
+            UuidCommentRowMapper, UuidPostWithRelRel.commentsSetter, dummyTargetIdExtractor)
         let q = UuidPostWithRel.query().include(rel, [Col<Any>("id"), Col<Any>("body")]).using(tx)
         let entities = q.all()
         @Expect(entities.size, 1)
@@ -3643,7 +3722,7 @@ public class C2IncludePreloadTest {
         conn.stmt.queryResultQueue.add(MapperMockQueryResult(batchCols, batchRows))
         let rel = RefMany<UuidTag>("tags", "uuid_tag_post_tags",
             [Col<Any>("id")], "uuidTag",
-            UuidTagRowMapper, UuidTagPostRel.tagsSetter, "uuidTag_id")
+            UuidTagRowMapper, UuidTagPostRel.tagsSetter, "uuidTag_id", dummyTargetIdExtractor)
         let q = UuidTagPost.query().include(rel, [Col<Any>("id")]).using(tx)
         let entities = q.all()
         @Expect(entities.size, 1)

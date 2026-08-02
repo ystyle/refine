@@ -521,4 +521,54 @@ public class PostgreSQLIntegrationTest {
             case None => @Expect(true, true)
         }
     }
+
+    // ─── batch include Task 6：嵌套 include 递归装配（真实 PG） ───────────────────
+    // NestedPost.author（ref_to NestedUser）withInclude NestedUser.profile（has_one
+    // NestedProfile）：主查询 + author 批量 + profile 批量三次查询，Post.author.profile
+    // 逐级装配（嵌套层 profile 批量查询的 IN 主键集合来自 author 目标实体的 id）。
+    @TestCase
+    public func testNestedIncludeRefToThenHasOne(): Unit {
+        match (tryPostgres()) {
+            case Some(rf) =>
+                rf.transaction { tx: Tx =>
+                    tx.execute("DROP TABLE IF EXISTS \"nestedSkill\"", [])
+                    tx.execute("DROP TABLE IF EXISTS \"nestedComment\"", [])
+                    tx.execute("DROP TABLE IF EXISTS \"nestedProfile\"", [])
+                    tx.execute("DROP TABLE IF EXISTS \"nestedUser\"", [])
+                    tx.execute("DROP TABLE IF EXISTS \"nestedPost\"", [])
+                }
+                let m = rf.migrator()
+                m.autoMigrate([NestedPostSchema(), NestedUserSchema(), NestedProfileSchema()])
+                rf.transaction { tx: Tx => tx.execute("INSERT INTO \"nestedUser\" (\"name\") VALUES (?)", ["Alice"]) }
+                let u = NestedUser.query().using(rf).filter(NestedUser.col().name == "Alice").one()
+                @Expect(u.isSome(), true)
+                let uid = u.getOrThrow().id
+                rf.transaction { tx: Tx =>
+                    tx.execute("INSERT INTO \"nestedProfile\" (\"bio\", \"user_id\") VALUES (?, ?)", ["engineer", uid])
+                    tx.execute("INSERT INTO \"nestedPost\" (\"title\", \"user_id\") VALUES (?, ?)", ["p1", uid])
+                }
+                let found = NestedPost.query()
+                    .include(NestedPostRel.author.withInclude(NestedUserRel.profile))
+                    .using(rf)
+                    .filter(NestedPost.col().title == "p1")
+                    .one()
+                @Expect(found.isSome(), true)
+                let post = found.getOrThrow()
+                @Expect(post.title, "p1")
+                match (post.author) {
+                    case Some(a) =>
+                        @Expect(a.id, uid)
+                        @Expect(a.name, "Alice")
+                        match (a.profile) {
+                            case Some(p) =>
+                                @Expect(p.bio, "engineer")
+                                @Expect(p.user_id, uid)
+                            case None => @Expect(true, false)
+                        }
+                    case None => @Expect(true, false)
+                }
+                rf.close()
+            case None => @Expect(true, true)
+        }
+    }
 }

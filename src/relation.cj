@@ -39,6 +39,14 @@ public interface IRelation {
     func getForeignKeyExtractor(): (Any) -> Any {
         throw RefineException("relation does not expose fk extractor")
     }
+    // Task 6: 嵌套 include 递归装配的目标实体主键读取器。宏层为每个关系生成
+    // `{ target: Any => (target as 目标类).getOrThrow().id }` 闭包（目标实体是
+    // 上一级装配结果，Any 化存储；嵌套 has_many/ref_many 需要目标实体的 id 作为
+    // 下一层 `WHERE 目标.fk IN (目标实体 id)` 的主键集合）。所有关系种类都需要
+    // （任意关系的目标实体都可能再声明嵌套 include），宏层统一生成并传入。
+    func getTargetIdExtractor(): (Any) -> Any {
+        throw RefineException("relation does not expose target id extractor")
+    }
     // Task 5: ref_many 的中间表目标列名（lowerTableName(目标类) + "_id"）。
     // 中间表目标列由目标「类名」决定而非目标「表名」（buildJunctionSchema 与
     // INSERT/LOAD 路径一致，见 schema_gen.cj / relation_gen.cj）——@Table 覆盖目标
@@ -64,6 +72,9 @@ public open class Relation<TTarget> <: IRelation {
     var fieldSetter: (Any, Any) -> Unit
     // Task 3: ref_to 的外键读取器闭包（宏层为 ref_to 生成，其余关系保持 None）
     var fkExtractor: Option<(Any) -> Any> = None
+    // Task 6: 目标实体主键读取器闭包（宏层为所有关系生成，见 IRelation 注释）。
+    // 供嵌套 include 递归装配读取上一层装配出的目标实体主键（Array<Any>）。
+    var targetIdExtractor: Option<(Any) -> Any> = None
     // Task 5: ref_many 的中间表目标列名（见 IRelation.getJunctionTargetCol 注释），
     // 仅 RefMany 构造时由宏层设置，其余关系保持 ""
     var junctionTargetCol: String = ""
@@ -110,6 +121,15 @@ public open class Relation<TTarget> <: IRelation {
         }
     }
 
+    public func getTargetIdExtractor(): (Any) -> Any {
+        match (this.targetIdExtractor) {
+            case Some(e) => e
+            case None => throw RefineException(
+                "relation '" + name + "' does not expose a target id extractor; cannot batch assemble nested include"
+            )
+        }
+    }
+
     public func getJunctionTargetCol(): String {
         this.junctionTargetCol
     }
@@ -128,6 +148,7 @@ public open class Relation<TTarget> <: IRelation {
     public func clone(): Relation<TTarget> {
         let c = Relation<TTarget>(name, targetTable, kind, foreignKey, via, fields, targetMapper, fieldSetter)
         c.fkExtractor = this.fkExtractor
+        c.targetIdExtractor = this.targetIdExtractor
         c.condition = this.condition
         c.junctionTargetCol = this.junctionTargetCol
         for (n in nested) {
@@ -160,9 +181,11 @@ public class RefTo<TTarget> <: Relation<TTarget> {
     public init(name: String, fk: Col<Any>, fields: Array<Col<Any>>, targetTable: String,
                 mapper: (QueryResult, HashMap<String, Int64>) -> Any,
                 setter: (Any, Any) -> Unit,
-                fkExtractor: (Any) -> Any) {
+                fkExtractor: (Any) -> Any,
+                targetIdExtractor: (Any) -> Any) {
         super(name, targetTable, RelationKind.RefToRel, fk.name, None, fields, mapper, setter)
         this.fkExtractor = Some(fkExtractor)
+        this.targetIdExtractor = Some(targetIdExtractor)
     }
 }
 
@@ -170,28 +193,35 @@ public class RefMany<TTarget> <: Relation<TTarget> {
     public init(name: String, via: String, fields: Array<Col<Any>>, targetTable: String,
                 mapper: (QueryResult, HashMap<String, Int64>) -> Any,
                 setter: (Any, Any) -> Unit,
-                junctionTargetCol: String) {
+                junctionTargetCol: String,
+                targetIdExtractor: (Any) -> Any) {
         super(name, targetTable, RelationKind.RefManyRel, "", Some(via), fields, mapper, setter)
         this.junctionTargetCol = junctionTargetCol
+        this.targetIdExtractor = Some(targetIdExtractor)
     }
 }
 
 public class HasOne<TTarget> <: Relation<TTarget> {
     public init(name: String, fk: String, fields: Array<Col<Any>>, targetTable: String,
                 mapper: (QueryResult, HashMap<String, Int64>) -> Any,
-                setter: (Any, Any) -> Unit) {
+                setter: (Any, Any) -> Unit,
+                targetIdExtractor: (Any) -> Any) {
         super(name, targetTable, RelationKind.HasOneRel, fk, None, fields, mapper, setter)
+        this.targetIdExtractor = Some(targetIdExtractor)
     }
 }
 
 public class HasMany<TTarget> <: Relation<TTarget> {
     public init(name: String, fk: String, fields: Array<Col<Any>>, targetTable: String,
                 mapper: (QueryResult, HashMap<String, Int64>) -> Any,
-                setter: (Any, Any) -> Unit) {
+                setter: (Any, Any) -> Unit,
+                targetIdExtractor: (Any) -> Any) {
         super(name, targetTable, RelationKind.HasManyRel, fk, None, fields, mapper, setter)
+        this.targetIdExtractor = Some(targetIdExtractor)
     }
 }
 
 public func dummyMapper(result: QueryResult, cm: HashMap<String, Int64>): Any { 0 }
 public func dummySetter(entity: Any, target: Any): Unit {}
 public func dummyFkExtractor(entity: Any): Any { 0 }
+public func dummyTargetIdExtractor(target: Any): Any { 0 }
