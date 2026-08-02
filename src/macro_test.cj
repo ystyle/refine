@@ -3834,6 +3834,37 @@ public class RelationMutationTest {
         @Expect(conn.stmt.capturedSqlHistory[2].contains("INSERT INTO \"profileWithRel\""), true)
         @Expect(p.user_id, 1)
     }
+
+    // String 主键子对象（UuidComment.id: String）：id 为空 → INSERT，覆盖 addX 的 String 分支
+    @TestCase
+    public func testAddCommentsStringPkNewChildInserts(): Unit {
+        clearHooks()
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        let post = UuidPostWithRel()
+        post.id = 1
+        let c = UuidComment()
+        c.body = "uuid-new"
+        post.addComments(tx, c)
+        @Expect(conn.stmt.capturedSql, "INSERT INTO \"uuidComment\" (\"id\", \"body\", \"post_id\") VALUES (?, ?, ?)")
+        @Expect(c.post_id, 1)
+    }
+
+    // String 主键子对象已持久化（id 非空）→ UPDATE，覆盖 addX 的 String 分支
+    @TestCase
+    public func testAddCommentsStringPkPersistedChildUpdates(): Unit {
+        clearHooks()
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        let post = UuidPostWithRel()
+        post.id = 1
+        let c = UuidComment()
+        c.id = "c-5"
+        c.body = "uuid-reparent"
+        post.addComments(tx, c)
+        @Expect(conn.stmt.capturedSql, "UPDATE \"uuidComment\" SET \"body\" = ?, \"post_id\" = ? WHERE \"id\" = ?")
+        @Expect(c.post_id, 1)
+    }
 }
 
 // I10 文档同步验证：文档 3.2.1/3.3/4.3.2 使用的 `@Rel[has_many, target: X, by: "y"]`、
@@ -3887,6 +3918,16 @@ public class DocSyncSyntaxTest {
         @Expect(DocRelPostRel.comments.name, "comments")
         @Expect(DocRelPostRel.author.name, "author")
         @Expect(DocRelBookRel.authors.name, "authors")
+        // fields: ["id", "name"] 具名参数必须解析进描述符（有自定义 fields 才用 genFieldCols）
+        @Expect(DocRelPostRel.author.fields.size, 2)
+        @Expect(DocRelPostRel.author.fields[0].name, "id")
+        @Expect(DocRelPostRel.author.fields[1].name, "name")
+        @Expect(DocRelBookRel.authors.fields.size, 2)
+        @Expect(DocRelBookRel.authors.fields[0].name, "id")
+        @Expect(DocRelBookRel.authors.fields[1].name, "name")
+        // 未指定 fields 的 has_many 默认解析为全部列（经 <Target>ColumnNames()）
+        @Expect(DocRelPostRel.comments.fields.size, 3)
+        @Expect(DocRelPostRel.comments.fields[0].name, "id")
     }
 
     @TestCase

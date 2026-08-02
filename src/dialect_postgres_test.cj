@@ -333,6 +333,31 @@ public class PostgreSQLDialectTest {
         @Expect(checkInt(params[1], 10))
     }
 
+    // 回归（C5 类）：Col.inSubquery 带参数子查询时 PG 参数编号必须跨越子查询边界延续，
+    // 外层谓词在子查询前后都不得重复编号、params 顺序与占位符一致
+    @TestCase
+    public func testRenderInSubqueryWithParams(): Unit {
+        let dialect = PostgreSQLDialect()
+        let inner = Statement()
+        inner.addClause(SelectClause([Column("id")]))
+        inner.addClause(FromClause("t"))
+        inner.addClause(WhereClause([Binary(Column("age"), Gt, Value(18))]))
+        let outer = Statement()
+        outer.addClause(SelectClause([Column("x")]))
+        outer.addClause(FromClause("parent"))
+        outer.addClause(WhereClause([
+            Binary(Column("y"), Eq, Value(5)),
+            Col<Int64>("x").inSubquery(inner),
+            Binary(Column("z"), Lt, Value(30))
+        ]))
+        let (sql, params) = dialect.render(outer)
+        @Expect(sql, "SELECT \"x\" FROM \"parent\" WHERE \"y\" = $1 AND \"x\" IN (SELECT \"id\" FROM \"t\" WHERE \"age\" > $2) AND \"z\" < $3")
+        @Expect(params.size, 3)
+        @Expect(checkInt(params[0], 5))
+        @Expect(checkInt(params[1], 18))
+        @Expect(checkInt(params[2], 30))
+    }
+
     // 回归：嵌套子查询参数编号必须逐层延续（外层 $1，一层 $2，二层 $3）
     @TestCase
     public func testRenderNestedSubQueryParams(): Unit {
