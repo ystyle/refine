@@ -85,12 +85,14 @@ let result = rf.transaction(IsolationLevel.Serializable) { tx: Tx =>
 注册生命周期钩子。
 
 ```cangjie
-rf.hook<User>("User", HookKind.BeforeCreate) { scope: Scope<User> =>
+rf.hook<User>("User", HookKind.TxBeforeCreate) { scope: Scope<User> =>
     if (scope.entity.name == "") {
         scope.abort(Exception("name required"))
     }
 }
 ```
+
+只有 `Tx*` 钩子（`TxBeforeCreate` 等）会随 `Tx.save/update/delete` 真实触发；非事务钩子（`BeforeCreate` 等）已不再触发。
 
 ### all() / one()
 

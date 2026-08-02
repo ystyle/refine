@@ -31,6 +31,6 @@ features:
     details: 编程式事务，支持嵌套事务，自动提交/回滚。
     icon: 🔄
   - title: 生命周期钩子
-    details: BeforeCreate / AfterCreate / BeforeSave / AfterSave / BeforeDelete / AfterDelete 六种钩子。
+    details: 事务内 TxBeforeCreate / TxAfterCreate / TxBeforeUpdate / TxAfterUpdate / TxBeforeDelete / TxAfterDelete 及 AfterFind 钩子，随真实持久化操作触发。
     icon: ⚡
 ---

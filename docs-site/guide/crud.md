@@ -67,7 +67,7 @@ rf.transaction { tx: Tx =>
 
 ### 钩子校验
 
-注册 `BeforeCreate` 钩子在插入前校验：
+注册 `TxBeforeCreate` 钩子在插入前校验：
 
 ```cangjie
 rf.hook<User>("User", HookKind.TxBeforeCreate) { scope: Scope<User> =>
