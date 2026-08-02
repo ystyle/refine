@@ -84,8 +84,23 @@ public open class Relation<TTarget> <: IRelation {
     }
 
     public func withInclude(rel: IRelation): IRelation {
-        this.nested.add(rel)
-        this
+        if (hasNested(rel)) {
+            return this
+        }
+        let clone = this.clone()
+        clone.nested.add(rel)
+        clone
+    }
+
+    // 拷贝当前全部字段（含 nested 现有内容），供 withInclude 克隆-on-write。
+    // 返回 Relation<TTarget> 基类类型：所有接口方法都在基类上，具体类型由 kind 字段表达。
+    public func clone(): Relation<TTarget> {
+        let c = Relation<TTarget>(name, targetTable, kind, foreignKey, via, fields, targetMapper, fieldSetter)
+        c.condition = this.condition
+        for (n in nested) {
+            c.nested.add(n)
+        }
+        c
     }
 
     public func getNested(): Array<IRelation> {
@@ -95,9 +110,20 @@ public open class Relation<TTarget> <: IRelation {
     public func isBatchSupported(): Bool {
         true
     }
+
+    private func hasNested(rel: IRelation): Bool {
+        let (rk, rn, rt, rf, rv, _) = rel.resolve()
+        for (n in nested) {
+            let (nk, nn, nt, nf, nv, _) = n.resolve()
+            if (rk == nk && rn == nn && rt == nt && rf == nf && rv == nv) {
+                return true
+            }
+        }
+        false
+    }
 }
 
-public class RefTo<TTarget> <: Relation<TTarget> & IRelation {
+public class RefTo<TTarget> <: Relation<TTarget> {
     public init(name: String, fk: Col<Any>, fields: Array<Col<Any>>, targetTable: String,
                 mapper: (QueryResult, HashMap<String, Int64>) -> Any,
                 setter: (Any, Any) -> Unit) {
@@ -105,7 +131,7 @@ public class RefTo<TTarget> <: Relation<TTarget> & IRelation {
     }
 }
 
-public class RefMany<TTarget> <: Relation<TTarget> & IRelation {
+public class RefMany<TTarget> <: Relation<TTarget> {
     public init(name: String, via: String, fields: Array<Col<Any>>, targetTable: String,
                 mapper: (QueryResult, HashMap<String, Int64>) -> Any,
                 setter: (Any, Any) -> Unit) {
@@ -113,7 +139,7 @@ public class RefMany<TTarget> <: Relation<TTarget> & IRelation {
     }
 }
 
-public class HasOne<TTarget> <: Relation<TTarget> & IRelation {
+public class HasOne<TTarget> <: Relation<TTarget> {
     public init(name: String, fk: String, fields: Array<Col<Any>>, targetTable: String,
                 mapper: (QueryResult, HashMap<String, Int64>) -> Any,
                 setter: (Any, Any) -> Unit) {
@@ -121,7 +147,7 @@ public class HasOne<TTarget> <: Relation<TTarget> & IRelation {
     }
 }
 
-public class HasMany<TTarget> <: Relation<TTarget> & IRelation {
+public class HasMany<TTarget> <: Relation<TTarget> {
     public init(name: String, fk: String, fields: Array<Col<Any>>, targetTable: String,
                 mapper: (QueryResult, HashMap<String, Int64>) -> Any,
                 setter: (Any, Any) -> Unit) {

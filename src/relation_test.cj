@@ -133,7 +133,7 @@ public class RelationTest {
         let author = RefTo<RelUser>("author", fk, fields, "reluser", dummyMapper, dummySetter)
         let profile = HasOne<RelUser>("profile", "user_id", [Col<Any>("id")], "relprofile", dummyMapper, dummySetter)
         let returned = author.withInclude(profile)
-        @Expect(author.getNested().size, 1)
+        @Expect(author.getNested().size, 0)
         @Expect(author.isBatchSupported(), true)
         @Expect(returned.getNested().size, 1)
     }
@@ -146,7 +146,7 @@ public class RelationTest {
         let profile = HasOne<RelUser>("profile", "user_id", [Col<Any>("id")], "relprofile", dummyMapper, dummySetter)
         let tags = HasMany<RelTag>("tags", "post_id", [Col<Any>("id")], "reltag", dummyMapper, dummySetter)
         let chained: IRelation = author.withInclude(profile).withInclude(tags)
-        @Expect(author.getNested().size, 2)
+        @Expect(author.getNested().size, 0)
         @Expect(chained.getNested().size, 2)
     }
 
@@ -166,7 +166,7 @@ public class RelationTest {
         let posts = HasMany<String>("posts", "user_id", [Col<Any>("id")], "posts", mapper, setter)
         let author = RefTo<RelUser>("author", Col<Any>("user_id"), [Col<Any>("id")], "reluser", dummyMapper, dummySetter)
         let returned = posts.withInclude(author)
-        @Expect(posts.getNested().size, 1)
+        @Expect(posts.getNested().size, 0)
         @Expect(posts.isBatchSupported(), true)
         @Expect(returned.getNested().size, 1)
     }
@@ -180,8 +180,61 @@ public class RelationTest {
         @Expect(wrapper.isBatchSupported(), true)
         @Expect(wrapper.getNested().size, 0)
         let rel = RefTo<RelUser>("author", Col<Any>("user_id"), [Col<Any>("id")], "reluser", dummyMapper, dummySetter)
-        wrapper.withInclude(rel)
-        @Expect(wrapper.getNested().size, 1)
-        @Expect(inner.getNested().size, 1)
+        let newWrapper = wrapper.withInclude(rel)
+        @Expect(wrapper.getNested().size, 0)
+        @Expect(inner.getNested().size, 0)
+        @Expect(newWrapper.getNested().size, 1)
+    }
+
+    @TestCase
+    public func testWithIncludeDoesNotMutateSource(): Unit {
+        let fk = Col<Any>("user_id")
+        let fields = [Col<Any>("id"), Col<Any>("name")]
+        let author = RefTo<RelUser>("author", fk, fields, "reluser", dummyMapper, dummySetter)
+        let profile = HasOne<RelUser>("profile", "user_id", [Col<Any>("id")], "relprofile", dummyMapper, dummySetter)
+        let _ = author.withInclude(profile)
+        @Expect(author.getNested().size, 0)
+    }
+
+    @TestCase
+    public func testWithIncludeIndependentChains(): Unit {
+        let fk = Col<Any>("user_id")
+        let fields = [Col<Any>("id"), Col<Any>("name")]
+        let author = RefTo<RelUser>("author", fk, fields, "reluser", dummyMapper, dummySetter)
+        let profile = HasOne<RelUser>("profile", "user_id", [Col<Any>("id")], "relprofile", dummyMapper, dummySetter)
+        let tags = HasMany<RelTag>("tags", "post_id", [Col<Any>("id")], "reltag", dummyMapper, dummySetter)
+        let chainA = author.withInclude(profile)
+        let chainB = author.withInclude(tags)
+        @Expect(author.getNested().size, 0)
+        @Expect(chainA.getNested().size, 1)
+        @Expect(chainB.getNested().size, 1)
+    }
+
+    @TestCase
+    public func testWithIncludeDedup(): Unit {
+        let fk = Col<Any>("user_id")
+        let fields = [Col<Any>("id"), Col<Any>("name")]
+        let author = RefTo<RelUser>("author", fk, fields, "reluser", dummyMapper, dummySetter)
+        let profile = HasOne<RelUser>("profile", "user_id", [Col<Any>("id")], "relprofile", dummyMapper, dummySetter)
+        let chain = author.withInclude(profile).withInclude(profile)
+        @Expect(chain.getNested().size, 1)
+    }
+
+    @TestCase
+    public func testClonePreservesExistingNested(): Unit {
+        let fk = Col<Any>("user_id")
+        let fields = [Col<Any>("id"), Col<Any>("name")]
+        let author = RefTo<RelUser>("author", fk, fields, "reluser", dummyMapper, dummySetter)
+        let profile = HasOne<RelUser>("profile", "user_id", [Col<Any>("id")], "relprofile", dummyMapper, dummySetter)
+        let tags = HasMany<RelTag>("tags", "post_id", [Col<Any>("id")], "reltag", dummyMapper, dummySetter)
+        let chain = author.withInclude(profile).withInclude(tags)
+        @Expect(chain.getNested().size, 2)
+        let nested = chain.getNested()
+        let (k0, n0, _, _, _, _) = nested[0].resolve()
+        let (k1, n1, _, _, _, _) = nested[1].resolve()
+        @Expect(k0, RelationKind.HasOneRel)
+        @Expect(n0, "profile")
+        @Expect(k1, RelationKind.HasManyRel)
+        @Expect(n1, "tags")
     }
 }

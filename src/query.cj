@@ -29,8 +29,7 @@ class FieldOverrideRelation <: IRelation {
     }
 
     public func withInclude(rel: IRelation): IRelation {
-        inner.withInclude(rel)
-        this
+        FieldOverrideRelation(inner.withInclude(rel), overrides)
     }
 
     public func getNested(): Array<IRelation> {
