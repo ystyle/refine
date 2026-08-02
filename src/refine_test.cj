@@ -285,9 +285,9 @@ public class RefineTest {
     public func testHookRegister(): Unit {
         let r = Refine(RMockDS(), SQLiteDialect(), 0)
         let flag = RFlag()
-        r.hook<Int64>("E", HookKind.BeforeSave) { scope: Scope<Int64> => flag.v = true }
+        r.hook<Int64>("E", HookKind.TxBeforeUpdate) { scope: Scope<Int64> => flag.v = true }
         let s = Scope<Int64>(1)
-        r.executeHooks("E", HookKind.BeforeSave, s)
+        r.executeHooks("E", HookKind.TxBeforeUpdate, s)
         @Expect(flag.v, true)
         r.close()
     }
@@ -295,11 +295,11 @@ public class RefineTest {
     @TestCase
     public func testHookAbort(): Unit {
         let r = Refine(RMockDS(), SQLiteDialect(), 0)
-        r.hook<Int64>("E", HookKind.BeforeSave) { scope: Scope<Int64> =>
+        r.hook<Int64>("E", HookKind.TxBeforeUpdate) { scope: Scope<Int64> =>
             scope.abort(Exception("stop"))
         }
         let s = Scope<Int64>(1)
-        let err = r.executeHooks("E", HookKind.BeforeSave, s)
+        let err = r.executeHooks("E", HookKind.TxBeforeUpdate, s)
         @Expect(err.isSome(), true)
         r.close()
     }
@@ -308,7 +308,7 @@ public class RefineTest {
     public func testHookNonexistent(): Unit {
         let r = Refine(RMockDS(), SQLiteDialect(), 0)
         let s = Scope<Int64>(1)
-        let err = r.executeHooks("X", HookKind.BeforeSave, s)
+        let err = r.executeHooks("X", HookKind.TxBeforeUpdate, s)
         @Expect(err.isNone(), true)
         r.close()
     }
@@ -321,11 +321,11 @@ public class RefineTest {
         let s = Scope<Int64>(1)
         r.executeHooks("E", HookKind.TxBeforeCreate, s)
         @Expect(flag.v, true)
-        // TxBeforeCreate should NOT fire for BeforeCreate
+        // TxBeforeCreate should NOT fire for a different kind (TxAfterCreate)
         let s2 = Scope<Int64>(1)
         let flag2 = RFlag()
-        r.hook<Int64>("E", HookKind.BeforeCreate) { scope: Scope<Int64> => flag2.v = true }
-        r.executeHooks("E", HookKind.BeforeCreate, s2)
+        r.hook<Int64>("E", HookKind.TxAfterCreate) { scope: Scope<Int64> => flag2.v = true }
+        r.executeHooks("E", HookKind.TxAfterCreate, s2)
         @Expect(flag2.v, true)
         r.close()
     }

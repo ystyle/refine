@@ -616,10 +616,15 @@ public class Query<T> {
 
     private func runAfterFindHooks(entity: T): Unit {
         if (typeName != "") {
-            let s = Scope<T>(entity)
             match (this.ref) {
-                case Some(rf) => rf.executeHooks(typeName, HookKind.AfterFind, s)
-                case None => executeHooks(typeName, HookKind.AfterFind, s)
+                case Some(rf) =>
+                    let s = Scope<T>(entity)
+                    let err = rf.executeHooks(typeName, HookKind.AfterFind, s)
+                    match (err) {
+                        case Some(e) => throw e
+                        case None => ()
+                    }
+                case None => ()   // 裸 Query 无 Refine 绑定，不触发 AfterFind
             }
         }
     }

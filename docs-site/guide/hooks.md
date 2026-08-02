@@ -2,7 +2,7 @@
 
 ## 钩子类型
 
-钩子分**事务内**和**事务外**两类，通过不同的 HookKind 区分注册：
+钩子分**事务内**和**查询后**两类，通过不同的 HookKind 区分注册：
 
 ```cangjie
 enum HookKind {
@@ -11,18 +11,12 @@ enum HookKind {
     | TxBeforeUpdate | TxAfterUpdate
     | TxBeforeDelete | TxAfterDelete
 
-    // 事务外钩子 —— 原由已移除的静态 Entity.save/update/delete 触发，现已不再触发（C3 修复）
-    | BeforeCreate | AfterCreate
-    | BeforeUpdate | AfterUpdate
-    | BeforeDelete | AfterDelete
-
     // 查询后
     | AfterFind
-
-    // 保留 / 待实现
-    | BeforeSave | AfterSave
 }
 ```
+
+> **I14 变更**：钩子系统已彻底统一为**实例级**（移除全局注册表），非事务写钩子（`BeforeCreate`/`AfterSave` 等 8 个死变体）一并移除。钩子只能在 `Refine` 实例上注册，且只在该实例发起的操作上触发；不同实例完全隔离。
 
 > **C3 变更**：静态 `Entity.save/update/delete` 因不落库已移除，**请统一使用 `Tx.save/update/delete`**。事务内钩子是唯一会被真实持久化操作触发的写钩子。
 
@@ -53,7 +47,7 @@ class Scope<T> {
 
 ## 注册钩子
 
-通过 `Refine.hook()` 注册：
+通过 `Refine.hook()` 注册，作用于该实例：
 
 ```cangjie
 // 事务内钩子：写入审计日志，与主操作同事务
@@ -69,6 +63,12 @@ rf.hook<Order>("Order", HookKind.TxBeforeCreate) { scope: Scope<Order> =>
         scope.abort(Exception("negative total"))
     }
 }
+```
+
+### 清除钩子
+
+```cangjie
+rf.clearHooks()  // 清除该实例上所有已注册的钩子
 ```
 
 ## 钩子执行时机
@@ -101,7 +101,7 @@ Tx.delete(entity):
 `AfterFind` 在 `all()` / `one()` 映射完每个实体后触发。用于脱敏敏感字段、填充计算字段等：
 
 ```cangjie
-// 实例级注册（推荐，通过 rf.hook）
+// 实例级注册
 let rf = Refine.open("mariadb://127.0.0.1:3306", [("username", "root"), ("password", "secret"), ("database", "myapp")])
 rf.hook<User>("User", HookKind.AfterFind) { scope: Scope<User> =>
     scope.entity.password = ""
@@ -109,11 +109,8 @@ rf.hook<User>("User", HookKind.AfterFind) { scope: Scope<User> =>
 
 // 之后所有 User.query().using(rf).all() / .one() 结果 password 被清空
 let users = User.query().using(rf).all()
-
-// 全局注册（有时无法获取 Refine 实例时使用）
-registerHook<User>("User", HookKind.AfterFind) { scope =>
-    scope.entity.password = ""
-}
 ```
 
-> 宏生成的 `query()` 会自动设置 `typeName`。查询时优先使用 `rf.hook()` 注册的实例级钩子，若无则回退到全局 `registerHook()`。
+> **I14 变更**：AfterFind 只在**绑定 Refine 实例**的查询（`Query.using(rf)` 或 `Refine.all/one`）上触发。**裸 Query**（仅绑定 session/tx）不触发 AfterFind；钩子注册也只在 `rf.hook()`（实例级），不再有全局 `registerHook()`。
+
+AfterFind 钩子抛异常，或调用 `scope.abort()` 使钩子集返回错误时，错误会**向上抛出**，整个查询失败（不会被静默忽略）。

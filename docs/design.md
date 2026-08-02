@@ -1080,17 +1080,17 @@ rf2.hook<Post>("Post", BeforeCreate) { scope => ... }  // 不影响 rf
 
 ```cangjie
 enum HookKind {
-    | BeforeCreate
-    | AfterCreate
-    | BeforeUpdate
-    | AfterUpdate
-    | BeforeSave       // 同时拦截 Create + Update
-    | AfterSave
-    | BeforeDelete
-    | AfterDelete
+    | TxBeforeCreate
+    | TxAfterCreate
+    | TxBeforeUpdate
+    | TxAfterUpdate
+    | TxBeforeDelete
+    | TxAfterDelete
     | AfterFind        // 查询结果映射后触发
 }
 ```
+
+> **I14 变更**：非事务写钩子（`BeforeCreate` 等）与全局注册表已移除，钩子全部实例级、仅随 `Tx.save/update/delete` 与绑定实例的查询触发。
 
 ### 10.3 Scope
 
@@ -1122,7 +1122,7 @@ func save(entity: User): Unit {
 
     // Before — 通过 Tx 持有的 Refine 实例调用
     if (this.ref.isSome()) {
-        this.ref.getOrThrow().executeHooks("User", BeforeSave, scope)
+        this.ref.getOrThrow().executeHooks("User", TxBeforeCreate, scope)
     }
     if (scope.aborted) { throw scope.error }
 
@@ -1132,7 +1132,7 @@ func save(entity: User): Unit {
     // After
     let afterScope = Scope<User>(entity)
     if (this.ref.isSome()) {
-        this.ref.getOrThrow().executeHooks("User", AfterSave, afterScope)
+        this.ref.getOrThrow().executeHooks("User", TxAfterCreate, afterScope)
     }
 }
 ```
@@ -1146,8 +1146,8 @@ func main() {
     let rf = Refine.open("sqlite://test.db")
 
     // 注册钩子
-    rf.hook<Post>("Post", BeforeCreate, validatePost)
-    rf.hook<Post>("Post", AfterCreate, auditPost)
+    rf.hook<Post>("Post", TxBeforeCreate, validatePost)
+    rf.hook<Post>("Post", TxAfterCreate, auditPost)
     rf.hook<Post>("Post", AfterFind, cachePost)
 
     // 启动

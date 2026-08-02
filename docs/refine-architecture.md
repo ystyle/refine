@@ -28,9 +28,10 @@ class Refine {
     func session(): Session              // 自动获取连接
     func transaction<T>(action: (Tx) -> T): T
 
-    // === 钩子（实例级）===
+    // === 钩子（实例级，唯一注册方式）===
     func hook<T>(typeName: String, kind: HookKind, hook: HookFn<T>): Unit
     func executeHooks<T>(typeName: String, kind: HookKind, scope: Scope<T>): ?Exception
+    func clearHooks(): Unit
 
     // === 查询快捷入口 ===
     func all<T>(query: Query<T>): Array<T>
@@ -52,7 +53,7 @@ let rf = Refine.open("mariadb://127.0.0.1:3306", [
 ])
 
 // 注册钩子（只影响本实例）
-rf.hook<Post>("Post", BeforeCreate) { scope =>
+rf.hook<Post>("Post", TxBeforeCreate) { scope =>
     if (scope.entity.title == "") {
         scope.abort(Exception("title required"))
     }
@@ -81,7 +82,7 @@ rf.close()
 
 // 第二个实例，完全隔离
 let rf2 = Refine.open("sqlite://test.db")
-rf2.hook<Post>("Post", BeforeCreate) { scope => ... }  // 不影响 rf
+rf2.hook<Post>("Post", TxBeforeCreate) { scope => ... }  // 不影响 rf
 ```
 
 ## 改动范围
@@ -90,7 +91,7 @@ rf2.hook<Post>("Post", BeforeCreate) { scope => ... }  // 不影响 rf
 |---|---|
 | `src/refine.cj` | 新建，包含 `Refine` 类主体 |
 | `src/db.cj` | Tx/Session 加 `ref: Refine` 字段 |
-| `src/hook.cj` | 全局 `hookRegistry` → 移到 `Refine` 实例 |
+| `src/hook.cj` | 全局 `hookRegistry` 已移除，钩子仅存于 `Refine` 实例 |
 | `src/query.cj` | 加 `using(rf: Refine)` 重载，自动设置方言 |
 | `src/macros/refine_macro.cj` | Hook 调用改为实例级 |
 | `src/macro_test.cj` | 更新测试 |

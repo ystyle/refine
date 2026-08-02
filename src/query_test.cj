@@ -330,7 +330,6 @@ public class QueryTest {
 
     @TestCase
     public func testExistsUsesSelectOneLimitOne(): Unit {
-        clearHooks()
         let conn = CaptureConnection()
         let tx = Tx(conn)
         conn.stmt.queryResult = RowQueryResult(1)
@@ -351,7 +350,6 @@ public class QueryTest {
 
     @TestCase
     public func testExistsFalseWhenNoRows(): Unit {
-        clearHooks()
         let conn = CaptureConnection()
         let tx = Tx(conn)
         conn.stmt.queryResult = MapperMockQueryResult([], [])
@@ -554,8 +552,8 @@ public class QueryTest {
 
     @TestCase
     public func testAllPropagatesAfterFindHookException(): Unit {
-        clearHooks()
-        registerHook<Int64>("C1AfterFindBoom", HookKind.AfterFind) { scope: Scope<Int64> =>
+        let rf = Refine(RMockDS(), SQLiteDialect(), 0)
+        rf.hook<Int64>("C1AfterFindBoom", HookKind.AfterFind) { scope: Scope<Int64> =>
             throw QueryException("hook boom")
         }
         let conn = CaptureConnection()
@@ -567,12 +565,84 @@ public class QueryTest {
             .from("t")
             .using(tx)
         q.typeName = "C1AfterFindBoom"
+        q.ref = Some(rf)
         try {
             q.all({ r: QueryResult, cm: HashMap<String, Int64> => 0 })
             @Fail("expected QueryException from AfterFind hook")
         } catch (e: QueryException) {
             @Expect(e.message, "hook boom")
         }
+    }
+
+    // I14: AfterFind 钩子调用 scope.abort() 时，executeHooks 返回的错误必须上抛，
+    // 而不是被静默忽略（修复前 runAfterFindHooks 丢弃返回值）。
+    @TestCase
+    public func testAllPropagatesAfterFindHookAbort(): Unit {
+        let rf = Refine(RMockDS(), SQLiteDialect(), 0)
+        rf.hook<Int64>("C1AfterFindAbort", HookKind.AfterFind) { scope: Scope<Int64> =>
+            scope.abort(QueryException("hook abort"))
+        }
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        let cols: Array<SqlColumnInfo> = [MapperMockColumnInfo("id", false)]
+        conn.stmt.queryResult = MapperMockQueryResult(cols, [Array<Any>(1, {i => 1})])
+        let q = Query<Int64>()
+            .select([Expr.Column("id")])
+            .from("t")
+            .using(tx)
+        q.typeName = "C1AfterFindAbort"
+        q.ref = Some(rf)
+        try {
+            q.all({ r: QueryResult, cm: HashMap<String, Int64> => 0 })
+            @Fail("expected QueryException from AfterFind hook abort")
+        } catch (e: QueryException) {
+            @Expect(e.message, "hook abort")
+        }
+    }
+
+    // I14: 裸 Query（未绑定 Refine 实例）不触发 AfterFind —— 钩子只挂在实例级注册表上
+    @TestCase
+    public func testBareQueryDoesNotFireAfterFind(): Unit {
+        let rf = Refine(RMockDS(), SQLiteDialect(), 0)
+        let flag = HookFlag()
+        rf.hook<Int64>("BareAfterFind", HookKind.AfterFind) { scope: Scope<Int64> =>
+            flag.called = true
+        }
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        let cols: Array<SqlColumnInfo> = [MapperMockColumnInfo("id", false)]
+        conn.stmt.queryResult = MapperMockQueryResult(cols, [Array<Any>(1, {i => 1})])
+        let q = Query<Int64>()
+            .select([Expr.Column("id")])
+            .from("t")
+            .using(tx)
+        q.typeName = "BareAfterFind"
+        let rows = q.all({ r: QueryResult, cm: HashMap<String, Int64> => 0 })
+        @Expect(rows.size, 1)
+        @Expect(flag.called, false)
+    }
+
+    // I14: 同一查询绑定 Refine 实例后 AfterFind 正常触发（与裸 Query 对照）
+    @TestCase
+    public func testBoundQueryFiresAfterFind(): Unit {
+        let rf = Refine(RMockDS(), SQLiteDialect(), 0)
+        let flag = HookFlag()
+        rf.hook<Int64>("BoundAfterFind", HookKind.AfterFind) { scope: Scope<Int64> =>
+            flag.called = true
+        }
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        let cols: Array<SqlColumnInfo> = [MapperMockColumnInfo("id", false)]
+        conn.stmt.queryResult = MapperMockQueryResult(cols, [Array<Any>(1, {i => 1})])
+        let q = Query<Int64>()
+            .select([Expr.Column("id")])
+            .from("t")
+            .using(tx)
+        q.typeName = "BoundAfterFind"
+        q.ref = Some(rf)
+        let rows = q.all({ r: QueryResult, cm: HashMap<String, Int64> => 0 })
+        @Expect(rows.size, 1)
+        @Expect(flag.called, true)
     }
 
     @TestCase
@@ -772,7 +842,6 @@ public class QueryTest {
     // 回归（I4）：无 JOIN 时 updateWhere 正常走通（rejectJoin 不得误伤合法查询）
     @TestCase
     public func testUpdateWhereWithoutJoinStillWorks(): Unit {
-        clearHooks()
         let conn = CaptureConnection()
         conn.stmt.mockRowCount = 3
         let tx = Tx(conn, 0, MySQLDialect())
@@ -791,7 +860,6 @@ public class QueryTest {
     // 回归（I4）：无 JOIN 时 deleteWhere 正常走通（rejectJoin 不得误伤合法查询）
     @TestCase
     public func testDeleteWhereWithoutJoinStillWorks(): Unit {
-        clearHooks()
         let conn = CaptureConnection()
         conn.stmt.mockRowCount = 2
         let tx = Tx(conn, 0, MySQLDialect())
@@ -857,7 +925,6 @@ public class C4PageCollectionTest {
 
     @TestCase
     public func testPageWithHasManyIncludeDedupsParents(): Unit {
-        clearHooks()
         let conn = CaptureConnection()
         let tx = Tx(conn)
         conn.stmt.queryResultQueue.add(RowQueryResult(2))
@@ -886,7 +953,6 @@ public class C4PageCollectionTest {
 
     @TestCase
     public func testPageWithHasManyIncludeCountUsesDistinct(): Unit {
-        clearHooks()
         let conn = CaptureConnection()
         let tx = Tx(conn)
         conn.stmt.queryResultQueue.add(RowQueryResult(2))
@@ -909,7 +975,6 @@ public class C4PageCollectionTest {
 
     @TestCase
     public func testPageWithoutCollectionStillWorks(): Unit {
-        clearHooks()
         let conn = CaptureConnection()
         let tx = Tx(conn)
         conn.stmt.queryResultQueue.add(RowQueryResult(3))
@@ -930,8 +995,8 @@ public class C4PageCollectionTest {
 
     @TestCase
     public func testPageNonCollectionRunsAfterFindHook(): Unit {
-        clearHooks()
-        registerHook<UuidRefComment>("UuidRefComment", HookKind.AfterFind) { scope: Scope<UuidRefComment> =>
+        let rf = Refine(RMockDS(), SQLiteDialect(), 0)
+        rf.hook<UuidRefComment>("UuidRefComment", HookKind.AfterFind) { scope: Scope<UuidRefComment> =>
             scope.entity.body = "hooked"
         }
         let conn = CaptureConnection()
@@ -945,14 +1010,15 @@ public class C4PageCollectionTest {
             Array<Any>(2, {i => if (i == 0) { 1 } else { "a" }}),
         ]
         conn.stmt.queryResultQueue.add(MapperMockQueryResult(cols, rows))
-        let pg = UuidRefComment.query().using(tx).page(1, 10)
+        let q = UuidRefComment.query().using(tx)
+        q.ref = Some(rf)
+        let pg = q.page(1, 10)
         @Expect(pg.items.size, 1)
         @Expect(pg.items[0].body, "hooked")
     }
 
     @TestCase
     public func testPageWithRefToIncludeJoins(): Unit {
-        clearHooks()
         let conn = CaptureConnection()
         let tx = Tx(conn)
         conn.stmt.queryResultQueue.add(RowQueryResult(1))
@@ -985,7 +1051,6 @@ public class C4PageCollectionTest {
     // 用自定义 base mapper（不读 RefTo 字段），使 wrapMapper.isNullId 成为目标 id 的首个读取点。
     @TestCase
     public func testRefToIncludeSkipsNullTargetId(): Unit {
-        clearHooks()
         let conn = CaptureConnection()
         let tx = Tx(conn)
         let cols: Array<SqlColumnInfo> = [
@@ -1021,7 +1086,6 @@ public class C4PageCollectionTest {
     // 但依赖驱动边界行为；现用文档化 getOrNull 判空）。
     @TestCase
     public func testCollectionIncludeSkipsNullChildId(): Unit {
-        clearHooks()
         let conn = CaptureConnection()
         let tx = Tx(conn)
         let cols: Array<SqlColumnInfo> = [
@@ -1049,7 +1113,6 @@ public class C4PageCollectionTest {
     // get<Int64> 抛类型不匹配（旧代码崩溃），getOrNull<Int64> 返回 None（新代码不挂载）。
     @TestCase
     public func testRefToIncludeNullTargetIdDefaultMapperNoCrash(): Unit {
-        clearHooks()
         let conn = CaptureConnection()
         let tx = Tx(conn)
         let cols: Array<SqlColumnInfo> = [
@@ -1076,7 +1139,6 @@ public class C4PageCollectionTest {
 
     @TestCase
     public func testHasOneIncludeNullTargetIdDefaultMapperNoCrash(): Unit {
-        clearHooks()
         let conn = CaptureConnection()
         let tx = Tx(conn)
         let cols: Array<SqlColumnInfo> = [
@@ -1101,7 +1163,6 @@ public class C4PageCollectionTest {
 
     @TestCase
     public func testRefToStringPkIncludeNullTargetIdDefaultMapperNoCrash(): Unit {
-        clearHooks()
         let conn = CaptureConnection()
         let tx = Tx(conn)
         let cols: Array<SqlColumnInfo> = [
@@ -1139,7 +1200,6 @@ public class C4CollectionIncludeOrderTest {
 
     @TestCase
     public func testAllWithCollectionIncludePreservesRowOrder(): Unit {
-        clearHooks()
         let conn = CaptureConnection()
         let tx = Tx(conn)
         let cols: Array<SqlColumnInfo> = [

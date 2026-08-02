@@ -9,7 +9,7 @@
 - **关联预加载** — `include()` 一次查询带出所有关联，不产生 N+1 问题
 - **多方言** — 内置 SQLite / MySQL / PostgreSQL 支持，各方言自动适配
 - **数据迁移** — 从实体定义自动生成 `CREATE TABLE`，无需手写 DDL
-- **生命周期钩子** — 事务内/外两套 Hook 系统，支持 BeforeCreate / AfterFind 等 15 种钩子
+- **生命周期钩子** — 实例级 Hook 系统，支持 `TxBeforeCreate` / `AfterFind` 等 7 种钩子
 
 ## 快速示例
 

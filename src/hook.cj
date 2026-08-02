@@ -1,7 +1,5 @@
 package refine
 
-import std.collection.HashMap
-import std.collection.ArrayList
 import std.database.sql.QueryResult
 
 public enum HookKind {
@@ -13,17 +11,7 @@ public enum HookKind {
     | TxBeforeDelete
     | TxAfterDelete
 
-    // 事务外钩子 —— 原由已移除的静态 Entity.save/update/delete 触发，现已不再触发（C3）
-    | BeforeCreate
-    | AfterCreate
-    | BeforeUpdate
-    | AfterUpdate
-    | BeforeDelete
-    | AfterDelete
-
-    // 保留
-    | BeforeSave
-    | AfterSave
+    // 查询后钩子 —— all()/one() 映射后触发（须绑定 Refine 实例）
     | AfterFind
 }
 
@@ -36,14 +24,6 @@ extend HookKind <: ToString {
             case TxAfterUpdate => "TxAfterUpdate"
             case TxBeforeDelete => "TxBeforeDelete"
             case TxAfterDelete => "TxAfterDelete"
-            case BeforeCreate => "BeforeCreate"
-            case AfterCreate => "AfterCreate"
-            case BeforeUpdate => "BeforeUpdate"
-            case AfterUpdate => "AfterUpdate"
-            case BeforeDelete => "BeforeDelete"
-            case AfterDelete => "AfterDelete"
-            case BeforeSave => "BeforeSave"
-            case AfterSave => "AfterSave"
             case AfterFind => "AfterFind"
         }
     }
@@ -75,41 +55,3 @@ public class Scope<T> {
 }
 
 public type HookFn<T> = (Scope<T>) -> Unit
-
-// Registry stores untyped wrappers to avoid Any-to-function-type cast issues
-private var hookRegistry = HashMap<String, ArrayList<Any>>()
-
-public func registerHook<T>(typeName: String, kind: HookKind, hook: HookFn<T>): Unit {
-    let key = typeName + ":" + kind.toString()
-    match (hookRegistry.get(key)) {
-        case Some(list) =>
-            list.add(hook)
-        case None =>
-            let list = ArrayList<Any>()
-            list.add(hook)
-            hookRegistry.add(key, list)
-    }
-}
-
-public func executeHooks<T>(typeName: String, kind: HookKind, scope: Scope<T>): ?Exception {
-    let key = typeName + ":" + kind.toString()
-    match (hookRegistry.get(key)) {
-        case Some(hooks) =>
-            for (h in hooks) {
-                if (scope.aborted) {
-                    return scope.error
-                }
-                let fn = (h as HookFn<T>).getOrThrow()
-                fn(scope)
-            }
-            if (scope.aborted) {
-                return scope.error
-            }
-        case None => ()
-    }
-    None
-}
-
-public func clearHooks(): Unit {
-    hookRegistry.clear()
-}

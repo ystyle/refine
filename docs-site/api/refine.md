@@ -92,7 +92,7 @@ rf.hook<User>("User", HookKind.TxBeforeCreate) { scope: Scope<User> =>
 }
 ```
 
-只有 `Tx*` 钩子（`TxBeforeCreate` 等）会随 `Tx.save/update/delete` 真实触发；非事务钩子（`BeforeCreate` 等）已不再触发。
+只有 `Tx*` 钩子（`TxBeforeCreate` 等）会随 `Tx.save/update/delete` 真实触发；`AfterFind` 随绑定实例的查询触发。钩子全部实例级注册，不同 `Refine` 实例完全隔离。
 
 ### all() / one()
 

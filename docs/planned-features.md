@@ -4,19 +4,18 @@
 
 ### 钩子事务上下文 + 类型分类
 
-HookKind 拆分为事务内/外两套，`Tx.save/update/delete` 触发 `TxBefore*` / `TxAfter*` 系列，且 `scope.db = Some(tx)`。
+HookKind 拆分为事务内/查询后两套，`Tx.save/update/delete` 触发 `TxBefore*` / `TxAfter*` 系列（`scope.db = Some(tx)`），`AfterFind` 随绑定实例的查询触发。钩子全部实例级注册。
 
 ```cangjie
 enum HookKind {
     | TxBeforeCreate | TxAfterCreate     // 事务内
     | TxBeforeUpdate | TxAfterUpdate
     | TxBeforeDelete | TxAfterDelete
-    | BeforeCreate | AfterCreate          // 事务外
-    | BeforeUpdate | AfterUpdate
-    | BeforeDelete | AfterDelete
-    | BeforeSave | AfterSave | AfterFind  // 保留
+    | AfterFind                          // 查询后
 }
 ```
+
+> **I14 变更**：非事务写钩子（`BeforeCreate` 等）与全局注册表已移除。
 
 ### 原始 SQL 自动映射
 

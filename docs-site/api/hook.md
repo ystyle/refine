@@ -14,20 +14,12 @@ enum HookKind {
     | TxBeforeDelete   // Tx.delete() 前
     | TxAfterDelete    // Tx.delete() 后
 
-    // 事务外钩子 —— 原由已移除的静态 Entity.save/update/delete 触发，现已不再触发（C3 修复）
-    | BeforeCreate
-    | AfterCreate
-    | BeforeUpdate
-    | AfterUpdate
-    | BeforeDelete
-    | AfterDelete
-
-    // 保留
-    | BeforeSave
-    | AfterSave
+    // 查询后
     | AfterFind      // all() / one() 映射后触发，用于脱敏
 }
 ```
+
+> **I14 变更**：已移除非事务写钩子（`BeforeCreate`/`AfterSave` 等 8 个死变体）与全局注册表，钩子全部实例级。
 
 ## Scope\<T\>
 
@@ -53,7 +45,7 @@ type HookFn<T> = (Scope<T>) -> Unit
 
 ## 注册钩子
 
-实例级别（推荐）：
+实例级别（唯一方式）：
 
 ```cangjie
 rf.hook<User>("User", HookKind.TxBeforeCreate) { scope: Scope<User> =>
@@ -61,18 +53,21 @@ rf.hook<User>("User", HookKind.TxBeforeCreate) { scope: Scope<User> =>
         scope.abort(Exception("name required"))
     }
 }
-```
 
-全局级别（`AfterFind` 等查询后钩子可用；写钩子请使用实例级 `rf.hook`）：
-
-```cangjie
-registerHook<User>("User", HookKind.AfterFind) { scope =>
+// 查询后钩子
+rf.hook<User>("User", HookKind.AfterFind) { scope =>
     scope.entity.password = ""
 }
 ```
 
+> AfterFind 只在绑定 Refine 实例的查询上触发（`Query.using(rf)` 或 `Refine.all/one`），裸 Query 不触发。
+
 ## 清除钩子
 
 ```cangjie
-clearHooks()  // 清除所有已注册的钩子
+rf.clearHooks()  // 清除该 Refine 实例上所有已注册的钩子
 ```
+
+## AfterFind 错误传播
+
+AfterFind 钩子抛异常，或调用 `scope.abort()` 使钩子集返回错误时，错误会向上抛出，整个查询失败。

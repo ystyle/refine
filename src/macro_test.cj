@@ -400,7 +400,6 @@ class RowQueryResult <: QueryResult {
 public class MacroSaveTest {
     @TestCase
     public func testTxSavePost(): Unit {
-        clearHooks()
         let conn = CaptureConnection()
         let tx = Tx(conn)
 
@@ -414,7 +413,6 @@ public class MacroSaveTest {
 
     @TestCase
     public func testTxSaveUser(): Unit {
-        clearHooks()
         let conn = CaptureConnection()
         let tx = Tx(conn)
 
@@ -428,7 +426,6 @@ public class MacroSaveTest {
 
     @TestCase
     public func testTxUpdatePost(): Unit {
-        clearHooks()
         let conn = CaptureConnection()
         let tx = Tx(conn)
 
@@ -443,7 +440,6 @@ public class MacroSaveTest {
 
     @TestCase
     public func testTxDeletePost(): Unit {
-        clearHooks()
         let conn = CaptureConnection()
         let tx = Tx(conn)
 
@@ -456,7 +452,6 @@ public class MacroSaveTest {
 
     @TestCase
     public func testTxSaveFiresTxBeforeCreate(): Unit {
-        clearHooks()
         let conn = CaptureConnection()
         let rf = Refine(RMockDS(), SQLiteDialect(), 0)
         let tx = Tx(conn, rf, 0)
@@ -476,14 +471,13 @@ public class MacroSaveTest {
     }
 
     @TestCase
-    public func testTxSaveDoesNotFireNonTxBeforeCreate(): Unit {
-        clearHooks()
+    public func testTxSaveDoesNotFireAfterFind(): Unit {
         let conn = CaptureConnection()
         let rf = Refine(RMockDS(), SQLiteDialect(), 0)
         let tx = Tx(conn, rf, 0)
 
         let nonTxFlag = HookFlag()
-        rf.hook<Post>("Post", HookKind.BeforeCreate) { scope: Scope<Post> =>
+        rf.hook<Post>("Post", HookKind.AfterFind) { scope: Scope<Post> =>
             nonTxFlag.called = true
         }
 
@@ -498,7 +492,6 @@ public class MacroSaveTest {
 
     @TestCase
     public func testTxBatchSavePost(): Unit {
-        clearHooks()
         let conn = CaptureConnection()
         let tx = Tx(conn)
 
@@ -516,7 +509,6 @@ public class MacroSaveTest {
 
     @TestCase
     public func testTxBatchSaveUser(): Unit {
-        clearHooks()
         let conn = CaptureConnection()
         let tx = Tx(conn)
 
@@ -534,7 +526,6 @@ public class MacroSaveTest {
 
     @TestCase
     public func testTxBatchSaveFiresTxBeforeCreate(): Unit {
-        clearHooks()
         let conn = CaptureConnection()
         let rf = Refine(RMockDS(), SQLiteDialect(), 0)
         let tx = Tx(conn, rf, 0)
@@ -553,7 +544,6 @@ public class MacroSaveTest {
 
     @TestCase
     public func testTxBatchSaveFiresTxAfterCreate(): Unit {
-        clearHooks()
         let conn = CaptureConnection()
         let rf = Refine(RMockDS(), SQLiteDialect(), 0)
         let tx = Tx(conn, rf, 0)
@@ -572,7 +562,6 @@ public class MacroSaveTest {
 
     @TestCase
     public func testTxBatchSaveDoesNotSetAutoIds(): Unit {
-        clearHooks()
         let conn = CaptureConnection()
         conn.stmt.mockLastInsertId = 100
         conn.stmt.mockRowCount = 2
@@ -589,7 +578,6 @@ public class MacroSaveTest {
 
     @TestCase
     public func testTxBatchSaveEmptyEntities(): Unit {
-        clearHooks()
         let conn = CaptureConnection()
         let tx = Tx(conn)
 
@@ -602,7 +590,6 @@ public class MacroSaveTest {
 
     @TestCase
     public func testTxSaveUuidPostIncludesIdInInsert(): Unit {
-        clearHooks()
         let conn = CaptureConnection()
         let rf = Refine(RMockDS(), SQLiteDialect(), 0)
         rf.setIdGenerator(TestIdGenerator())
@@ -620,7 +607,6 @@ public class MacroSaveTest {
 
     @TestCase
     public func testTxSaveUuidPostKeepsCustomId(): Unit {
-        clearHooks()
         let conn = CaptureConnection()
         let rf = Refine(RMockDS(), SQLiteDialect(), 0)
         rf.setIdGenerator(TestIdGenerator())
@@ -637,7 +623,6 @@ public class MacroSaveTest {
 
     @TestCase
     public func testTxBatchSaveUuidPost(): Unit {
-        clearHooks()
         let conn = CaptureConnection()
         let rf = Refine(RMockDS(), SQLiteDialect(), 0)
         rf.setIdGenerator(TestIdGenerator())
@@ -655,7 +640,6 @@ public class MacroSaveTest {
 
     @TestCase
     public func testTxSaveStringKeyEntityAutoGen(): Unit {
-        clearHooks()
         let conn = CaptureConnection()
         let rf = Refine(RMockDS(), SQLiteDialect(), 0)
         rf.setIdGenerator(TestIdGenerator())
@@ -671,7 +655,6 @@ public class MacroSaveTest {
 
     @TestCase
     public func testTxBatchSaveStringKeyEntityAutoGen(): Unit {
-        clearHooks()
         let conn = CaptureConnection()
         let rf = Refine(RMockDS(), SQLiteDialect(), 0)
         rf.setIdGenerator(TestIdGenerator())
@@ -689,7 +672,6 @@ public class MacroSaveTest {
 
     @TestCase
     public func testTxSaveCustomAutoPkEntity(): Unit {
-        clearHooks()
         let conn = CaptureConnection()
         conn.stmt.mockLastInsertId = 42
         let rf = Refine(RMockDS(), SQLiteDialect(), 0)
@@ -707,7 +689,6 @@ public class MacroSaveTest {
 
     @TestCase
     public func testTxSaveManualIdPostIncludesId(): Unit {
-        clearHooks()
         let conn = CaptureConnection()
         let tx = Tx(conn)
 
@@ -721,7 +702,6 @@ public class MacroSaveTest {
 
     @TestCase
     public func testTxSaveManualIntPkAutoGen(): Unit {
-        clearHooks()
         let conn = CaptureConnection()
         let rf = Refine(RMockDS(), SQLiteDialect(), 0)
         rf.setIdGenerator(TestInt64IdGenerator())
@@ -737,7 +717,6 @@ public class MacroSaveTest {
 
     @TestCase
     public func testTxBatchSaveManualIntPkAutoGen(): Unit {
-        clearHooks()
         let conn = CaptureConnection()
         let rf = Refine(RMockDS(), SQLiteDialect(), 0)
         rf.setIdGenerator(TestInt64IdGenerator())
@@ -755,7 +734,6 @@ public class MacroSaveTest {
 
     @TestCase
     public func testTxSaveManualIntPkKeepsCustomId(): Unit {
-        clearHooks()
         let conn = CaptureConnection()
         let rf = Refine(RMockDS(), SQLiteDialect(), 0)
         rf.setIdGenerator(TestInt64IdGenerator())
@@ -771,7 +749,6 @@ public class MacroSaveTest {
 
     @TestCase
     public func testTxUpdateManualIdPost(): Unit {
-        clearHooks()
         let conn = CaptureConnection()
         let tx = Tx(conn)
 
@@ -786,7 +763,6 @@ public class MacroSaveTest {
 
     @TestCase
     public func testTxDeleteManualIdPost(): Unit {
-        clearHooks()
         let conn = CaptureConnection()
         let tx = Tx(conn)
 
@@ -800,7 +776,6 @@ public class MacroSaveTest {
 
     @TestCase
     public func testTxSaveOrderTagCompoundPk(): Unit {
-        clearHooks()
         let conn = CaptureConnection()
         let tx = Tx(conn)
 
@@ -815,7 +790,6 @@ public class MacroSaveTest {
 
     @TestCase
     public func testTxUpdateOrderTagCompoundPk(): Unit {
-        clearHooks()
         let conn = CaptureConnection()
         let tx = Tx(conn)
 
@@ -829,7 +803,6 @@ public class MacroSaveTest {
 
     @TestCase
     public func testTxDeleteOrderTagCompoundPk(): Unit {
-        clearHooks()
         let conn = CaptureConnection()
         let tx = Tx(conn)
 
@@ -845,7 +818,6 @@ public class MacroSaveTest {
 
     @TestCase
     public func testTxUpsertMySQL(): Unit {
-        clearHooks()
         let conn = CaptureConnection()
         let rf = Refine(RMockDS(), MySQLDialect(), 1)
         let tx = Tx(conn, rf, 1)
@@ -863,7 +835,6 @@ public class MacroSaveTest {
 
     @TestCase
     public func testTxUpsertPostgres(): Unit {
-        clearHooks()
         let conn = CaptureConnection()
         let rf = Refine(RMockDS(), PostgreSQLDialect(), 0)
         let tx = Tx(conn, rf, 0)
@@ -881,7 +852,6 @@ public class MacroSaveTest {
 
     @TestCase
     public func testTxUpsertUnsupportedDialect(): Unit {
-        clearHooks()
         let conn = CaptureConnection()
         let rf = Refine(RMockDS(), NoUpsertDialect(), 0)
         let tx = Tx(conn, rf, 0)
@@ -899,7 +869,6 @@ public class MacroSaveTest {
 
     @TestCase
     public func testTxUpsertExtraParamCountMismatchThrows(): Unit {
-        clearHooks()
         let conn = CaptureConnection()
         let rf = Refine(RMockDS(), MismatchCountDialect(), 1)
         let tx = Tx(conn, rf, 1)
@@ -919,7 +888,6 @@ public class MacroSaveTest {
 
     @TestCase
     public func testTxUpsertDBPathMySQL(): Unit {
-        clearHooks()
         let conn = CaptureConnection()
         let tx = Tx(conn, 1, MySQLDialect())
 
@@ -935,7 +903,6 @@ public class MacroSaveTest {
 
     @TestCase
     public func testTxUpsertDBPathPostgres(): Unit {
-        clearHooks()
         let conn = CaptureConnection()
         let tx = Tx(conn, 0, PostgreSQLDialect())
 
@@ -951,7 +918,6 @@ public class MacroSaveTest {
 
     @TestCase
     public func testTxSaveDBPathPostgresReturning(): Unit {
-        clearHooks()
         let conn = CaptureConnection()
         conn.stmt.queryResult = RowQueryResult(7)
         let tx = Tx(conn, 0, PostgreSQLDialect())
@@ -967,7 +933,6 @@ public class MacroSaveTest {
 
     @TestCase
     public func testTxUpsertDBPathSQLite(): Unit {
-        clearHooks()
         // 本项目无真实 SQLite 驱动，此处用 CaptureConnection（mock）仅验证宏层生成的 upsert SQL
         let conn = CaptureConnection()
         let tx = Tx(conn, 0, SQLiteDialect())
@@ -984,7 +949,6 @@ public class MacroSaveTest {
 
     @TestCase
     public func testTxSaveDBPathSQLite(): Unit {
-        clearHooks()
         // 本项目无真实 SQLite 驱动，此处用 CaptureConnection（mock）仅验证宏层生成的 save SQL 与
         // lastInsertId 回填路径（SQLite hasReturningSupport=false，走 execute/lastInsertId）
         let conn = CaptureConnection()
@@ -1004,7 +968,6 @@ public class MacroSaveTest {
 
     @TestCase
     public func testTxBatchUpdatePost(): Unit {
-        clearHooks()
         let conn = CaptureConnection()
         let tx = Tx(conn)
 
@@ -1023,7 +986,6 @@ public class MacroSaveTest {
 
     @TestCase
     public func testTxBatchUpdateEmpty(): Unit {
-        clearHooks()
         let conn = CaptureConnection()
         let tx = Tx(conn)
 
@@ -1034,7 +996,6 @@ public class MacroSaveTest {
 
     @TestCase
     public func testTxBatchUpdateFiresHooks(): Unit {
-        clearHooks()
         let conn = CaptureConnection()
         let rf = Refine(RMockDS(), SQLiteDialect(), 0)
         let tx = Tx(conn, rf, 0)
@@ -1053,7 +1014,6 @@ public class MacroSaveTest {
 
     @TestCase
     public func testTxBatchUpdateCompoundPk(): Unit {
-        clearHooks()
         let conn = CaptureConnection()
         let tx = Tx(conn)
 
@@ -1072,7 +1032,6 @@ public class MacroSaveTest {
 
     @TestCase
     public func testTxBatchUpdateNoUpdatableColumns(): Unit {
-        clearHooks()
         let conn = CaptureConnection()
         let tx = Tx(conn)
 
@@ -1089,7 +1048,6 @@ public class MacroSaveTest {
 
     @TestCase
     public func testTxUpsertStringPkAutoGen(): Unit {
-        clearHooks()
         let conn = CaptureConnection()
         let rf = Refine(RMockDS(), MySQLDialect(), 1)
         rf.setIdGenerator(TestIdGenerator())
@@ -1127,7 +1085,6 @@ public class MacroExistingTest {
 
     @TestCase
     public func testHookIntegration(): Unit {
-        clearHooks()
         let conn = CaptureConnection()
         let rf = Refine(RMockDS(), SQLiteDialect(), 0)
         let tx = Tx(conn, rf, 0)
@@ -1191,7 +1148,6 @@ public class MacroExistingTest {
 
     @TestCase
     public func testIncludeRendersJoin(): Unit {
-        clearHooks()
         let conn = CaptureConnection()
         let tx = Tx(conn)
         let _ = PostWithRel.findAll(PostWithRel.query()
@@ -1295,7 +1251,6 @@ class HardUser {
 public class SoftDeleteTest {
     @TestCase
     public func testTxDeleteIsUpdateForSoftDelete(): Unit {
-        clearHooks()
         let conn = CaptureConnection()
         let tx = Tx(conn)
         let u = SoftUser()
@@ -1309,7 +1264,6 @@ public class SoftDeleteTest {
 
     @TestCase
     public func testTxPhysicalDeleteIsDeleteForSoftDelete(): Unit {
-        clearHooks()
         let conn = CaptureConnection()
         let tx = Tx(conn)
         let u = SoftUser()
@@ -1322,7 +1276,6 @@ public class SoftDeleteTest {
 
     @TestCase
     public func testTxDeleteIsDeleteForHardDeleted(): Unit {
-        clearHooks()
         let conn = CaptureConnection()
         let tx = Tx(conn)
         let u = HardUser()
@@ -1447,7 +1400,6 @@ public class VersionedEntityTest {
 
     @TestCase
     public func testTxSaveVersionedPostInjectsAuditAndVersion(): Unit {
-        clearHooks()
         let conn = CaptureConnection()
         let tx = Tx(conn)
         let before = DateTime.now()
@@ -1468,7 +1420,6 @@ public class VersionedEntityTest {
 
     @TestCase
     public func testTxUpdateVersionedPostSuccess(): Unit {
-        clearHooks()
         let conn = CaptureConnection()
         conn.stmt.mockRowCount = 1
         let tx = Tx(conn)
@@ -1485,7 +1436,6 @@ public class VersionedEntityTest {
 
     @TestCase
     public func testTxUpdateVersionedPostConflictNotFound(): Unit {
-        clearHooks()
         let conn = CaptureConnection()
         conn.stmt.mockRowCount = 0
         let tx = Tx(conn)
@@ -1508,7 +1458,6 @@ public class VersionedEntityTest {
 
     @TestCase
     public func testTxUpdateVersionedPostConflictActualVersion(): Unit {
-        clearHooks()
         let conn = CaptureConnection()
         conn.stmt.mockRowCount = 0
         conn.stmt.queryResult = RowQueryResult(5)
@@ -1529,7 +1478,6 @@ public class VersionedEntityTest {
 
     @TestCase
     public func testTxSaveVersionedEventClientPkInjectsVersion(): Unit {
-        clearHooks()
         let conn = CaptureConnection()
         let tx = Tx(conn)
 
@@ -1544,7 +1492,6 @@ public class VersionedEntityTest {
 
     @TestCase
     public func testTxUpdateVersionedEventConflictStringPk(): Unit {
-        clearHooks()
         let conn = CaptureConnection()
         conn.stmt.mockRowCount = 0
         let tx = Tx(conn)
@@ -1564,7 +1511,6 @@ public class VersionedEntityTest {
 
     @TestCase
     public func testTxUpdateVersionedPostWritesVersionInSet(): Unit {
-        clearHooks()
         let conn = CaptureConnection()
         conn.stmt.mockRowCount = 1
         let tx = Tx(conn)
@@ -1582,7 +1528,6 @@ public class VersionedEntityTest {
 
     @TestCase
     public func testTxSaveVersionedOrderTagInjectsVersion(): Unit {
-        clearHooks()
         let conn = CaptureConnection()
         let tx = Tx(conn)
 
@@ -1598,7 +1543,6 @@ public class VersionedEntityTest {
 
     @TestCase
     public func testTxUpdateVersionedOrderTagCompoundPk(): Unit {
-        clearHooks()
         let conn = CaptureConnection()
         conn.stmt.mockRowCount = 1
         let tx = Tx(conn)
@@ -1616,7 +1560,6 @@ public class VersionedEntityTest {
 
     @TestCase
     public func testTxUpdateVersionedOrderTagConflictCompositePk(): Unit {
-        clearHooks()
         let conn = CaptureConnection()
         conn.stmt.mockRowCount = 0
         conn.stmt.queryResult = RowQueryResult(3)
@@ -1639,7 +1582,6 @@ public class VersionedEntityTest {
 
     @TestCase
     public func testTxUpdateVersionedPostTwiceNoFalseConflict(): Unit {
-        clearHooks()
         let conn = CaptureConnection()
         conn.stmt.mockRowCount = 1
         let tx = Tx(conn)
@@ -1667,7 +1609,6 @@ public class VersionedEntityTest {
 
     @TestCase
     public func testTxUpdateVersionedPostNoOpStillBumpsVersion(): Unit {
-        clearHooks()
         let conn = CaptureConnection()
         conn.stmt.mockRowCount = 1
         let tx = Tx(conn)
@@ -1686,7 +1627,6 @@ public class VersionedEntityTest {
 
     @TestCase
     public func testTxBatchSaveVersionedPostInjectsAuditAndVersion(): Unit {
-        clearHooks()
         let conn = CaptureConnection()
         let tx = Tx(conn)
 
@@ -1704,7 +1644,6 @@ public class VersionedEntityTest {
 
     @TestCase
     public func testTxBatchSaveVersionedEventClientPkInjectsVersion(): Unit {
-        clearHooks()
         let conn = CaptureConnection()
         let tx = Tx(conn)
 
@@ -1723,7 +1662,6 @@ public class VersionedEntityTest {
 
     @TestCase
     public func testTxBatchSaveVersionedOrderTagInjectsVersion(): Unit {
-        clearHooks()
         let conn = CaptureConnection()
         let tx = Tx(conn)
 
@@ -1744,7 +1682,6 @@ public class VersionedEntityTest {
 
     @TestCase
     public func testTxBatchUpdateVersionedPostVersionCaseAndRefresh(): Unit {
-        clearHooks()
         let conn = CaptureConnection()
         conn.stmt.mockRowCount = 2
         let tx = Tx(conn)
@@ -1770,7 +1707,6 @@ public class VersionedEntityTest {
 
     @TestCase
     public func testTxBatchUpdateVersionedPostConflict(): Unit {
-        clearHooks()
         let conn = CaptureConnection()
         conn.stmt.mockRowCount = 1
         let tx = Tx(conn)
@@ -1798,7 +1734,6 @@ public class VersionedEntityTest {
 
     @TestCase
     public func testTxBatchUpdateVersionedOrderTagVersionCase(): Unit {
-        clearHooks()
         let conn = CaptureConnection()
         conn.stmt.mockRowCount = 2
         let tx = Tx(conn)
@@ -1824,7 +1759,6 @@ public class VersionedEntityTest {
 
     @TestCase
     public func testTxUpsertVersionedPostMySQL(): Unit {
-        clearHooks()
         let conn = CaptureConnection()
         let rf = Refine(RMockDS(), MySQLDialect(), 1)
         let tx = Tx(conn, rf, 1)
@@ -1845,7 +1779,6 @@ public class VersionedEntityTest {
 
     @TestCase
     public func testTxUpsertVersionedPostPostgres(): Unit {
-        clearHooks()
         let conn = CaptureConnection()
         let rf = Refine(RMockDS(), PostgreSQLDialect(), 0)
         let tx = Tx(conn, rf, 0)
@@ -1867,7 +1800,6 @@ public class VersionedEntityTest {
 
     @TestCase
     public func testTxUpsertVersionedPostSQLite(): Unit {
-        clearHooks()
         // 本项目无真实 SQLite 驱动，此处用 CaptureConnection（mock）仅验证宏层生成的
         // SQLite versioned upsert SQL（version 冲突自增 + excluded 引用 + extraParamCount=0）
         let conn = CaptureConnection()
@@ -1890,7 +1822,6 @@ public class VersionedEntityTest {
 
     @TestCase
     public func testTxUpsertVersionedEventMySQL(): Unit {
-        clearHooks()
         let conn = CaptureConnection()
         let rf = Refine(RMockDS(), MySQLDialect(), 1)
         let tx = Tx(conn, rf, 1)
@@ -2753,7 +2684,6 @@ public class RefManyStringPkTargetTest {
 public class TxCascadeTest {
     @TestCase
     public func testTxSaveCascadesHasManyBackfillsFk(): Unit {
-        clearHooks()
         let conn = CaptureConnection()
         conn.stmt.mockLastInsertId = 42
         let tx = Tx(conn)
@@ -2774,7 +2704,6 @@ public class TxCascadeTest {
 
     @TestCase
     public func testTxSaveCascadesHasOneBackfillsFk(): Unit {
-        clearHooks()
         let conn = CaptureConnection()
         conn.stmt.mockLastInsertId = 7
         let tx = Tx(conn)
@@ -2792,7 +2721,6 @@ public class TxCascadeTest {
 
     @TestCase
     public func testTxUpdateCascadesChildInsertAndUpdate(): Unit {
-        clearHooks()
         let conn = CaptureConnection()
         conn.stmt.mockRowCount = 1
         let tx = Tx(conn)
@@ -2818,7 +2746,6 @@ public class TxCascadeTest {
 
     @TestCase
     public func testTxDeleteCascadesChildrenThenParent(): Unit {
-        clearHooks()
         let conn = CaptureConnection()
         let tx = Tx(conn)
         let p = PostWithRel()
@@ -2837,7 +2764,6 @@ public class TxCascadeTest {
 
     @TestCase
     public func testTxDeleteSoftDeleteCascadesChildren(): Unit {
-        clearHooks()
         let conn = CaptureConnection()
         let tx = Tx(conn)
         let p = SoftDeleteParent()
@@ -2853,7 +2779,6 @@ public class TxCascadeTest {
 
     @TestCase
     public func testTxSaveCycleNoDuplicateInsertSharedVisited(): Unit {
-        clearHooks()
         let conn = CaptureConnection()
         let tx = Tx(conn)
         let a = CategoryWithRel()
@@ -2872,7 +2797,6 @@ public class TxCascadeTest {
 
     @TestCase
     public func testTxSaveRefToBackfillsFkBeforeInsert(): Unit {
-        clearHooks()
         let conn = CaptureConnection()
         let tx = Tx(conn)
         let p = PostWithRel()
@@ -2887,7 +2811,6 @@ public class TxCascadeTest {
 
     @TestCase
     public func testCascadeRefToGhostThenSaveTargetDoesNotBackfill(): Unit {
-        clearHooks()
         let conn = CaptureConnection()
         conn.stmt.mockLastInsertIdQueue.add(1)   // p.id
         conn.stmt.mockLastInsertIdQueue.add(2)   // u.id
@@ -2917,7 +2840,6 @@ public class TxCascadeTest {
 
     @TestCase
     public func testTxUpdateNoCascadeWhenRelsNotModified(): Unit {
-        clearHooks()
         let conn = CaptureConnection()
         conn.stmt.mockRowCount = 1
         let tx = Tx(conn)
@@ -2931,7 +2853,6 @@ public class TxCascadeTest {
 
     @TestCase
     public func testTxSaveResetsMarkersThenUpdateDoesNotReplay(): Unit {
-        clearHooks()
         let conn = CaptureConnection()
         conn.stmt.mockLastInsertId = 42
         let tx = Tx(conn)
@@ -2955,7 +2876,6 @@ public class TxCascadeTest {
 
     @TestCase
     public func testTxSaveResetsMarkersThenUpdateReplayAfterReassign(): Unit {
-        clearHooks()
         let conn = CaptureConnection()
         conn.stmt.mockLastInsertId = 42
         let tx = Tx(conn)
@@ -2985,7 +2905,6 @@ public class TxCascadeTest {
 
     @TestCase
     public func testTxSaveRefManyRebuildsJunction(): Unit {
-        clearHooks()
         let conn = CaptureConnection()
         conn.stmt.mockLastInsertId = 42
         let tx = Tx(conn)
@@ -3016,7 +2935,6 @@ public class TxCascadeTest {
 public class CascadeBoundaryTest {
     @TestCase
     public func testTxUpdateLoadedEntityNoCascade(): Unit {
-        clearHooks()
         // rowMapper 从库加载实体（含 ref_to include），关联字段标记必须保持 false
         let col1: ColumnInfo = MapperMockColumnInfo("id", false)
         let col2: ColumnInfo = MapperMockColumnInfo("title", false)
@@ -3046,7 +2964,6 @@ public class CascadeBoundaryTest {
 
     @TestCase
     public func testTxSaveTwoNewChildrenBothSaved(): Unit {
-        clearHooks()
         // 两个不同实例的新子对象（都 id=0）不得被 visited 按 (type,id) 误判为同一对象
         let conn = CaptureConnection()
         conn.stmt.mockLastInsertId = 42
@@ -3074,7 +2991,6 @@ public class CascadeBoundaryTest {
 
     @TestCase
     public func testTxSaveHasManyEmptyListNoChildInsert(): Unit {
-        clearHooks()
         // 标记 true 且 has_many 列表为空 → save 无子对象要存（只父 INSERT）
         let conn = CaptureConnection()
         conn.stmt.mockLastInsertId = 42
@@ -3088,7 +3004,6 @@ public class CascadeBoundaryTest {
 
     @TestCase
     public func testTxUpdateHasManyEmptyListNoChildDelete(): Unit {
-        clearHooks()
         // 标记 true 且 has_many 列表为空 → update 不删现有（不自动清库）
         let conn = CaptureConnection()
         conn.stmt.mockRowCount = 1
@@ -3103,7 +3018,6 @@ public class CascadeBoundaryTest {
 
     @TestCase
     public func testTxSaveRefManyEmptyListClearsJunction(): Unit {
-        clearHooks()
         // 标记 true 且 ref_many 列表为空 → save 清空中间表（DELETE 旧关联，无 INSERT）
         let conn = CaptureConnection()
         conn.stmt.mockLastInsertId = 42
@@ -3119,7 +3033,6 @@ public class CascadeBoundaryTest {
 
     @TestCase
     public func testTxUpdateRefManyEmptyListClearsJunction(): Unit {
-        clearHooks()
         // 标记 true 且 ref_many 列表为空 → update 清空中间表（重建为空 = 清旧关联）
         let conn = CaptureConnection()
         conn.stmt.mockRowCount = 1
@@ -3136,7 +3049,6 @@ public class CascadeBoundaryTest {
 
     @TestCase
     public func testTxSaveThreeLevelDeepChain(): Unit {
-        clearHooks()
         // 三层嵌套：root → l2 → l3，自动递归，fk 逐层回填正确
         let conn = CaptureConnection()
         conn.stmt.mockLastInsertIdQueue.add(10)
@@ -3171,7 +3083,6 @@ public class CascadeBoundaryTest {
 
     @TestCase
     public func testTxUpdateCascadesVersionedChildIncrementsVersion(): Unit {
-        clearHooks()
         // 级联 update 子对象带乐观锁：子 UPDATE 含 version 校验并递增
         let conn = CaptureConnection()
         conn.stmt.mockRowCount = 1
@@ -3198,7 +3109,6 @@ public class CascadeBoundaryTest {
 
     @TestCase
     public func testTxUpdateCascadeVersionedChildConflictThrows(): Unit {
-        clearHooks()
         // 级联 update 子对象乐观锁冲突：父成功、子 rowCount=0 → 抛 OptimisticLockException
         let conn = CaptureConnection()
         conn.stmt.mockRowCountQueue.add(1)
@@ -3229,7 +3139,6 @@ public class CascadeBoundaryTest {
 
     @TestCase
     public func testTxSaveCascadesNewVersionedChildInitsVersion(): Unit {
-        clearHooks()
         // 级联 save 子对象（无 id）：version 0→1 初始化、父 id 回填子 fk、子 INSERT 带 version 列
         let conn = CaptureConnection()
         conn.stmt.mockLastInsertIdQueue.add(1)
@@ -3262,7 +3171,6 @@ public class CascadeBoundaryTest {
 public class TxDeleteHookAbortTest {
     @TestCase
     public func testTxDeleteHookAbortSkipsCascadeDelete(): Unit {
-        clearHooks()
         let conn = CaptureConnection()
         let rf = Refine(RMockDS(), SQLiteDialect(), 0)
         let tx = Tx(conn, rf, 0)
@@ -3287,7 +3195,6 @@ public class TxDeleteHookAbortTest {
 public class TxPhysicalDeleteCascadeTest {
     @TestCase
     public func testTxPhysicalDeleteCascadesChildren(): Unit {
-        clearHooks()
         let conn = CaptureConnection()
         let tx = Tx(conn)
         let p = SoftDeleteParent()
@@ -3318,7 +3225,6 @@ public class WritePathDialectQuotingTest {
 
     @TestCase
     public func testSaveSQLiteQuotesIdentifiers(): Unit {
-        clearHooks()
         let (conn, tx) = txWith(SQLiteDialect())
         let u = CamelUser()
         u.displayName = "Alice"
@@ -3328,7 +3234,6 @@ public class WritePathDialectQuotingTest {
 
     @TestCase
     public func testSaveMySQLQuotesIdentifiers(): Unit {
-        clearHooks()
         let (conn, tx) = txWith(MySQLDialect())
         let u = CamelUser()
         u.displayName = "Alice"
@@ -3338,7 +3243,6 @@ public class WritePathDialectQuotingTest {
 
     @TestCase
     public func testSavePostgresQuotesIdentifiers(): Unit {
-        clearHooks()
         // ManualIdPost 客户端主键：PG save 不触发 RETURNING，可断言整条 INSERT
         let (conn, tx) = txWith(PostgreSQLDialect())
         let p = ManualIdPost()
@@ -3350,7 +3254,6 @@ public class WritePathDialectQuotingTest {
 
     @TestCase
     public func testSavePostgresAutoPkReturningQuotesIdentifiers(): Unit {
-        clearHooks()
         let (conn, tx) = txWith(PostgreSQLDialect())
         conn.stmt.queryResult = RowQueryResult(7)
         let p = PgPost()
@@ -3364,7 +3267,6 @@ public class WritePathDialectQuotingTest {
 
     @TestCase
     public func testBatchSaveSQLiteQuotesIdentifiers(): Unit {
-        clearHooks()
         let (conn, tx) = txWith(SQLiteDialect())
         let u1 = CamelUser(); u1.displayName = "A"
         let u2 = CamelUser(); u2.displayName = "B"
@@ -3374,7 +3276,6 @@ public class WritePathDialectQuotingTest {
 
     @TestCase
     public func testBatchSaveMySQLQuotesIdentifiers(): Unit {
-        clearHooks()
         let (conn, tx) = txWith(MySQLDialect())
         let u1 = CamelUser(); u1.displayName = "A"
         let u2 = CamelUser(); u2.displayName = "B"
@@ -3384,7 +3285,6 @@ public class WritePathDialectQuotingTest {
 
     @TestCase
     public func testUpdateSQLiteQuotesIdentifiers(): Unit {
-        clearHooks()
         let (conn, tx) = txWith(SQLiteDialect())
         let u = CamelUser()
         u.id = 1
@@ -3395,7 +3295,6 @@ public class WritePathDialectQuotingTest {
 
     @TestCase
     public func testUpdateMySQLQuotesIdentifiers(): Unit {
-        clearHooks()
         let (conn, tx) = txWith(MySQLDialect())
         let u = CamelUser()
         u.id = 1
@@ -3406,7 +3305,6 @@ public class WritePathDialectQuotingTest {
 
     @TestCase
     public func testUpdatePostgresQuotesIdentifiers(): Unit {
-        clearHooks()
         let (conn, tx) = txWith(PostgreSQLDialect())
         let u = CamelUser()
         u.id = 1
@@ -3417,7 +3315,6 @@ public class WritePathDialectQuotingTest {
 
     @TestCase
     public func testUpdateCompoundPkQuotesIdentifiersSQLite(): Unit {
-        clearHooks()
         let (conn, tx) = txWith(SQLiteDialect())
         let ot = OrderItemTag()
         ot.order_id = 1
@@ -3429,7 +3326,6 @@ public class WritePathDialectQuotingTest {
 
     @TestCase
     public func testUpdateOnlyPkAndVersionNoLeadingCommaSQLite(): Unit {
-        clearHooks()
         let (conn, tx) = txWith(SQLiteDialect())
         conn.stmt.mockRowCount = 1
         let e = VersionedOnly()
@@ -3443,7 +3339,6 @@ public class WritePathDialectQuotingTest {
 
     @TestCase
     public func testUpdateOnlyPkAndVersionNoLeadingCommaPostgres(): Unit {
-        clearHooks()
         let (conn, tx) = txWith(PostgreSQLDialect())
         conn.stmt.mockRowCount = 1
         let e = VersionedOnly()
@@ -3456,7 +3351,6 @@ public class WritePathDialectQuotingTest {
 
     @TestCase
     public func testDeleteSQLiteQuotesIdentifiers(): Unit {
-        clearHooks()
         let (conn, tx) = txWith(SQLiteDialect())
         let u = CamelUser()
         u.id = 1
@@ -3466,7 +3360,6 @@ public class WritePathDialectQuotingTest {
 
     @TestCase
     public func testDeleteCompoundPkSQLiteQuotesIdentifiers(): Unit {
-        clearHooks()
         let (conn, tx) = txWith(SQLiteDialect())
         let ot = OrderItemTag()
         ot.order_id = 1
@@ -3477,7 +3370,6 @@ public class WritePathDialectQuotingTest {
 
     @TestCase
     public func testSoftDeleteSQLiteQuotesIdentifiers(): Unit {
-        clearHooks()
         let (conn, tx) = txWith(SQLiteDialect())
         let u = SoftUser()
         u.id = 1
@@ -3487,7 +3379,6 @@ public class WritePathDialectQuotingTest {
 
     @TestCase
     public func testSoftDeletePostgresQuotesIdentifiers(): Unit {
-        clearHooks()
         let (conn, tx) = txWith(PostgreSQLDialect())
         let u = SoftUser()
         u.id = 1
@@ -3497,7 +3388,6 @@ public class WritePathDialectQuotingTest {
 
     @TestCase
     public func testBatchUpdateSQLiteQuotesIdentifiers(): Unit {
-        clearHooks()
         let (conn, tx) = txWith(SQLiteDialect())
         let u1 = CamelUser(); u1.id = 1; u1.displayName = "A"
         let u2 = CamelUser(); u2.id = 2; u2.displayName = "B"
@@ -3507,7 +3397,6 @@ public class WritePathDialectQuotingTest {
 
     @TestCase
     public func testBatchUpdateMySQLQuotesIdentifiers(): Unit {
-        clearHooks()
         let (conn, tx) = txWith(MySQLDialect())
         let u1 = CamelUser(); u1.id = 1; u1.displayName = "A"
         let u2 = CamelUser(); u2.id = 2; u2.displayName = "B"
@@ -3517,7 +3406,6 @@ public class WritePathDialectQuotingTest {
 
     @TestCase
     public func testBatchUpdatePostgresQuotesIdentifiers(): Unit {
-        clearHooks()
         let (conn, tx) = txWith(PostgreSQLDialect())
         let u1 = CamelUser(); u1.id = 1; u1.displayName = "A"
         let u2 = CamelUser(); u2.id = 2; u2.displayName = "B"
@@ -3528,7 +3416,6 @@ public class WritePathDialectQuotingTest {
 
     @TestCase
     public func testBatchUpdatePostgresCastSuffixQuotesIdentifiers(): Unit {
-        clearHooks()
         let (conn, tx) = txWith(PostgreSQLDialect())
         let p1 = PgPost(); p1.id = 1; p1.title = "A"; p1.content = "X"
         let p2 = PgPost(); p2.id = 2; p2.title = "B"; p2.content = "Y"
@@ -3538,7 +3425,6 @@ public class WritePathDialectQuotingTest {
 
     @TestCase
     public func testBatchUpdateCompoundPkSQLiteQuotesIdentifiers(): Unit {
-        clearHooks()
         let (conn, tx) = txWith(SQLiteDialect())
         let ot1 = OrderItemTag(); ot1.order_id = 1; ot1.item_id = 2; ot1.quantity = 5
         let ot2 = OrderItemTag(); ot2.order_id = 3; ot2.item_id = 4; ot2.quantity = 6
@@ -3553,7 +3439,6 @@ public class WritePathDialectQuotingTest {
 public class C2IncludePreloadTest {
     @TestCase
     public func testRefToIncludeDefaultAllColumns(): Unit {
-        clearHooks()
         let conn = CaptureConnection()
         let tx = Tx(conn)
         let cols: Array<ColumnInfo> = [
@@ -3581,7 +3466,6 @@ public class C2IncludePreloadTest {
 
     @TestCase
     public func testRefToIncludeSubsetFieldsNoThrow(): Unit {
-        clearHooks()
         let conn = CaptureConnection()
         let tx = Tx(conn)
         let cols: Array<ColumnInfo> = [
@@ -3610,7 +3494,6 @@ public class C2IncludePreloadTest {
 
     @TestCase
     public func testRefToIncludeNullTargetKeepsRow(): Unit {
-        clearHooks()
         let conn = CaptureConnection()
         let tx = Tx(conn)
         // 模拟 LEFT JOIN 无匹配：目标列缺失（target id 不在结果集中）
@@ -3635,7 +3518,6 @@ public class C2IncludePreloadTest {
 
     @TestCase
     public func testHasManyIncludeSubsetFieldsNoThrow(): Unit {
-        clearHooks()
         let conn = CaptureConnection()
         let tx = Tx(conn)
         let cols: Array<ColumnInfo> = [
@@ -3666,7 +3548,6 @@ public class C2IncludePreloadTest {
 
     @TestCase
     public func testRefManyIncludeSubsetFieldsNoThrow(): Unit {
-        clearHooks()
         let conn = CaptureConnection()
         let tx = Tx(conn)
         let cols: Array<ColumnInfo> = [
@@ -3738,7 +3619,6 @@ private func containsInt(arr: ArrayList<Any>, target: Int64): Bool {
 public class RelationMutationTest {
     @TestCase
     public func testAddCommentsNewChildInserts(): Unit {
-        clearHooks()
         let conn = CaptureConnection()
         let tx = Tx(conn)
         let post = PostWithRel()
@@ -3752,7 +3632,6 @@ public class RelationMutationTest {
 
     @TestCase
     public func testAddCommentsPersistedChildUpdates(): Unit {
-        clearHooks()
         let conn = CaptureConnection()
         let tx = Tx(conn)
         let post = PostWithRel()
@@ -3767,7 +3646,6 @@ public class RelationMutationTest {
 
     @TestCase
     public func testSetProfileNewChildInserts(): Unit {
-        clearHooks()
         let conn = CaptureConnection()
         let tx = Tx(conn)
         let user = UserWithRel()
@@ -3782,7 +3660,6 @@ public class RelationMutationTest {
     // 旧 profile 已存在且新 profile 是不同持久化行：先 DELETE 旧子对象再 update 新子对象
     @TestCase
     public func testSetProfileClearsOldThenUpdates(): Unit {
-        clearHooks()
         let conn = CaptureConnection()
         conn.stmt.queryResult = profileResult(5, "old", 1)
         let tx = Tx(conn)
@@ -3801,7 +3678,6 @@ public class RelationMutationTest {
     // 重置同一个持久化 profile：不得 DELETE（避免删除后 update 命中 0 行丢数据）
     @TestCase
     public func testSetProfileSameChildNoDelete(): Unit {
-        clearHooks()
         let conn = CaptureConnection()
         conn.stmt.queryResult = profileResult(5, "old", 1)
         let tx = Tx(conn)
@@ -3821,7 +3697,6 @@ public class RelationMutationTest {
     // 旧 profile 已存在而新 profile 是新行：先 DELETE 旧子对象再 INSERT 新子对象
     @TestCase
     public func testSetProfileNewChildWithOldClears(): Unit {
-        clearHooks()
         let conn = CaptureConnection()
         conn.stmt.queryResult = profileResult(5, "old", 1)
         let tx = Tx(conn)
@@ -3838,7 +3713,6 @@ public class RelationMutationTest {
     // String 主键子对象（UuidComment.id: String）：id 为空 → INSERT，覆盖 addX 的 String 分支
     @TestCase
     public func testAddCommentsStringPkNewChildInserts(): Unit {
-        clearHooks()
         let conn = CaptureConnection()
         let tx = Tx(conn)
         let post = UuidPostWithRel()
@@ -3853,7 +3727,6 @@ public class RelationMutationTest {
     // String 主键子对象已持久化（id 非空）→ UPDATE，覆盖 addX 的 String 分支
     @TestCase
     public func testAddCommentsStringPkPersistedChildUpdates(): Unit {
-        clearHooks()
         let conn = CaptureConnection()
         let tx = Tx(conn)
         let post = UuidPostWithRel()
@@ -3932,7 +3805,6 @@ public class DocSyncSyntaxTest {
 
     @TestCase
     public func testDocSyntaxHasManyMethodsWork(): Unit {
-        clearHooks()
         let conn = CaptureConnection()
         let tx = Tx(conn)
         let post = DocRelPost()
@@ -3948,7 +3820,6 @@ public class DocSyncSyntaxTest {
     // include(rel, fields) 双参重载（setFields 链式返回 Relation 基类，不能直接传给 include(IRelation)）
     @TestCase
     public func testDocSyntaxIncludeTwoArg(): Unit {
-        clearHooks()
         let conn = CaptureConnection()
         let tx = Tx(conn)
         let q = DocRelBook.query()
