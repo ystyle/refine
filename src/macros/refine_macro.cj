@@ -102,6 +102,9 @@ public macro Refine(input: Tokens): Tokens {
     let mapperFuncName = Token(TokenKind.IDENTIFIER, className + "RowMapper")
     let selectCols = buildSelectColumnTokens(mergedFields)
     let nameLit = Token(TokenKind.STRING_LITERAL, className)
+    // Task 7: includeAll 字符串路径 DSL 需要顶层关系解析器。随 query() 挂载
+    // `<实体>Rel.forName`（静态方法引用，类型 (String) -> Option<IRelation>）。
+    let relResolverName = Token(TokenKind.IDENTIFIER, className + "Rel")
     let queryTokens = if (isSoftDelete) {
         quote(
             public static func query(): Query<$(classNameToken)> {
@@ -112,6 +115,7 @@ public macro Refine(input: Tokens): Tokens {
                 q.filter(Expr.Binary(Expr.Column("deleted_at"), BinOp.Eq, Expr.Value(0)))
                 q.setMapper($(mapperFuncName))
                 q.setKeyExtractor($(keyExtractorFuncName))
+                q.setRelResolver($(relResolverName).forName);
                 $(rawIdSetterTokens)
                 q
             }
@@ -125,6 +129,7 @@ public macro Refine(input: Tokens): Tokens {
                 q.from($(Token(TokenKind.STRING_LITERAL, tableName)))
                 q.setMapper($(mapperFuncName))
                 q.setKeyExtractor($(keyExtractorFuncName))
+                q.setRelResolver($(relResolverName).forName);
                 $(rawIdSetterTokens)
                 q
             }

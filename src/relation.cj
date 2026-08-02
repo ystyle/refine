@@ -58,6 +58,14 @@ public interface IRelation {
     func getNested(): Array<IRelation> { [] }
     // 新增：批量查询支持标记（默认 true，预留）
     func isBatchSupported(): Bool { true }
+    // Task 7: includeAll 字符串路径 DSL 的目标 Rel 类解析器。宏层为每个关系生成
+    // `{ n: String => <目标类Rel>.forName(n) }` 闭包（目标 Rel 类的 forName 静态方法在
+    // 编译期可解析），供 Query.includeAll 解析点号路径的后缀段（如 "author.profile" 的
+    // "profile" 在 author 的目标 Rel 类上解析）。默认返回恒 None 的闭包：自定义 IRelation
+    // 未提供解析器时 includeAll 嵌套段解析失败统一抛 QueryException（错误语义一致）。
+    func getTargetRelResolver(): (String) -> Option<IRelation> {
+        { n: String => None }
+    }
 }
 
 public open class Relation<TTarget> <: IRelation {
@@ -78,6 +86,10 @@ public open class Relation<TTarget> <: IRelation {
     // Task 5: ref_many 的中间表目标列名（见 IRelation.getJunctionTargetCol 注释），
     // 仅 RefMany 构造时由宏层设置，其余关系保持 ""
     var junctionTargetCol: String = ""
+    // Task 7: 目标实体 Rel 类解析器（见 IRelation.getTargetRelResolver 注释）。宏层在
+    // buildRelClass 生成静态成员时用 attachTargetRelResolver 注入
+    // `{ n: String => <目标类Rel>.forName(n) }`；手工构造的关系保持默认恒 None。
+    var targetRelResolver: (String) -> Option<IRelation> = { n: String => None }
     private var nested = ArrayList<IRelation>()
 
     public init(name: String, targetTable: String, kind: RelationKind,
@@ -134,6 +146,14 @@ public open class Relation<TTarget> <: IRelation {
         this.junctionTargetCol
     }
 
+    public func setTargetRelResolver(r: (String) -> Option<IRelation>): Unit {
+        this.targetRelResolver = r
+    }
+
+    public func getTargetRelResolver(): (String) -> Option<IRelation> {
+        this.targetRelResolver
+    }
+
     public func withInclude(rel: IRelation): IRelation {
         if (hasNested(rel)) {
             return this
@@ -151,6 +171,7 @@ public open class Relation<TTarget> <: IRelation {
         c.targetIdExtractor = this.targetIdExtractor
         c.condition = this.condition
         c.junctionTargetCol = this.junctionTargetCol
+        c.targetRelResolver = this.targetRelResolver
         for (n in nested) {
             c.nested.add(n)
         }
@@ -225,3 +246,13 @@ public func dummyMapper(result: QueryResult, cm: HashMap<String, Int64>): Any { 
 public func dummySetter(entity: Any, target: Any): Unit {}
 public func dummyFkExtractor(entity: Any): Any { 0 }
 public func dummyTargetIdExtractor(target: Any): Any { 0 }
+
+// Task 7: 保留具体类型的解析器注入辅助。宏层生成的 `static let author = RefTo<Author>(...)`
+// 需要挂载目标 Rel 类解析器（getTargetRelResolver）且不丢失静态成员的具体类型
+// （RefTo<Author> 而非 Relation<Author>），故用泛型 R 保留原类型：
+// `R <: Relation<T>` 约束下调用基类 setTargetRelResolver 后原样返回 rel。
+// 若直接在静态成员构造上调返回 Relation<TTarget> 的方法会丢具体类型，影响成员类型推导。
+public func attachTargetRelResolver<R, T>(rel: R, resolver: (String) -> Option<IRelation>): R where R <: Relation<T> {
+    rel.setTargetRelResolver(resolver)
+    rel
+}

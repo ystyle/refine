@@ -572,6 +572,56 @@ public class PostgreSQLIntegrationTest {
         }
     }
 
+    // ─── Task 7：includeAll 字符串点号路径端到端（真实 PG） ─────────────────────
+    // includeAll(["author.profile"]) 与上方 withInclude 链等价：主查询 + author 批量 +
+    // profile 批量三次查询，Post.author.profile 逐级装配。验证字符串路径 DSL 走真实
+    // 批量装配路径（与 include(PostRel.author.withInclude(UserRel.profile)) 同一引擎）。
+    @TestCase
+    public func testIncludeAllStringPath(): Unit {
+        match (tryPostgres()) {
+            case Some(rf) =>
+                rf.transaction { tx: Tx =>
+                    tx.execute("DROP TABLE IF EXISTS \"nestedSkill\"", [])
+                    tx.execute("DROP TABLE IF EXISTS \"nestedComment\"", [])
+                    tx.execute("DROP TABLE IF EXISTS \"nestedProfile\"", [])
+                    tx.execute("DROP TABLE IF EXISTS \"nestedUser\"", [])
+                    tx.execute("DROP TABLE IF EXISTS \"nestedPost\"", [])
+                }
+                let m = rf.migrator()
+                m.autoMigrate([NestedPostSchema(), NestedUserSchema(), NestedProfileSchema()])
+                rf.transaction { tx: Tx => tx.execute("INSERT INTO \"nestedUser\" (\"name\") VALUES (?)", ["Alice"]) }
+                let u = NestedUser.query().using(rf).filter(NestedUser.col().name == "Alice").one()
+                @Expect(u.isSome(), true)
+                let uid = u.getOrThrow().id
+                rf.transaction { tx: Tx =>
+                    tx.execute("INSERT INTO \"nestedProfile\" (\"bio\", \"user_id\") VALUES (?, ?)", ["engineer", uid])
+                    tx.execute("INSERT INTO \"nestedPost\" (\"title\", \"user_id\") VALUES (?, ?)", ["p1", uid])
+                }
+                let found = NestedPost.query()
+                    .includeAll(["author.profile"])
+                    .using(rf)
+                    .filter(NestedPost.col().title == "p1")
+                    .one()
+                @Expect(found.isSome(), true)
+                let post = found.getOrThrow()
+                @Expect(post.title, "p1")
+                match (post.author) {
+                    case Some(a) =>
+                        @Expect(a.id, uid)
+                        @Expect(a.name, "Alice")
+                        match (a.profile) {
+                            case Some(p) =>
+                                @Expect(p.bio, "engineer")
+                                @Expect(p.user_id, uid)
+                            case None => @Expect(true, false)
+                        }
+                    case None => @Expect(true, false)
+                }
+                rf.close()
+            case None => @Expect(true, true)
+        }
+    }
+
     // ─── batch include Task 6：嵌套 ref_many junction 源列修正（真实 PG） ───────────
     // Post.author（ref_to NestedUser）withInclude NestedUser.tags（ref_many）。junction 源列
     // 必须是当前层级表 nestedUser_id（而非顶层 nestedPost_id）——修复前生成 "<顶层表>_id"

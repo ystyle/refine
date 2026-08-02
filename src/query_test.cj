@@ -2552,3 +2552,384 @@ public class NestedIncludeTest {
         }
     }
 }
+
+// Task 7: includeAll 字符串点号路径 DSL（宏层 forName + getTargetRelResolver）。
+// 全部断言针对宏生成的 Nested* fixture 链（NestedPost.author → NestedUser.profile →
+// NestedProfile.skills，NestedUser.tags 为 ref_many NestedTag）。
+@Test
+public class StringPathIncludeTest {
+
+    // forName：已知关系名解析到对应静态成员（author → ref_to NestedUser）。
+    @TestCase
+    public func testForNameResolvesKnownRelation(): Unit {
+        match (NestedPostRel.forName("author")) {
+            case Some(r) =>
+                let (kind, name, targetTable, _, _, _) = r.resolve()
+                @Expect(kind == RelationKind.RefToRel, true)
+                @Expect(name, "author")
+                @Expect(targetTable, "nestedUser")
+            case None => @Fail("forName('author') should return Some")
+        }
+    }
+
+    // forName：与宏生成的静态成员是同一个对象（includeAll 顶层解析必须等价于 include(PostRel.author)）。
+    @TestCase
+    public func testForNameReturnsSameStaticMember(): Unit {
+        match (NestedPostRel.forName("author")) {
+            case Some(r) =>
+                let (k1, n1, t1, f1, v1, fs1) = r.resolve()
+                let (k2, n2, t2, f2, v2, fs2) = NestedPostRel.author.resolve()
+                @Expect(k1 == k2, true)
+                @Expect(n1, n2)
+                @Expect(t1, t2)
+                @Expect(f1, f2)
+                @Expect(v1, v2)
+                @Expect(fs1.size, fs2.size)
+            case None => @Fail("forName('author') should return Some")
+        }
+    }
+
+    // forName：未知关系名返回 None。
+    @TestCase
+    public func testForNameReturnsNoneForUnknown(): Unit {
+        match (NestedPostRel.forName("doesNotExist")) {
+            case Some(_) => @Fail("expected None for unknown relation name")
+            case None => ()
+        }
+    }
+
+    // getTargetRelResolver：关系携带目标实体 Rel 类的 forName 闭包（author 的目标是
+    // NestedUser，故 "profile" 解析到 NestedUserRel.profile）。
+    @TestCase
+    public func testGetTargetRelResolver(): Unit {
+        match (NestedPostRel.author.getTargetRelResolver()("profile")) {
+            case Some(r) =>
+                let (_, name, targetTable, _, _, _) = r.resolve()
+                @Expect(name, "profile")
+                @Expect(targetTable, "nestedProfile")
+            case None => @Fail("expected 'profile' via target rel resolver")
+        }
+        match (NestedPostRel.author.getTargetRelResolver()("doesNotExist")) {
+            case Some(_) => @Fail("expected None for unknown nested relation")
+            case None => ()
+        }
+    }
+
+    // 单段路径：includeAll(["author"]) 等价于 include(NestedPostRel.author)。
+    @TestCase
+    public func testIncludeAllSinglePath(): Unit {
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        let mainCols: Array<SqlColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("title", false),
+            MapperMockColumnInfo("user_id", false),
+        ]
+        let mainRow = Array<Any>(3, {i => if (i == 0) { 1 } else if (i == 1) { "p1" } else { 99 }})
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(mainCols, [mainRow]))
+        let userCols: Array<SqlColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("name", false),
+        ]
+        let userRow = Array<Any>(2, {i => if (i == 0) { 99 } else { "Alice" }})
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(userCols, [userRow]))
+        let q = NestedPost.query()
+            .includeAll(["author"])
+            .using(tx)
+        let entities = q.all()
+        // 主查询 + author 批量 = 两次查询
+        @Expect(conn.stmt.capturedSqlHistory.size, 2)
+        @Expect(conn.stmt.capturedSqlHistory[1].contains("FROM \"nestedUser\""), true)
+        @Expect(conn.stmt.capturedSqlHistory[1].contains("IN (?)"), true)
+        @Expect(entities.size, 1)
+        @Expect(entities[0].author.isSome(), true)
+        @Expect(entities[0].author.getOrThrow().id, 99)
+        @Expect(entities[0].author.getOrThrow().name, "Alice")
+    }
+
+    // 多段路径：includeAll(["author.profile"]) 等价于
+    // include(NestedPostRel.author.withInclude(NestedUserRel.profile))。
+    @TestCase
+    public func testIncludeAllNestedPath(): Unit {
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        let mainCols: Array<SqlColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("title", false),
+            MapperMockColumnInfo("user_id", false),
+        ]
+        let mainRow = Array<Any>(3, {i => if (i == 0) { 1 } else if (i == 1) { "p1" } else { 99 }})
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(mainCols, [mainRow]))
+        let userCols: Array<SqlColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("name", false),
+        ]
+        let userRow = Array<Any>(2, {i => if (i == 0) { 99 } else { "Alice" }})
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(userCols, [userRow]))
+        let profileCols: Array<SqlColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("user_id", false),
+            MapperMockColumnInfo("bio", false),
+        ]
+        let profileRow = Array<Any>(3, {i => if (i == 0) { 5 } else if (i == 1) { 99 } else { "engineer" }})
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(profileCols, [profileRow]))
+        let q = NestedPost.query()
+            .includeAll(["author.profile"])
+            .using(tx)
+        let entities = q.all()
+        @Expect(conn.stmt.capturedSqlHistory.size, 3)
+        @Expect(conn.stmt.capturedSqlHistory[1].contains("FROM \"nestedUser\""), true)
+        @Expect(conn.stmt.capturedSqlHistory[2].contains("FROM \"nestedProfile\""), true)
+        @Expect(conn.stmt.capturedSqlHistory[2].contains("WHERE \"user_id\" IN (?)"), true)
+        @Expect(entities.size, 1)
+        @Expect(entities[0].author.getOrThrow().id, 99)
+        @Expect(entities[0].author.getOrThrow().profile.isSome(), true)
+        @Expect(entities[0].author.getOrThrow().profile.getOrThrow().bio, "engineer")
+    }
+
+    // 多路径数组：includeAll(["profile", "comments"]) 一次装配两条顶层关系。
+    @TestCase
+    public func testIncludeAllMultiplePaths(): Unit {
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        let mainCols: Array<SqlColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("name", false),
+        ]
+        let mainRow = Array<Any>(2, {i => if (i == 0) { 1 } else { "u1" }})
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(mainCols, [mainRow]))
+        let profileCols: Array<SqlColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("user_id", false),
+            MapperMockColumnInfo("bio", false),
+        ]
+        let profileRow = Array<Any>(3, {i => if (i == 0) { 5 } else if (i == 1) { 1 } else { "engineer" }})
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(profileCols, [profileRow]))
+        let commentCols: Array<SqlColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("user_id", false),
+            MapperMockColumnInfo("body", false),
+        ]
+        let commentRow = Array<Any>(3, {i => if (i == 0) { 10 } else if (i == 1) { 1 } else { "c1" }})
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(commentCols, [commentRow]))
+        let q = NestedUser.query()
+            .includeAll(["profile", "comments"])
+            .using(tx)
+        let entities = q.all()
+        // 主查询 + profile 批量 + comments 批量（不同目标表各一条）= 三次查询
+        @Expect(conn.stmt.capturedSqlHistory.size, 3)
+        @Expect(conn.stmt.capturedSqlHistory[1].contains("FROM \"nestedProfile\""), true)
+        @Expect(conn.stmt.capturedSqlHistory[2].contains("FROM \"nestedComment\""), true)
+        @Expect(entities.size, 1)
+        @Expect(entities[0].profile.getOrThrow().bio, "engineer")
+        @Expect(entities[0].comments.size, 1)
+        @Expect(entities[0].comments[0].body, "c1")
+    }
+
+    // 三层深路径：includeAll(["author.profile.skills"])，每层一条批量查询共 4 次。
+    @TestCase
+    public func testIncludeAllDeepPath(): Unit {
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        let mainCols: Array<SqlColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("title", false),
+            MapperMockColumnInfo("user_id", false),
+        ]
+        let mainRow = Array<Any>(3, {i => if (i == 0) { 1 } else if (i == 1) { "p1" } else { 99 }})
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(mainCols, [mainRow]))
+        let userCols: Array<SqlColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("name", false),
+        ]
+        let userRow = Array<Any>(2, {i => if (i == 0) { 99 } else { "Alice" }})
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(userCols, [userRow]))
+        let profileCols: Array<SqlColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("user_id", false),
+            MapperMockColumnInfo("bio", false),
+        ]
+        let profileRow = Array<Any>(3, {i => if (i == 0) { 5 } else if (i == 1) { 99 } else { "engineer" }})
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(profileCols, [profileRow]))
+        let skillCols: Array<SqlColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("profile_id", false),
+            MapperMockColumnInfo("name", false),
+        ]
+        let skillRow = Array<Any>(3, {i => if (i == 0) { 100 } else if (i == 1) { 5 } else { "cangjie" }})
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(skillCols, [skillRow]))
+        let q = NestedPost.query()
+            .includeAll(["author.profile.skills"])
+            .using(tx)
+        let entities = q.all()
+        @Expect(conn.stmt.capturedSqlHistory.size, 4)
+        @Expect(conn.stmt.capturedSqlHistory[3].contains("FROM \"nestedSkill\""), true)
+        @Expect(conn.stmt.capturedSqlHistory[3].contains("WHERE \"profile_id\" IN (?)"), true)
+        @Expect(entities.size, 1)
+        let profile = entities[0].author.getOrThrow().profile.getOrThrow()
+        @Expect(profile.skills.size, 1)
+        @Expect(profile.skills[0].id, 100)
+        @Expect(profile.skills[0].name, "cangjie")
+    }
+
+    // 嵌套 ref_many：includeAll(["tags.notes"])——junction 源列仍是当前层级表
+    // nestedUser_id（顶层主查询表），与 withInclude 链等价。
+    @TestCase
+    public func testIncludeAllRefManyNested(): Unit {
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        let mainCols: Array<SqlColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("name", false),
+        ]
+        let mainRow = Array<Any>(2, {i => if (i == 0) { 1 } else { "u1" }})
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(mainCols, [mainRow]))
+        let tagCols: Array<SqlColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("name", false),
+            MapperMockColumnInfo("nestedUser_id", false),
+        ]
+        let tagRow = Array<Any>(3, {i => if (i == 0) { 10 } else if (i == 1) { "t1" } else { 1 }})
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(tagCols, [tagRow]))
+        let noteCols: Array<SqlColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("tag_id", false),
+            MapperMockColumnInfo("body", false),
+        ]
+        let noteRow = Array<Any>(3, {i => if (i == 0) { 100 } else if (i == 1) { 10 } else { "n1" }})
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(noteCols, [noteRow]))
+        let q = NestedUser.query()
+            .includeAll(["tags.notes"])
+            .using(tx)
+        let entities = q.all()
+        @Expect(conn.stmt.capturedSqlHistory.size, 3)
+        @Expect(conn.stmt.capturedSqlHistory[1].contains("FROM \"nestedUser_tags\" JOIN \"nestedTag\""), true)
+        @Expect(conn.stmt.capturedSqlHistory[1].contains("\"nestedUser_tags\".\"nestedUser_id\" IN (?)"), true)
+        @Expect(conn.stmt.capturedSqlHistory[2].contains("FROM \"nestedTagNote\""), true)
+        @Expect(entities.size, 1)
+        @Expect(entities[0].tags.size, 1)
+        @Expect(entities[0].tags[0].id, 10)
+        @Expect(entities[0].tags[0].notes.size, 1)
+        @Expect(entities[0].tags[0].notes[0].body, "n1")
+    }
+
+    // includeAll 与 withInclude 链的 SQL 完全一致（同一装配路径，等价性证明）。
+    @TestCase
+    public func testIncludeAllEqualsWithIncludeChain(): Unit {
+        let connA = CaptureConnection()
+        let txA = Tx(connA)
+        let connB = CaptureConnection()
+        let txB = Tx(connB)
+        for (conn in [connA, connB]) {
+            let mainCols: Array<SqlColumnInfo> = [
+                MapperMockColumnInfo("id", false),
+                MapperMockColumnInfo("title", false),
+                MapperMockColumnInfo("user_id", false),
+            ]
+            let mainRow = Array<Any>(3, {i => if (i == 0) { 1 } else if (i == 1) { "p1" } else { 99 }})
+            conn.stmt.queryResultQueue.add(MapperMockQueryResult(mainCols, [mainRow]))
+            let userCols: Array<SqlColumnInfo> = [
+                MapperMockColumnInfo("id", false),
+                MapperMockColumnInfo("name", false),
+            ]
+            let userRow = Array<Any>(2, {i => if (i == 0) { 99 } else { "Alice" }})
+            conn.stmt.queryResultQueue.add(MapperMockQueryResult(userCols, [userRow]))
+            let profileCols: Array<SqlColumnInfo> = [
+                MapperMockColumnInfo("id", false),
+                MapperMockColumnInfo("user_id", false),
+                MapperMockColumnInfo("bio", false),
+            ]
+            let profileRow = Array<Any>(3, {i => if (i == 0) { 5 } else if (i == 1) { 99 } else { "engineer" }})
+            conn.stmt.queryResultQueue.add(MapperMockQueryResult(profileCols, [profileRow]))
+        }
+        let a = NestedPost.query().includeAll(["author.profile"]).using(txA).all()
+        let b = NestedPost.query()
+            .include(NestedPostRel.author.withInclude(NestedUserRel.profile))
+            .using(txB)
+            .all()
+        @Expect(connA.stmt.capturedSqlHistory.size, connB.stmt.capturedSqlHistory.size)
+        for (i in 0..connA.stmt.capturedSqlHistory.size) {
+            @Expect(connA.stmt.capturedSqlHistory[i], connB.stmt.capturedSqlHistory[i])
+        }
+        @Expect(a.size, b.size)
+        @Expect(a[0].author.getOrThrow().id, b[0].author.getOrThrow().id)
+        @Expect(a[0].author.getOrThrow().profile.getOrThrow().bio, b[0].author.getOrThrow().profile.getOrThrow().bio)
+    }
+
+    // 未知顶层关系：立即抛 QueryException（带关系名），不发任何查询。
+    @TestCase
+    public func testIncludeAllUnknownTopLevelThrows(): Unit {
+        let q = NestedPost.query()
+        try {
+            q.includeAll(["doesNotExist"])
+            @Fail("expected QueryException for unknown top-level relation")
+        } catch (e: QueryException) {
+            @Expect(e.message.contains("doesNotExist"), true)
+        }
+    }
+
+    // 未知嵌套关系：抛 QueryException，消息带失败段与已解析前缀。
+    @TestCase
+    public func testIncludeAllUnknownNestedThrows(): Unit {
+        let q = NestedPost.query()
+        try {
+            q.includeAll(["author.doesNotExist"])
+            @Fail("expected QueryException for unknown nested relation")
+        } catch (e: QueryException) {
+            @Expect(e.message.contains("doesNotExist"), true)
+            @Expect(e.message.contains("author"), true)
+        }
+    }
+
+    // 空路径字符串：抛 QueryException。
+    @TestCase
+    public func testIncludeAllEmptyPathThrows(): Unit {
+        let q = NestedPost.query()
+        try {
+            q.includeAll([""])
+            @Fail("expected QueryException for empty path")
+        } catch (e: QueryException) {
+            @Expect(e.message.contains("empty"), true)
+        }
+    }
+
+    // 空路径段（"author..profile" / ".author"）：抛 QueryException。
+    @TestCase
+    public func testIncludeAllEmptySegmentThrows(): Unit {
+        let q = NestedPost.query()
+        try {
+            q.includeAll(["author..profile"])
+            @Fail("expected QueryException for empty path segment")
+        } catch (e: QueryException) {
+            @Expect(e.message.contains("empty"), true)
+        }
+        try {
+            q.includeAll([".author"])
+            @Fail("expected QueryException for leading dot")
+        } catch (e: QueryException) {
+            @Expect(e.message.contains("empty"), true)
+        }
+    }
+
+    // 未挂载 relResolver 的手工 Query：抛带说明的 QueryException。
+    @TestCase
+    public func testIncludeAllNoResolverWiredThrows(): Unit {
+        let q = Query<NestedPost>()
+        try {
+            q.includeAll(["author"])
+            @Fail("expected QueryException when no rel resolver wired")
+        } catch (e: QueryException) {
+            @Expect(e.message.contains("resolver"), true)
+        }
+    }
+
+    // 空路径数组：no-op，返回自身（对返回的 Query 继续 include 会反映到原 Query 上）。
+    @TestCase
+    public func testIncludeAllEmptyPathsNoop(): Unit {
+        let q = NestedPost.query()
+        let same = q.includeAll([])
+        @Expect(q.included.size, 0)
+        same.include(NestedPostRel.author)
+        @Expect(q.included.size, 1)
+    }
+}

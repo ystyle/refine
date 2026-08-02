@@ -28,7 +28,6 @@ func buildColsStruct(className: String, cd: ClassDecl, internalNames: ArrayList<
 
 func buildRelClass(className: String, rels: ArrayList<RelInfo>): Tokens {
     let relClassName = Token(TokenKind.IDENTIFIER, className + "Rel")
-    if (rels.size == 0) { return quote(public class $(relClassName) {}) }
     var body = Tokens()
     var first = true
     for (i in 0..rels.size) {
@@ -46,6 +45,19 @@ func buildRelClass(className: String, rels: ArrayList<RelInfo>): Tokens {
         let targetIdExtractorIdent = Token(TokenKind.IDENTIFIER, r.fieldName + "TargetIdExtractor")
         let targetTypeIdent = Token(TokenKind.IDENTIFIER, r.target)
         let targetIdFieldIdent = Token(TokenKind.IDENTIFIER, "id")
+        // Task 7: 目标实体 Rel 类解析器闭包。includeAll 解析点号路径后缀段时，在上一层
+        // 关系的目标实体 Rel 类上继续解析（如 "author.profile" 的 "profile" 在
+        // NestedUserRel 上）。目标 Rel 类的 forName 静态方法与本体同包编译，引用可解析。
+        // 注意：解析器必须声明为「独立静态 let 的直接 lambda」，而非内联在 relation 构造
+        // 调用的实参里——仓颉静态初始化顺序检查只追踪「函数调用实参」里的跨类引用，直接
+        // lambda 值不追踪。内联写法会让 PostRel.author 的初始化被检查器追踪到 UserRel
+        // 的静态成员（声明靠后），报 "used before initialization"（NestedPost 链、自引用
+        // Category.children 均触发，见 Task 7 实现记录）。
+        let targetRelClass = Token(TokenKind.IDENTIFIER, r.target + "Rel")
+        let resolverIdent = Token(TokenKind.IDENTIFIER, r.fieldName + "Resolver")
+        let resolverLet = quote(
+            public static let $(resolverIdent) = { n: String => $(targetRelClass).forName(n) }
+        )
         body = body + quote(
             public static let $(mapperIdent) = $(mapperFuncIdent)
         )
@@ -94,6 +106,10 @@ func buildRelClass(className: String, rels: ArrayList<RelInfo>): Tokens {
             fieldsTok = fieldsTok + Token(TokenKind.LPAREN)
             fieldsTok = fieldsTok + Token(TokenKind.RPAREN)
         }
+        // Task 7: 目标 Rel 类解析器先于 relation 静态成员声明（relation 依赖它，
+        // 声明顺序必须靠前）。见上方注释：直接 lambda 形式规避静态初始化顺序检查。
+        body = body + resolverLet
+        body = body + Token(TokenKind.NL)
         if (r.kind == "ref_to") {
             let fkLit = Token(TokenKind.STRING_LITERAL, r.by)
             let extractorIdent = Token(TokenKind.IDENTIFIER, r.fieldName + "FkExtractor")
@@ -109,18 +125,20 @@ func buildRelClass(className: String, rels: ArrayList<RelInfo>): Tokens {
                 }
             )
             body = body + Token(TokenKind.NL)
+            // Task 7: attachTargetRelResolver 保留静态成员具体类型（RefTo<Target>）的同时
+            // 注入目标 Rel 类解析器闭包（getTargetRelResolver 供 includeAll 解析嵌套段）。
             body = body + quote(
-                public static let $(fieldIdent) = RefTo<$(targetType)>($(nameLit), Col<Any>($(fkLit)), $(fieldsTok), $(targetTableExpr), $(mapperIdent), $(setterIdent), $(extractorIdent), $(targetIdExtractorIdent))
+                public static let $(fieldIdent) = attachTargetRelResolver(RefTo<$(targetType)>($(nameLit), Col<Any>($(fkLit)), $(fieldsTok), $(targetTableExpr), $(mapperIdent), $(setterIdent), $(extractorIdent), $(targetIdExtractorIdent)), $(resolverIdent))
             )
         } else if (r.kind == "has_one") {
             let fkLit = Token(TokenKind.STRING_LITERAL, r.by)
             body = body + quote(
-                public static let $(fieldIdent) = HasOne<$(targetType)>($(nameLit), $(fkLit), $(fieldsTok), $(targetTableExpr), $(mapperIdent), $(setterIdent), $(targetIdExtractorIdent))
+                public static let $(fieldIdent) = attachTargetRelResolver(HasOne<$(targetType)>($(nameLit), $(fkLit), $(fieldsTok), $(targetTableExpr), $(mapperIdent), $(setterIdent), $(targetIdExtractorIdent)), $(resolverIdent))
             )
         } else if (r.kind == "has_many") {
             let fkLit = Token(TokenKind.STRING_LITERAL, r.by)
             body = body + quote(
-                public static let $(fieldIdent) = HasMany<$(targetType)>($(nameLit), $(fkLit), $(fieldsTok), $(targetTableExpr), $(mapperIdent), $(setterIdent), $(targetIdExtractorIdent))
+                public static let $(fieldIdent) = attachTargetRelResolver(HasMany<$(targetType)>($(nameLit), $(fkLit), $(fieldsTok), $(targetTableExpr), $(mapperIdent), $(setterIdent), $(targetIdExtractorIdent)), $(resolverIdent))
             )
         } else {
             let viaLit = Token(TokenKind.STRING_LITERAL, r.via)
@@ -129,11 +147,38 @@ func buildRelClass(className: String, rels: ArrayList<RelInfo>): Tokens {
             // 否则 @Table 覆盖目标表名时列名不一致）。宏层在编译期计算并传入 RefMany。
             let junctionTargetColLit = Token(TokenKind.STRING_LITERAL, lowerTableName(r.target) + "_id")
             body = body + quote(
-                public static let $(fieldIdent) = RefMany<$(targetType)>($(nameLit), $(viaLit), $(fieldsTok), $(targetTableExpr), $(mapperIdent), $(setterIdent), $(junctionTargetColLit), $(targetIdExtractorIdent))
+                public static let $(fieldIdent) = attachTargetRelResolver(RefMany<$(targetType)>($(nameLit), $(viaLit), $(fieldsTok), $(targetTableExpr), $(mapperIdent), $(setterIdent), $(junctionTargetColLit), $(targetIdExtractorIdent)), $(resolverIdent))
             )
         }
         first = false
     }
+    // Task 7: includeAll 字符串关系名解析入口。按关系名映射到对应静态成员（关系名来自
+    // rels[i].fieldName），未知名称返回 None。供 Query.includeAll 顶层解析（relResolver =
+    // <实体>Rel.forName）与目标 Rel 类解析器闭包（getTargetRelResolver）调用。
+    // 完全限定引用 $(relClassName).author 避免与 forName 形参名 name 的遮蔽冲突
+    // （关系名恰为 "name" 时裸引用会取到形参 String 而非静态成员，类型检查会直接报错）。
+    var forNameBody = Tokens()
+    var forNameFirst = true
+    for (i in 0..rels.size) {
+        let r = rels[i]
+        if (!forNameFirst) { forNameBody = forNameBody + Token(TokenKind.NL) }
+        let nameLit = Token(TokenKind.STRING_LITERAL, r.fieldName)
+        let fieldIdent = Token(TokenKind.IDENTIFIER, r.fieldName)
+        forNameBody = forNameBody + quote(
+            case $(nameLit) => Some($(relClassName).$(fieldIdent))
+        )
+        forNameFirst = false
+    }
+    if (!forNameFirst) { forNameBody = forNameBody + Token(TokenKind.NL) }
+    forNameBody = forNameBody + quote(case _ => None)
+    if (body.size > 0) { body = body + Token(TokenKind.NL) }
+    body = body + quote(
+        public static func forName(name: String): Option<IRelation> {
+            match (name) {
+                $(forNameBody)
+            }
+        }
+    )
     quote(public class $(relClassName) { $(body) })
 }
 

@@ -51,6 +51,10 @@ class FieldOverrideRelation <: IRelation {
     public func getJunctionTargetCol(): String {
         inner.getJunctionTargetCol()
     }
+
+    public func getTargetRelResolver(): (String) -> Option<IRelation> {
+        inner.getTargetRelResolver()
+    }
 }
 
 public class Query<T> {
@@ -70,6 +74,10 @@ public class Query<T> {
     // String（复合主键 ":" 拼接），无法直接作为批量 IN 的 SQL 参数原值，故单独存 rawId。
     // 复合主键主实体不挂载（None），集合 include 装配入口会抛带说明的 QueryException。
     var rawIdExtractor: Option<(QueryResult, HashMap<String, Int64>) -> Any> = None
+    // Task 7: includeAll 字符串路径 DSL 的顶层关系解析器。宏层随 query() 挂载为
+    // `<实体>Rel.forName`（静态方法引用，类型 (String) -> Option<IRelation>）。
+    // 未走宏 query() 的手工 Query 保持 None，includeAll 会抛带说明的 QueryException。
+    var relResolver: Option<(String) -> Option<IRelation>> = None
 
     public init() {
         this.stmt = Statement()
@@ -102,6 +110,7 @@ public class Query<T> {
         q.ref = ref
         q.keyExtractor = keyExtractor
         q.rawIdExtractor = rawIdExtractor
+        q.relResolver = relResolver
         q
     }
 
@@ -281,6 +290,67 @@ public class Query<T> {
     public func include(rel: IRelation, fields: Array<Col<Any>>): Query<T> {
         let override = FieldOverrideRelation(rel, fields)
         included.add(override)
+        this
+    }
+
+    // Task 7: includeAll 字符串点号路径批量 include（admin/后端传路径数组场景）：
+    //   query.includeAll(["author.profile", "tags"])
+    // 路径第一段在「本实体」Rel 类上解析（relResolver，宏层随 query() 挂载为
+    // `<实体>Rel.forName`）；后续段在上一层关系的「目标实体」Rel 类上解析
+    // （IRelation.getTargetRelResolver，宏层为每个关系生成目标 Rel 类的 forName 闭包）。
+    // 解析出的关系按 withInclude 链式嵌套，与手写
+    //   include(PostRel.author.withInclude(UserRel.profile))
+    // 完全等价（同一批装配路径、同一 SQL，见测试 testIncludeAllEqualsWithIncludeChain）。
+    // 限制（计划决策 A）：字符串路径只支持纯点号关系名，不支持字段子集语法；
+    // 需要字段子集请用 include(rel, fields) / withInclude 链手写。
+    public func includeAll(paths: Array<String>): Query<T> {
+        for (path in paths) {
+            let segments = path.split(".")
+            if (segments.size == 0) {
+                throw QueryException("includeAll: empty include path")
+            }
+            for (seg in segments) {
+                if (seg == "") {
+                    throw QueryException("includeAll: empty path segment in '" + path + "'")
+                }
+            }
+            let resolver = match (this.relResolver) {
+                case Some(r) => r
+                case None => throw QueryException(
+                    "includeAll: no relation resolver wired for entity '" + typeName + "'; " +
+                    "use the macro-generated query() builder or call setRelResolver()")
+            }
+            // 逐段解析：每一段在「上一层关系」的目标 Rel 类上解析（首段在本实体 Rel 类上）。
+            // 注意解析目标随链加深而切换：解析 "skills" 用的是 profile（第二层关系）的
+            // getTargetRelResolver，而非作者关系的（否则会错误地在 NestedUserRel 上找 skills）。
+            var chain = ArrayList<IRelation>()
+            match (resolver(segments[0])) {
+                case Some(r) => chain.add(r)
+                case None => throw QueryException(
+                    "includeAll: unknown relation '" + segments[0] + "' on entity '" + typeName + "'")
+            }
+            var current = chain[0]
+            var prefix = segments[0]
+            for (i in 1..segments.size) {
+                match (current.getTargetRelResolver()(segments[i])) {
+                    case Some(sub) =>
+                        chain.add(sub)
+                        current = sub
+                        prefix = prefix + "." + segments[i]
+                    case None => throw QueryException(
+                        "includeAll: unknown nested relation '" + segments[i] + "' under '" + prefix + "'")
+                }
+            }
+            // 从最深一层向上逐级 withInclude 嵌套（而非扁平兄弟嵌套）：
+            // "author.profile.skills" → author.withInclude(profile.withInclude(skills))。
+            var assembled = chain[chain.size - 1]
+            var ci = chain.size - 2
+            while (ci >= 0) {
+                assembled = chain[ci].withInclude(assembled)
+                ci--
+            }
+            this.include(assembled)
+        }
         this
     }
 
@@ -525,6 +595,11 @@ public class Query<T> {
     // Task 4: 主实体主键原始值提取器（宏层 XxxRawIdFromResult 生成，随 query() 挂载）。
     public func setRawIdExtractor(r: (QueryResult, HashMap<String, Int64>) -> Any): Unit {
         this.rawIdExtractor = Some(r)
+    }
+
+    // Task 7: 挂载顶层关系解析器（宏层 query() 生成 `q.setRelResolver(<实体>Rel.forName)`）。
+    public func setRelResolver(r: (String) -> Option<IRelation>): Unit {
+        this.relResolver = Some(r)
     }
 
     public func all(): Array<T> {
