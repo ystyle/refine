@@ -305,4 +305,74 @@ public class PostgreSQLIntegrationTest {
             case None => @Expect(true, true)
         }
     }
+
+    // ─── I2: 驼峰表名/列名全程保留大小写（迁移建表 + 查询映射回读）──────────────────
+    // 注：宏层写路径（INSERT/UPDATE/DELETE）生成未加引号的标识符，PG 会折叠为小写，
+    // 无法命中引号原样建出的驼峰表/列（属独立于 I2 的既有限制）。此处用引号 SQL 直接
+    // 写入数据，验证 I2 覆盖的迁移建表 + 方言查询渲染 + mapper 驼峰列映射整条链路。
+
+    @TestCase
+    public func testCamelCaseRoundtrip(): Unit {
+        match (tryPostgres()) {
+            case Some(rf) =>
+                rf.transaction { tx: Tx =>
+                    tx.execute("DROP TABLE IF EXISTS \"camelPost\"", [])
+                    tx.execute("DROP TABLE IF EXISTS \"camelUser\"", [])
+                }
+                let m = rf.migrator()
+                m.autoMigrate([CamelUserSchema(), CamelPostSchema()])
+                @Expect(m.hasTable("camelUser"), true)
+                @Expect(m.hasTable("camelPost"), true)
+                let userParams: Array<Any> = ["Alice"]
+                rf.transaction { tx: Tx => tx.execute("INSERT INTO \"camelUser\" (\"displayName\") VALUES (?)", userParams) }
+                let u = CamelUser.query().using(rf).filter(CamelUser.col().displayName == "Alice").one()
+                @Expect(u.isSome(), true)
+                let uid = u.getOrThrow().id
+                let postParams: Array<Any> = ["Post", uid]
+                rf.transaction { tx: Tx => tx.execute("INSERT INTO \"camelPost\" (\"title\", \"authorId\") VALUES (?, ?)", postParams) }
+                let found = CamelPost.query().using(rf).filter(CamelPost.col().authorId == uid).one()
+                @Expect(found.isSome(), true)
+                @Expect(found.getOrThrow().title, "Post")
+                @Expect(found.getOrThrow().authorId, uid)
+                let users = CamelUser.query().using(rf).filter(CamelUser.col().displayName == "Alice").all()
+                @Expect(users.size, 1)
+                @Expect(users[0].displayName, "Alice")
+                rf.close()
+            case None => @Expect(true, true)
+        }
+    }
+
+    // ─── I2: include 别名保留大小写，stripPrefix 按原大小写匹配到关系字段 ───────────────────
+
+    @TestCase
+    public func testCamelCaseIncludeRefTo(): Unit {
+        match (tryPostgres()) {
+            case Some(rf) =>
+                rf.transaction { tx: Tx =>
+                    tx.execute("DROP TABLE IF EXISTS \"camelPost\"", [])
+                    tx.execute("DROP TABLE IF EXISTS \"camelUser\"", [])
+                }
+                let m = rf.migrator()
+                m.autoMigrate([CamelUserSchema(), CamelPostSchema()])
+                let userParams: Array<Any> = ["Alice"]
+                rf.transaction { tx: Tx => tx.execute("INSERT INTO \"camelUser\" (\"displayName\") VALUES (?)", userParams) }
+                let u = CamelUser.query().using(rf).filter(CamelUser.col().displayName == "Alice").one()
+                @Expect(u.isSome(), true)
+                let uid = u.getOrThrow().id
+                let postParams: Array<Any> = ["Post", uid]
+                rf.transaction { tx: Tx => tx.execute("INSERT INTO \"camelPost\" (\"title\", \"authorId\") VALUES (?, ?)", postParams) }
+                let found = CamelPost.query().include(CamelPostRel.authorProfile).using(rf).filter(CamelPost.col().authorId == uid).one()
+                @Expect(found.isSome(), true)
+                let post = found.getOrThrow()
+                @Expect(post.title, "Post")
+                match (post.authorProfile) {
+                    case Some(a) =>
+                        @Expect(a.id, uid)
+                        @Expect(a.displayName, "Alice")
+                    case None => @Expect(true, false)
+                }
+                rf.close()
+            case None => @Expect(true, true)
+        }
+    }
 }

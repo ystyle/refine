@@ -14,6 +14,15 @@ class PgDiffColumnSchema <: TableSchema {
     public func indexes(): Array<IndexDef> { [] }
 }
 
+class PgCamelSchema <: TableSchema {
+    var t: String
+    var c: Array<ColumnDef>
+    public init(name: String, cols: Array<ColumnDef>) { this.t = name; this.c = cols }
+    public func tableName(): String { t }
+    public func columns(): Array<ColumnDef> { c }
+    public func indexes(): Array<IndexDef> { [] }
+}
+
 @Test
 public class PostgreSQLMigratorTest {
     // ─── C8: 反向映射无有损（防迁移翻烙饼）──────────────────
@@ -82,5 +91,43 @@ public class PostgreSQLMigratorTest {
             if (sql.contains("ADD COLUMN \"extra\"")) { addedExtra = true }
         }
         @Expect(addedExtra, true)
+    }
+
+    // ─── I2: 迁移器不得强制小写标识符（与方言一致，保留驼峰）──────────────────
+
+    @TestCase
+    public func testColumnDefSQLPreservesCamelCase(): Unit {
+        let d = PostgreSQLDialect()
+        @Expect(PostgreSQLMigrator.columnDefSQL(ColumnDef("userProfile", StorageType.String, false, false, false), d), "\"userProfile\" VARCHAR(255) NOT NULL")
+        @Expect(PostgreSQLMigrator.columnDefSQL(ColumnDef("authorId", StorageType.Integer, false, false, true), d), "\"authorId\" BIGINT")
+    }
+
+    @TestCase
+    public func testCreateTableSQLPreservesCamelCase(): Unit {
+        let d = PostgreSQLDialect()
+        let cols = [ColumnDef("id", StorageType.Integer, true, true, false),
+                    ColumnDef("displayName", StorageType.String, false, false, false)]
+        let schema = PgCamelSchema("userProfile", cols)
+        let sql = PostgreSQLMigrator.createTableSQL(schema, d)
+        @Expect(sql.contains("\"userProfile\""), true)
+        @Expect(sql.contains("\"displayName\""), true)
+        @Expect(sql.contains("userprofile"), false)
+    }
+
+    @TestCase
+    public func testHasTablePassesOriginalCase(): Unit {
+        let ds = CaptureDatasource()
+        let conn = ds.conn
+        conn.stmt.queryResultQueue.add(RowQueryResult(1))
+        let db = DB(ds)
+        let migrator = PostgreSQLMigrator(db)
+        let exists = migrator.hasTable("userProfile")
+        @Expect(exists, true)
+        // 表名作为参数绑定（? 占位符），必须原样传递驼峰大小写
+        let bound = match (conn.stmt.capturedSetValues[0]) {
+            case s: String => s == "userProfile"
+            case _ => false
+        }
+        @Expect(bound, true)
     }
 }

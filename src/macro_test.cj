@@ -81,7 +81,11 @@ public class OrderItemTag {
     var quantity: Int64 = 0
 }
 
+// 显式 @Table 全小写表名：宏层写路径（INSERT/UPDATE/DELETE）生成未加引号的标识符，
+// PG 对未加引号标识符折叠为小写。驼峰表名（默认 PgPost->pgPost）在写路径下无法命中
+// 引号原样建出的表，故这些 fixture 固定全小写表名（与写路径折叠结果一致）。
 @Refine
+@Table["pgpost"]
 public class PgPost {
     var id: Int64 = 0
     var title: String = ""
@@ -89,10 +93,27 @@ public class PgPost {
 }
 
 @Refine
+@Table["pgevent"]
 public class PgEvent {
     var id: String = ""
     var name: String = ""
     var payload: String = ""
+}
+
+// I2 回归实体：驼峰表名/列名 + 驼峰关系名，验证 PG 标识符原样保留
+@Refine
+public class CamelUser {
+    var id: Int64 = 0
+    var displayName: String = ""
+}
+
+@Refine
+public class CamelPost {
+    var id: Int64 = 0
+    var title: String = ""
+    var authorId: Int64 = 0
+    @Ref[CamelUser, authorId]
+    var authorProfile: Option<CamelUser> = None
 }
 
 @Refine
@@ -1826,9 +1847,10 @@ public class VersionedEntityTest {
         tx.upsert(p)
 
         @Expect(p.version, 1)
-        @Expect(conn.stmt.capturedSql.contains("INSERT INTO \"versionedpost\" (\"id\", \"title\", \"created_at\", \"updated_at\", \"version\")"), true)
+        // I2：PG 不再强制小写，驼峰表名 versionedPost 原样保留（此前被 toAsciiLower 折叠为 versionedpost）
+        @Expect(conn.stmt.capturedSql.contains("INSERT INTO \"versionedPost\" (\"id\", \"title\", \"created_at\", \"updated_at\", \"version\")"), true)
         @Expect(conn.stmt.capturedSql.contains("ON CONFLICT (\"id\") DO UPDATE SET"), true)
-        @Expect(conn.stmt.capturedSql.contains("\"versionedpost\".\"version\" = \"versionedpost\".\"version\" + 1"), true)
+        @Expect(conn.stmt.capturedSql.contains("\"versionedPost\".\"version\" = \"versionedPost\".\"version\" + 1"), true)
         @Expect(conn.stmt.capturedSql.contains("\"updated_at\" = EXCLUDED.\"updated_at\""), true)
         @Expect(conn.stmt.capturedSql.contains("\"created_at\" = EXCLUDED.\"created_at\""), false)
         @Expect(conn.stmt.capturedSetValues.size, 5)

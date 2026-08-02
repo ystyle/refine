@@ -33,8 +33,11 @@ public class PostgreSQLDialectTest {
         @Expect(dialect.quoteIdentifier("count"), "\"count\"")
         // 回归（C9）：标识符内嵌引号必须转义（" → ""），否则可逃逸标识符边界构造任意 SQL
         @Expect(dialect.quoteIdentifier("foo\"bar"), "\"foo\"\"bar\"")
-        @Expect(dialect.quoteIdentifier("Foo\"Bar"), "\"foo\"\"bar\"")
         @Expect(dialect.quoteIdentifier("foo\"\"bar"), "\"foo\"\"\"\"bar\"")
+        // 回归（I2）：不再强制小写，驼峰标识符必须原样保留（否则列映射/别名匹配错位）
+        @Expect(dialect.quoteIdentifier("userProfile"), "\"userProfile\"")
+        @Expect(dialect.quoteIdentifier("authorId"), "\"authorId\"")
+        @Expect(dialect.quoteIdentifier("Foo\"Bar"), "\"Foo\"\"Bar\"")
     }
 
     // 回归（C9）：from(table) 表名来自 API 参数，内嵌引号不得逃逸出标识符边界（封闭 SQL 注入通道）
@@ -45,7 +48,7 @@ public class PostgreSQLDialectTest {
         stmt.addClause(SelectClause([Column("id")]))
         stmt.addClause(FromClause("users\"; DROP TABLE users; --"))
         let (sql, params) = dialect.render(stmt)
-        @Expect(sql, "SELECT \"id\" FROM \"users\"\"; drop table users; --\"")
+        @Expect(sql, "SELECT \"id\" FROM \"users\"\"; DROP TABLE users; --\"")
         @Expect(params.size, 0)
     }
 
@@ -56,7 +59,7 @@ public class PostgreSQLDialectTest {
         let stmt = Statement()
         stmt.addClause(UpdateClause("users", ["name\" = 'admin' OR 1=1; --"], ["bob"]))
         let (sql, params) = dialect.render(stmt)
-        @Expect(sql, "UPDATE \"users\" SET \"name\"\" = 'admin' or 1=1; --\" = $1")
+        @Expect(sql, "UPDATE \"users\" SET \"name\"\" = 'admin' OR 1=1; --\" = $1")
         @Expect(params.size, 1)
         @Expect(checkStr(params[0], "bob"))
     }
