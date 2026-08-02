@@ -342,6 +342,10 @@ class Query<T> {
 }
 ```
 
+> **字段子集与静默默认值**：生成的 `RowMapper` 按 `columnMap.contains(col)` 逐字段装配，结果集中不存在的列保持类型默认值（不抛异常）：
+> - `include(rel, [Col("id"), Col("email")])` 只装配选中的字段子集，未选中字段保持默认值；
+> - 自定义 `select([...])` 子集同理——未 select 的字段为默认值而非报错，因此 SELECT 列名写错会**静默**返回默认值而不抛错（调试时优先核对列名与结果集列是否一致）。
+
 ### 4.5 Clause 与 Statement
 
 ```cangjie
