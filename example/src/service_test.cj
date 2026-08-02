@@ -281,6 +281,24 @@ class ServiceChecks {
         @Expect(last.items.size, 1)
     }
 
+    static func pageWithHasManyInclude(rf: Refine): Unit {
+        initOnce(rf)
+        let n1 = "PgI1_" + uid()
+        let n2 = "PgI2_" + uid()
+        let u1 = UserService.register(rf, n1, n1 + "@t.com")
+        let u2 = UserService.register(rf, n2, n2 + "@t.com")
+        for (i in 0..3) { PostService.create(rf, "PI1_" + i.toString(), "B", u1.id) }
+        for (i in 0..3) { PostService.create(rf, "PI2_" + i.toString(), "B", u2.id) }
+        // has_many include 的 LEFT JOIN 会按子行展开：断言父实体去重 + total 为父实体数
+        let pg = User.query().using(rf)
+            .filter(User.col().id.anyOf([u1.id, u2.id]))
+            .include(UserRel.posts)
+            .page(1, 10)
+        @Expect(pg.total, 2)
+        @Expect(pg.items.size, 2)
+        for (u in pg.items) { @Expect(u.posts.size, 3) }
+    }
+
     static func updateWhereDeleteWhere(rf: Refine): Unit {
         initOnce(rf)
         let name = "Uw_" + uid()
@@ -995,6 +1013,9 @@ public class MySQLServiceTest {
     public func testPageQuery(): Unit { ServiceChecks.pageQuery(rf) }
 
     @TestCase
+    public func testPageWithHasManyInclude(): Unit { ServiceChecks.pageWithHasManyInclude(rf) }
+
+    @TestCase
     public func testUpdateWhereDeleteWhere(): Unit { ServiceChecks.updateWhereDeleteWhere(rf) }
 
     @TestCase
@@ -1123,6 +1144,9 @@ public class PostgreSQLServiceTest {
 
     @TestCase
     public func testPageQuery(): Unit { ServiceChecks.pageQuery(rf) }
+
+    @TestCase
+    public func testPageWithHasManyInclude(): Unit { ServiceChecks.pageWithHasManyInclude(rf) }
 
     @TestCase
     public func testUpdateWhereDeleteWhere(): Unit { ServiceChecks.updateWhereDeleteWhere(rf) }

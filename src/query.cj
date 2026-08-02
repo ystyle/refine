@@ -109,6 +109,7 @@ public class Query<T> {
         if (size < 1) { throw QueryException("size must be >= 1") }
         let exec = requireExecutor()
         let dialect = getDialect()
+        processIncluded(dialect)
         let total = countWith(exec, dialect)
         let pager = Statement()
         for (clause in stmt.clauses) {
@@ -123,12 +124,27 @@ public class Query<T> {
         Logger.logSQL(sql, params)
         let result = exec.query(sql, params)
         let columnMap = buildColumnMap(result.columnInfos, columnOffset)
-        var entities = ArrayList<T>()
-        while (result.next()) {
-            entities.add(this.mapper.getOrThrow()(result, columnMap))
+        let mapper = this.mapper.getOrThrow()
+        let entities: Array<T>
+        if (hasCollectionInclude()) {
+            entities = aggregateWithCollections(result, columnMap, mapper)
+        } else {
+            var list = ArrayList<T>()
+            while (result.next()) {
+                let entity = mapper(result, columnMap)
+                if (typeName != "") {
+                    let s = Scope<T>(entity)
+                    match (this.ref) {
+                        case Some(rf) => rf.executeHooks(typeName, HookKind.AfterFind, s)
+                        case None => executeHooks(typeName, HookKind.AfterFind, s)
+                    }
+                }
+                list.add(entity)
+            }
+            entities = list.toArray()
         }
         closeExecutor(exec)
-        Page(entities.toArray(), total, page, size)
+        Page(entities, total, page, size)
     }
 
     public func updateWhere(setCols: Array<String>, setVals: Array<Any>): Int64 {
@@ -445,7 +461,23 @@ public class Query<T> {
 
     private func countWith(exec: ExecutionContext, dialect: Dialect): Int64 {
         let countStmt = Statement()
-        countStmt.addClause(SelectClause([Raw("COUNT(*)")]))
+        // 集合 include（has_many / ref_many）的 LEFT JOIN 会按子行展开，COUNT(*) 会放大 total。
+        // 改为对源表主键去重计数。假设单列 "id" 主键（与 processIncluded 的 JOIN 写法一致；
+        // 复合主键 + 集合 include + 分页目前不支持）。
+        if (hasCollectionInclude()) {
+            var sourceTable = ""
+            for (clause in stmt.clauses) {
+                match (clause) {
+                    case FromClause(t) => sourceTable = t
+                    case _ => ()
+                }
+            }
+            countStmt.addClause(SelectClause([Raw(
+                "COUNT(DISTINCT " + dialect.quoteIdentifier(sourceTable) + "." + dialect.quoteIdentifier("id") + ")"
+            )]))
+        } else {
+            countStmt.addClause(SelectClause([Raw("COUNT(*)")]))
+        }
         for (clause in stmt.clauses) {
             match (clause) {
                 case FromClause(_) => countStmt.addClause(clause)

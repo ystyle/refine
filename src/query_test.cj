@@ -697,3 +697,141 @@ public class QueryTest {
         @Expect(sql, "SELECT SUM(id) FROM `posts` WHERE `user_id` = ?")
     }
 }
+
+// ─── C4: page() 集合 include 去重 + countWith 含集合 include 用 COUNT(DISTINCT) ──
+
+@Test
+public class C4PageCollectionTest {
+
+    private func commentsRel(): IRelation {
+        HasMany<UuidComment>("comments", "post_id",
+            [Col<Any>("id"), Col<Any>("body")], "uuidComment",
+            UuidCommentRowMapper, UuidPostWithRelRel.commentsSetter)
+    }
+
+    @TestCase
+    public func testPageWithHasManyIncludeDedupsParents(): Unit {
+        clearHooks()
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        conn.stmt.queryResultQueue.add(RowQueryResult(2))
+        let cols: Array<SqlColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("title", false),
+            MapperMockColumnInfo("comments.id", false),
+            MapperMockColumnInfo("comments.body", false),
+        ]
+        let rows = [
+            Array<Any>(4, {i => if (i == 0) { 5 } else if (i == 1) { "post" } else if (i == 2) { "c1" } else { "first" }}),
+            Array<Any>(4, {i => if (i == 0) { 5 } else if (i == 1) { "post" } else if (i == 2) { "c2" } else { "second" }}),
+            Array<Any>(4, {i => if (i == 0) { 6 } else if (i == 1) { "other" } else if (i == 2) { "c3" } else { "third" }}),
+        ]
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(cols, rows))
+        let q = UuidPostWithRel.query().include(commentsRel(), [Col<Any>("id"), Col<Any>("body")]).using(tx)
+        let pg = q.page(1, 10)
+        @Expect(pg.total, 2)
+        @Expect(pg.items.size, 2)
+        var byId = HashMap<Int64, UuidPostWithRel>()
+        for (e in pg.items) { byId[e.id] = e }
+        @Expect(byId.size, 2)
+        @Expect(byId.get(5).getOrThrow().comments.size, 2)
+        @Expect(byId.get(6).getOrThrow().comments.size, 1)
+    }
+
+    @TestCase
+    public func testPageWithHasManyIncludeCountUsesDistinct(): Unit {
+        clearHooks()
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        conn.stmt.queryResultQueue.add(RowQueryResult(2))
+        let cols: Array<SqlColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("title", false),
+            MapperMockColumnInfo("comments.id", false),
+            MapperMockColumnInfo("comments.body", false),
+        ]
+        let rows = [
+            Array<Any>(4, {i => if (i == 0) { 5 } else if (i == 1) { "post" } else if (i == 2) { "c1" } else { "first" }}),
+        ]
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(cols, rows))
+        let q = UuidPostWithRel.query().include(commentsRel(), [Col<Any>("id"), Col<Any>("body")]).using(tx)
+        let pg = q.page(1, 10)
+        @Expect(pg.total, 2)
+        @Expect(conn.stmt.capturedSqlHistory.size >= 1, true)
+        @Expect(conn.stmt.capturedSqlHistory[0].contains("COUNT(DISTINCT"), true)
+        @Expect(conn.stmt.capturedSqlHistory[0].contains("\"uuidPostWithRel\".\"id\""), true)
+    }
+
+    @TestCase
+    public func testPageWithoutCollectionStillWorks(): Unit {
+        clearHooks()
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        conn.stmt.queryResultQueue.add(RowQueryResult(3))
+        let cols: Array<SqlColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("body", false),
+        ]
+        let rows = [
+            Array<Any>(2, {i => if (i == 0) { 1 } else { "a" }}),
+            Array<Any>(2, {i => if (i == 0) { 2 } else { "b" }}),
+        ]
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(cols, rows))
+        let pg = UuidRefComment.query().using(tx).page(1, 10)
+        @Expect(pg.total, 3)
+        @Expect(pg.items.size, 2)
+        @Expect(conn.stmt.capturedSqlHistory[0].contains("COUNT(*)"), true)
+    }
+
+    @TestCase
+    public func testPageNonCollectionRunsAfterFindHook(): Unit {
+        clearHooks()
+        registerHook<UuidRefComment>("UuidRefComment", HookKind.AfterFind) { scope: Scope<UuidRefComment> =>
+            scope.entity.body = "hooked"
+        }
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        conn.stmt.queryResultQueue.add(RowQueryResult(1))
+        let cols: Array<SqlColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("body", false),
+        ]
+        let rows = [
+            Array<Any>(2, {i => if (i == 0) { 1 } else { "a" }}),
+        ]
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(cols, rows))
+        let pg = UuidRefComment.query().using(tx).page(1, 10)
+        @Expect(pg.items.size, 1)
+        @Expect(pg.items[0].body, "hooked")
+    }
+
+    @TestCase
+    public func testPageWithRefToIncludeJoins(): Unit {
+        clearHooks()
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        conn.stmt.queryResultQueue.add(RowQueryResult(1))
+        let cols: Array<SqlColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("body", false),
+            MapperMockColumnInfo("post_id", false),
+            MapperMockColumnInfo("post.id", false),
+            MapperMockColumnInfo("post.title", false),
+            MapperMockColumnInfo("post.content", false),
+        ]
+        let row = Array<Any>(6, {i =>
+            if (i == 0) { 5 } else if (i == 1) { "nice" } else if (i == 2) { "p1" }
+            else if (i == 3) { "p1" } else if (i == 4) { "First" } else { "Hello" }
+        })
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(cols, [row]))
+        let q = UuidRefComment.query().include(UuidRefCommentRel.post).using(tx)
+        let pg = q.page(1, 10)
+        @Expect(pg.total, 1)
+        @Expect(pg.items.size, 1)
+        @Expect(pg.items[0].post.isSome(), true)
+        @Expect(pg.items[0].post.getOrThrow().id, "p1")
+        @Expect(pg.items[0].post.getOrThrow().title, "First")
+        // page() 必须先 processIncluded：分页 SQL 必须带 RefTo 的 LEFT JOIN
+        @Expect(conn.stmt.capturedSqlHistory[1].contains("LEFT JOIN"), true)
+    }
+}
