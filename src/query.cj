@@ -273,6 +273,8 @@ public class Query<T> {
     // 回归（I4）：updateWhere/deleteWhere 的 dialect 渲染只输出 UPDATE/DELETE + WHERE，
     // JOIN 会被静默丢弃（且 ON 参数仍进 params 导致 PG $n 错位），有误更新/误删除风险。
     // 构建器层直接拒绝：带 JOIN 的查询禁止用于 updateWhere/deleteWhere。
+    // 防御依据（Task 8）：batch include 虽已不生成 include JOIN，但 Statement.addJoinClause
+    // 是 public（statement.cj:27），用户仍可对 stmt 手动 addClause(JoinClause(...))，防御必须保留。
     private func rejectJoin(operation: String): Unit {
         for (clause in stmt.clauses) {
             match (clause) {
