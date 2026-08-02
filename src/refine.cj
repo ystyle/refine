@@ -31,7 +31,7 @@ public class Refine {
         let drv = DriverManager.getDriver(driverName).getOrThrow()
         let ds = drv.open(url, opts)
         let d = detectDialect(driverName)
-        let offset = if (driverName == "mariadb") { 1 } else { 0 }
+        let offset = detectParamOffset(driverName)
         Refine(PooledDatasource(ds), d, offset)
     }
 
@@ -154,6 +154,10 @@ public func detectDialect(name: String): Dialect {
         case "postgres" | "postgresql" => PostgreSQLDialect()
         case _ => SQLiteDialect()
     }
+}
+
+public func detectParamOffset(driver: String): Int64 {
+    if (driver == "mariadb") { 1 } else { 0 }
 }
 
 public func visitedContains(visited: ArrayList<Object>, target: Object): Bool {

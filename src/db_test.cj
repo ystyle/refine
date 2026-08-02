@@ -2,7 +2,7 @@ package refine
 
 import std.database.sql.{Connection, Transaction, QueryResult, UpdateResult, ColumnInfo, ConnectionState, TransactionAccessMode, TransactionDeferrableMode, TransactionIsoLevel, SqlDbType, Datasource, DriverManager, Driver}
 import std.database.sql.Statement as SqlStatement
-import std.collection.HashMap
+import std.collection.{HashMap, ArrayList}
 import std.unittest.*
 import std.unittest.testmacro.*
 
@@ -20,6 +20,12 @@ class MockColumnInfo <: ColumnInfo {
     private var _nullable: Bool = false
     private var _scale: Int64 = 0
     private var _typeName: String = ""
+
+    public init() {}
+
+    public init(name: String) {
+        this._name = name
+    }
 }
 
 class MockUpdateResult <: UpdateResult {
@@ -36,14 +42,29 @@ class MockQueryResult <: QueryResult {
     public prop columnInfos: Array<ColumnInfo> { get() { _columnInfos } }
 
     private var _columnInfos: Array<ColumnInfo> = []
+    public var rowAvailable: Bool = false
 
-    public func next(): Bool { false }
-    public func next(_values: Array<SqlDbType>): Bool { false }
+    public init() {}
+
+    public init(columnInfos: Array<ColumnInfo>) {
+        this._columnInfos = columnInfos
+    }
+
+    public func next(): Bool {
+        if (rowAvailable) {
+            rowAvailable = false
+            return true
+        }
+        false
+    }
+    public func next(_values: Array<SqlDbType>): Bool { next() }
     public func get<T>(index: Int): T { throw Exception("not implemented") }
     public func getOrNull<T>(index: Int): ?T { None }
 }
 
 class MockTransaction <: Transaction {
+    public var isoLevelSet: ?TransactionIsoLevel = None
+
     public mut prop accessMode: TransactionAccessMode {
         get() { _accessMode }
         set(v) { _accessMode = v }
@@ -54,7 +75,10 @@ class MockTransaction <: Transaction {
     }
     public mut prop isoLevel: TransactionIsoLevel {
         get() { _isoLevel }
-        set(v) { _isoLevel = v }
+        set(v) {
+            _isoLevel = v
+            isoLevelSet = Some(v)
+        }
     }
 
     private var _accessMode: TransactionAccessMode = TransactionAccessMode.ReadWrite
@@ -72,6 +96,8 @@ class MockTransaction <: Transaction {
 class MockStatement <: SqlStatement {
     public var lastSetType: String = ""
     public var lastSetIndex: Int = -1
+    public var queryColumnInfos: Array<ColumnInfo> = []
+    public var queryRow: Bool = false
 
     public func close(): Unit {}
     public func isClosed(): Bool { false }
@@ -79,8 +105,12 @@ class MockStatement <: SqlStatement {
 
     private var _parameterColumnInfos: Array<ColumnInfo> = []
 
-    public func query(): QueryResult { MockQueryResult() }
-    public func query(_params: Array<SqlDbType>): QueryResult { MockQueryResult() }
+    public func query(): QueryResult {
+        let r = MockQueryResult(queryColumnInfos)
+        r.rowAvailable = queryRow
+        r
+    }
+    public func query(_params: Array<SqlDbType>): QueryResult { query() }
     public func set<T>(index: Int, value: T): Unit {
         lastSetType = "set"
         lastSetIndex = index
@@ -95,22 +125,38 @@ class MockStatement <: SqlStatement {
 }
 
 class MockConnection <: Connection {
+    public var queryColumnInfos: Array<ColumnInfo> = []
+    public var queryRow: Bool = false
+    public var createdTxns = ArrayList<MockTransaction>()
+
     public func close(): Unit {}
     public func isClosed(): Bool { false }
     public prop state: ConnectionState { get() { _state } }
 
     private var _state: ConnectionState = ConnectionState.Connected
 
-    public func createTransaction(): Transaction { MockTransaction() }
+    public func createTransaction(): Transaction {
+        let t = MockTransaction()
+        createdTxns.add(t)
+        t
+    }
     public func getMetaData(): HashMap<String, String> { HashMap<String, String>() }
-    public func prepareStatement(sql: String): SqlStatement { MockStatement() }
+    public func prepareStatement(sql: String): SqlStatement {
+        let s = MockStatement()
+        s.queryColumnInfos = this.queryColumnInfos
+        s.queryRow = this.queryRow
+        s
+    }
 }
 
 class MockDatasource <: Datasource {
     public var closed: Bool = false
+    public var createdConns = ArrayList<MockConnection>()
 
     public func connect(): Connection {
-        MockConnection()
+        let c = MockConnection()
+        createdConns.add(c)
+        c
     }
 
     public func close(): Unit {
@@ -520,6 +566,88 @@ public class DbTest {
             db.close()
         } finally {
             DriverManager.deregister("postgresql")
+        }
+    }
+
+    @TestCase
+    public func testDBOpenWithMariaDBURL(): Unit {
+        let realDrv = DriverManager.getDriver("mariadb")
+        DriverManager.deregister("mariadb")
+        DriverManager.register("mariadb", MockDriver())
+        try {
+            let db = DB.open("mariadb://localhost:3306/testdb")
+            @Expect(db.getDialect().name(), "mysql")
+            let s = db.session()
+            @Expect(s.getParamOffset(), 1)
+            s.close()
+            db.close()
+        } finally {
+            DriverManager.deregister("mariadb")
+            if (let Some(drv) <- realDrv) {
+                DriverManager.register("mariadb", drv)
+            }
+        }
+    }
+
+    @TestCase
+    public func testTxSetIsolationDBPathMySQL(): Unit {
+        let ds = MockDatasource()
+        let db = DB(ds, MySQLDialect())
+        db.transaction({ tx => tx.setIsolation(IsolationLevel.Serializable) })
+        @Expect(ds.createdConns.size, 1)
+        if (ds.createdConns.size > 0) {
+            let conn = ds.createdConns.get(0).getOrThrow()
+            @Expect(conn.createdTxns.size, 1)
+            if (conn.createdTxns.size > 0) {
+                let txn = conn.createdTxns.get(0).getOrThrow()
+                @Expect(txn.isoLevelSet.isSome(), true)
+                @Expect(txn.isoLevelSet.getOrThrow(), TransactionIsoLevel.Serializable)
+            }
+        }
+    }
+
+    @TestCase
+    public func testTxSetIsolationDBPathSQLite(): Unit {
+        let db = DB(MockDatasource())
+        try {
+            db.transaction({ tx => tx.setIsolation(IsolationLevel.Serializable) })
+            @Expect(false, true)
+        } catch (e: RefineException) {
+            @Expect(e.message, "SQLite does not support transaction isolation levels")
+        }
+    }
+
+    @TestCase
+    public func testSessionQueryAllColumnOffsetDBPath(): Unit {
+        let conn = MockConnection()
+        conn.queryColumnInfos = [MockColumnInfo("id"), MockColumnInfo("name")]
+        conn.queryRow = true
+        let s = Session(conn, 1, MySQLDialect())
+        let seen = ArrayList<HashMap<String, Int64>>()
+        s.queryAll("SELECT * FROM t", [],
+            { r: QueryResult, cm: HashMap<String, Int64> => seen.add(cm); 0 })
+        @Expect(seen.size, 1)
+        if (seen.size > 0) {
+            let cm = seen.get(0).getOrThrow()
+            @Expect(cm.get("id").getOrThrow(), 1)
+            @Expect(cm.get("name").getOrThrow(), 2)
+        }
+    }
+
+    @TestCase
+    public func testTxQueryOneColumnOffsetDBPath(): Unit {
+        let conn = MockConnection()
+        conn.queryColumnInfos = [MockColumnInfo("id"), MockColumnInfo("name")]
+        conn.queryRow = true
+        let tx = Tx(conn, 1, PostgreSQLDialect())
+        let seen = ArrayList<HashMap<String, Int64>>()
+        tx.queryOne("SELECT * FROM t", [],
+            { r: QueryResult, cm: HashMap<String, Int64> => seen.add(cm); 0 })
+        @Expect(seen.size, 1)
+        if (seen.size > 0) {
+            let cm = seen.get(0).getOrThrow()
+            @Expect(cm.get("id").getOrThrow(), 1)
+            @Expect(cm.get("name").getOrThrow(), 2)
         }
     }
 }

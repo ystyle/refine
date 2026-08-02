@@ -62,7 +62,7 @@ func buildTxSaveExtend(className: String, pkFields: ArrayList<FieldInfo>, hasCli
                     if (this.ref.isSome()) { this.ref.getOrThrow().executeHooks($(nameLit), HookKind.TxBeforeCreate, scope) }
                     if (scope.aborted) { throw scope.error.getOrThrow() }
                     let (sql, params) = $(insertSQLFuncName)(entity)
-                    if (this.ref.isSome() && this.ref.getOrThrow().getDialect().hasReturningSupport()) {
+                    if (this.getDialect().hasReturningSupport()) {
                         let qr = this.query(sql + " RETURNING " + $(returningColsLit), params)
                         if (qr.next()) { $(returningTokens) }
                         qr.close()
@@ -182,7 +182,7 @@ func buildTxUpsertExtend(className: String, fields: ArrayList<FieldInfo>, tableN
                 scope.db = Some(this)
                 if (this.ref.isSome()) { this.ref.getOrThrow().executeHooks($(nameLit), HookKind.TxBeforeCreate, scope) }
                 if (scope.aborted) { throw scope.error.getOrThrow() }
-                let d = this.ref.getOrThrow().getDialect()
+                let d = this.getDialect()
                 if (!d.hasUpsertSupport()) { throw Exception("upsert not supported by dialect: " + d.name()) }
                 let sql = d.upsertSQL($(tableNameLit), $(colsArr), $(pksArr), $(auditCreateArr), $(auditUpdateArr), $(versionLit))
                 var params = ArrayList<Any>()

@@ -838,6 +838,54 @@ public class MacroSaveTest {
         }
     }
 
+    @TestCase
+    public func testTxUpsertDBPathMySQL(): Unit {
+        clearHooks()
+        let conn = CaptureConnection()
+        let tx = Tx(conn, 1, MySQLDialect())
+
+        let p = Post()
+        p.id = 1
+        p.title = "T"
+        p.content = "C"
+        tx.upsert(p)
+
+        @Expect(conn.stmt.capturedSql.contains("INSERT INTO `post` (`id`, `title`, `content`)"), true)
+        @Expect(conn.stmt.capturedSql.contains("ON DUPLICATE KEY UPDATE"), true)
+    }
+
+    @TestCase
+    public func testTxUpsertDBPathPostgres(): Unit {
+        clearHooks()
+        let conn = CaptureConnection()
+        let tx = Tx(conn, 0, PostgreSQLDialect())
+
+        let p = Post()
+        p.id = 1
+        p.title = "T"
+        p.content = "C"
+        tx.upsert(p)
+
+        @Expect(conn.stmt.capturedSql.contains("INSERT INTO \"post\" (\"id\", \"title\", \"content\")"), true)
+        @Expect(conn.stmt.capturedSql.contains("ON CONFLICT (\"id\") DO UPDATE SET"), true)
+    }
+
+    @TestCase
+    public func testTxSaveDBPathPostgresReturning(): Unit {
+        clearHooks()
+        let conn = CaptureConnection()
+        conn.stmt.queryResult = RowQueryResult(7)
+        let tx = Tx(conn, 0, PostgreSQLDialect())
+
+        let p = PgPost()
+        p.title = "T"
+        p.content = "C"
+        tx.save(p)
+
+        @Expect(conn.stmt.capturedSql.contains("RETURNING"), true)
+        @Expect(p.id, 7)
+    }
+
     // ─── Batch Update ─────────────────────────────────
 
     @TestCase

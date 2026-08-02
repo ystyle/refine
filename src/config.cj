@@ -28,7 +28,7 @@ public class DatabaseConfig {
                 if (let Some(db) <- database) { opts.add(("database", db)) }
                 let ds = drv.open(dsn, opts.toArray())
                 let d = detectDialect(this.driver)
-                let offset = if (this.driver == "mariadb") { 1 } else { 0 }
+                let offset = detectParamOffset(this.driver)
                 DB(ds, offset, d)
             case None =>
                 throw ConnectionException("Driver '${driver}' not found")

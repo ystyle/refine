@@ -46,11 +46,7 @@ public class DB {
         let driverName = extractDriver(url)
         let drv = DriverManager.getDriver(driverName).getOrThrow()
         let ds = drv.open(url, opts)
-        let db = DB(PooledDatasource(ds), detectDialect(driverName))
-        if (driverName == "mariadb") {
-            db.paramOffset = 1
-        }
-        db
+        DB(PooledDatasource(ds), detectParamOffset(driverName), detectDialect(driverName))
     }
 
     public func session(): Session {
@@ -269,7 +265,7 @@ extend Tx {
     public func queryAll<T>(sql: String, params: Array<Any>,
                             mapper: (QueryResult, HashMap<String, Int64>) -> T): Array<T> {
         let result = this.query(sql, params)
-        let offset = if (this.ref.isSome()) { this.ref.getOrThrow().getParamOffset() } else { 0 }
+        let offset = this.getParamOffset()
         let cm = buildColumnMap(result.columnInfos, offset)
         var entities = ArrayList<T>()
         while (result.next()) {
@@ -281,7 +277,7 @@ extend Tx {
     public func queryOne<T>(sql: String, params: Array<Any>,
                             mapper: (QueryResult, HashMap<String, Int64>) -> T): Option<T> {
         let result = this.query(sql, params)
-        let offset = if (this.ref.isSome()) { this.ref.getOrThrow().getParamOffset() } else { 0 }
+        let offset = this.getParamOffset()
         let cm = buildColumnMap(result.columnInfos, offset)
         if (result.next()) { Some(mapper(result, cm)) } else { None }
     }
@@ -291,7 +287,7 @@ extend Session {
     public func queryAll<T>(sql: String, params: Array<Any>,
                             mapper: (QueryResult, HashMap<String, Int64>) -> T): Array<T> {
         let result = this.query(sql, params)
-        let offset = if (this.ref.isSome()) { this.ref.getOrThrow().getParamOffset() } else { 0 }
+        let offset = this.getParamOffset()
         let cm = buildColumnMap(result.columnInfos, offset)
         var entities = ArrayList<T>()
         while (result.next()) {
@@ -303,7 +299,7 @@ extend Session {
     public func queryOne<T>(sql: String, params: Array<Any>,
                             mapper: (QueryResult, HashMap<String, Int64>) -> T): Option<T> {
         let result = this.query(sql, params)
-        let offset = if (this.ref.isSome()) { this.ref.getOrThrow().getParamOffset() } else { 0 }
+        let offset = this.getParamOffset()
         let cm = buildColumnMap(result.columnInfos, offset)
         if (result.next()) { Some(mapper(result, cm)) } else { None }
     }

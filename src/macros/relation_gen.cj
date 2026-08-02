@@ -28,7 +28,7 @@ func buildRelationMethods(className: String, rels: ArrayList<RelInfo>, cd: Class
                 public func $(loadName)(tx: Tx): Option<$(targetType)> {
                     let fk = this.$(fkField)
                     let result = tx.query($(refToSQL), [fk])
-                    let offset = if (tx.ref.isSome()) { tx.ref.getOrThrow().getParamOffset() } else { 0 }
+                    let offset = tx.getParamOffset()
                     let colMap = buildColumnMap(result.columnInfos, offset)
                     if (result.next()) { Some($(mapperName)(result, colMap)) } else { None }
                 }
@@ -51,7 +51,7 @@ func buildRelationMethods(className: String, rels: ArrayList<RelInfo>, cd: Class
             cd.body.decls.add(FuncDecl(quote(
                 public func $(loadName)(tx: Tx): ArrayList<$(targetType)> {
                     let result = tx.query($(joinSQLToken), [this.id])
-                    let offset = if (tx.ref.isSome()) { tx.ref.getOrThrow().getParamOffset() } else { 0 }
+                    let offset = tx.getParamOffset()
                     let colMap = buildColumnMap(result.columnInfos, offset)
                     var entities = ArrayList<$(targetType)>()
                     while (result.next()) { entities.add($(mapperName)(result, colMap)) }
@@ -140,7 +140,7 @@ func buildRelationMethods(className: String, rels: ArrayList<RelInfo>, cd: Class
                 public func $(countName)(tx: Tx): Int64 {
                     let sql = $(countSQL)
                     let result = tx.query(sql, [this.id])
-                    let offset = if (tx.ref.isSome()) { tx.ref.getOrThrow().getParamOffset() } else { 0 }
+                    let offset = tx.getParamOffset()
                     result.next()
                     result.get<Int64>(0 + offset)
                 }
@@ -160,7 +160,7 @@ func buildRelationMethods(className: String, rels: ArrayList<RelInfo>, cd: Class
             cd.body.decls.add(FuncDecl(quote(
                 public func $(loadName)(tx: Tx): ArrayList<$(targetType)> {
                     let result = tx.query($(hasManyLoadSQL), [this.id])
-                    let offset = if (tx.ref.isSome()) { tx.ref.getOrThrow().getParamOffset() } else { 0 }
+                    let offset = tx.getParamOffset()
                     let colMap = buildColumnMap(result.columnInfos, offset)
                     var entities = ArrayList<$(targetType)>()
                     while (result.next()) { entities.add($(mapperName)(result, colMap)) }
@@ -198,7 +198,7 @@ func buildRelationMethods(className: String, rels: ArrayList<RelInfo>, cd: Class
             cd.body.decls.add(FuncDecl(quote(
                 public func $(loadName)(tx: Tx): Option<$(targetType)> {
                     let result = tx.query($(hasOneLoadSQL), [this.id])
-                    let offset = if (tx.ref.isSome()) { tx.ref.getOrThrow().getParamOffset() } else { 0 }
+                    let offset = tx.getParamOffset()
                     let colMap = buildColumnMap(result.columnInfos, offset)
                     if (result.next()) { Some($(mapperName)(result, colMap)) } else { None }
                 }
