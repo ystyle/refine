@@ -1048,7 +1048,7 @@ func dispatchSet(ps: Statement, index: Int, value: Any): Unit {
 ```cangjie
 // 实例 A：注册钩子
 let rf = Refine.open("sqlite://test.db")
-rf.hook<Post>("Post", BeforeCreate) { scope =>
+rf.hook<Post>("Post", TxBeforeCreate) { scope =>
     if (scope.entity.title == "") {
         scope.error = Exception("title required")
         scope.aborted = true
@@ -1056,12 +1056,12 @@ rf.hook<Post>("Post", BeforeCreate) { scope =>
 }
 
 // 模块 B：审计（独立注册）
-rf.hook<Post>("Post", AfterCreate) { scope =>
+rf.hook<Post>("Post", TxAfterCreate) { scope =>
     AuditLog.log("created: ${scope.entity.id}")
 }
 
 // 模块 C：验证（与模块 A 串行执行，任一 abort 终止后续）
-rf.hook<Post>("Post", BeforeCreate) { scope =>
+rf.hook<Post>("Post", TxBeforeCreate) { scope =>
     if (scope.entity.content.size > 10000) {
         scope.error = Exception("content too long")
     }
@@ -1069,7 +1069,7 @@ rf.hook<Post>("Post", BeforeCreate) { scope =>
 
 // 实例 B：完全独立的钩子
 let rf2 = Refine.open("mysql://...")
-rf2.hook<Post>("Post", BeforeCreate) { scope => ... }  // 不影响 rf
+rf2.hook<Post>("Post", TxBeforeCreate) { scope => ... }  // 不影响 rf
 ```
 
 - 多个钩子按**注册顺序**串行执行
@@ -1102,7 +1102,7 @@ class Scope<T> {
     var fields: Array<Col<Any>>      // 变更字段列表（仅 Update）
     var error: Error?                // 设置后终止钩子链
     var aborted: Bool = false        // 是否中断
-    var result: QueryResult?         // AfterFind/AfterCreate 的结果
+    var result: QueryResult?         // AfterFind/TxAfterCreate 的结果
 
     public func abort(err: Error) {
         error = err
@@ -1309,7 +1309,7 @@ extend DB {
 - 实现 `@Refine`、`@Rel`、`@Ref` 宏
 - 宏生成 `Cols` 字段描述符 + `query()` 入口
 - 生成基础 CRUD + 类型安全查询器
-- 生成钩子调用逻辑（BeforeCreate、AfterCreate 等，详见第 10 章）
+- 生成钩子调用逻辑（TxBeforeCreate、TxAfterCreate 等，详见第 10 章）
 
 ### Phase 3：类型系统、连接管理与迁移
 - 实现 `StorageType` 枚举与方言映射

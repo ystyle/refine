@@ -134,42 +134,45 @@ public class Query<T> {
         if (page < 1) { throw QueryException("page must be >= 1") }
         if (size < 1) { throw QueryException("size must be >= 1") }
         let exec = requireExecutor()
-        let dialect = getDialect()
-        processIncluded(dialect)
-        let total = countWith(exec, dialect)
-        let pager = Statement()
-        for (clause in stmt.clauses) {
-            match (clause) {
-                case LimitClause(_) | OffsetClause(_) => ()
-                case _ => pager.addClause(clause)
+        try {
+            let dialect = getDialect()
+            processIncluded(dialect)
+            let total = countWith(exec, dialect)
+            let pager = Statement()
+            for (clause in stmt.clauses) {
+                match (clause) {
+                    case LimitClause(_) | OffsetClause(_) => ()
+                    case _ => pager.addClause(clause)
+                }
             }
-        }
-        pager.addClause(LimitClause(size))
-        pager.addClause(OffsetClause((page - 1) * size))
-        let (sql, params) = dialect.render(pager)
-        Logger.logSQL(sql, params)
-        let result = exec.query(sql, params)
-        // 集合 include 已知局限（单查询 LEFT JOIN 方案的固有约束）：
-        // - LIMIT/OFFSET 作用于 JOIN 展开后的行（先于内存去重）：某父实体子行较多时，
-        //   单页可能返回少于 size 个唯一父实体，且父子可能跨页拆分；
-        // - 集合 include 下 ORDER BY 顺序在 aggregateWithCollections 返回时可能不保证（HashMap 迭代序）。
-        // TODO: 后续用子查询/分步查询（batch include）方案解决。
-        let columnMap = buildColumnMap(result.columnInfos, columnOffset)
-        let mapper = this.mapper.getOrThrow()
-        let entities: Array<T>
-        if (hasCollectionInclude()) {
-            entities = aggregateWithCollections(result, columnMap, mapper)
-        } else {
-            var list = ArrayList<T>()
-            while (result.next()) {
-                let entity = mapper(result, columnMap)
-                runAfterFindHooks(entity)
-                list.add(entity)
+            pager.addClause(LimitClause(size))
+            pager.addClause(OffsetClause((page - 1) * size))
+            let (sql, params) = dialect.render(pager)
+            Logger.logSQL(sql, params)
+            let result = exec.query(sql, params)
+            // 集合 include 已知局限（单查询 LEFT JOIN 方案的固有约束）：
+            // - LIMIT/OFFSET 作用于 JOIN 展开后的行（先于内存去重）：某父实体子行较多时，
+            //   单页可能返回少于 size 个唯一父实体，且父子可能跨页拆分；
+            // - 集合 include 下 ORDER BY 顺序在 aggregateWithCollections 返回时可能不保证（HashMap 迭代序）。
+            // TODO: 后续用子查询/分步查询（batch include）方案解决。
+            let columnMap = buildColumnMap(result.columnInfos, columnOffset)
+            let mapper = this.mapper.getOrThrow()
+            let entities: Array<T>
+            if (hasCollectionInclude()) {
+                entities = aggregateWithCollections(result, columnMap, mapper)
+            } else {
+                var list = ArrayList<T>()
+                while (result.next()) {
+                    let entity = mapper(result, columnMap)
+                    runAfterFindHooks(entity)
+                    list.add(entity)
+                }
+                entities = list.toArray()
             }
-            entities = list.toArray()
+            Page(entities, total, page, size)
+        } finally {
+            closeExecutor(exec)
         }
-        closeExecutor(exec)
-        Page(entities, total, page, size)
     }
 
     public func updateWhere(setCols: Array<String>, setVals: Array<Any>): Int64 {
@@ -187,12 +190,15 @@ public class Query<T> {
             }
         }
         let exec = requireExecutor()
-        let dialect = getDialect()
-        let (sql, params) = dialect.render(updater)
-        Logger.logSQL(sql, params)
-        let result = exec.execute(sql, params)
-        closeExecutor(exec)
-        result.rowCount
+        try {
+            let dialect = getDialect()
+            let (sql, params) = dialect.render(updater)
+            Logger.logSQL(sql, params)
+            let result = exec.execute(sql, params)
+            result.rowCount
+        } finally {
+            closeExecutor(exec)
+        }
     }
 
     public func deleteWhere(): Int64 {
@@ -208,12 +214,15 @@ public class Query<T> {
             }
         }
         let exec = requireExecutor()
-        let dialect = getDialect()
-        let (sql, params) = dialect.render(deleter)
-        Logger.logSQL(sql, params)
-        let result = exec.execute(sql, params)
-        closeExecutor(exec)
-        result.rowCount
+        try {
+            let dialect = getDialect()
+            let (sql, params) = dialect.render(deleter)
+            Logger.logSQL(sql, params)
+            let result = exec.execute(sql, params)
+            result.rowCount
+        } finally {
+            closeExecutor(exec)
+        }
     }
 
     private func getSourceTable(): String {
@@ -248,18 +257,21 @@ public class Query<T> {
 
     private func runQuery(target: Statement): Array<T> {
         let exec = requireExecutor()
-        let dialect = getDialect()
-        let (sql, params) = dialect.render(target)
-        Logger.logSQL(sql, params)
-        let result = exec.query(sql, params)
-        let columnMap = buildColumnMap(result.columnInfos, columnOffset)
-        var entities = ArrayList<T>()
-        while (result.next()) {
-            let entity = this.mapper.getOrThrow()(result, columnMap)
-            entities.add(entity)
+        try {
+            let dialect = getDialect()
+            let (sql, params) = dialect.render(target)
+            Logger.logSQL(sql, params)
+            let result = exec.query(sql, params)
+            let columnMap = buildColumnMap(result.columnInfos, columnOffset)
+            var entities = ArrayList<T>()
+            while (result.next()) {
+                let entity = this.mapper.getOrThrow()(result, columnMap)
+                entities.add(entity)
+            }
+            entities.toArray()
+        } finally {
+            closeExecutor(exec)
         }
-        closeExecutor(exec)
-        entities.toArray()
     }
 
     public func include(rel: IRelation): Query<T> {
@@ -426,28 +438,29 @@ public class Query<T> {
 
     public func all(mapper: (QueryResult, HashMap<String, Int64>) -> T): Array<T> {
         let exec = requireExecutor()
-        let dialect = getDialect()
-        processIncluded(dialect)
-        let (sql, params) = dialect.render(stmt)
-        Logger.logSQL(sql, params)
-        let start = MonoTime.now()
-        let result = exec.query(sql, params)
-        let elapsed = MonoTime.now() - start
-        Logger.logSlowQuery(sql, elapsed)
-        let columnMap = buildColumnMap(result.columnInfos, columnOffset)
-        if (hasCollectionInclude()) {
-            let r = aggregateWithCollections(result, columnMap, mapper)
+        try {
+            let dialect = getDialect()
+            processIncluded(dialect)
+            let (sql, params) = dialect.render(stmt)
+            Logger.logSQL(sql, params)
+            let start = MonoTime.now()
+            let result = exec.query(sql, params)
+            let elapsed = MonoTime.now() - start
+            Logger.logSlowQuery(sql, elapsed)
+            let columnMap = buildColumnMap(result.columnInfos, columnOffset)
+            if (hasCollectionInclude()) {
+                return aggregateWithCollections(result, columnMap, mapper)
+            }
+            var entities = ArrayList<T>()
+            while (result.next()) {
+                let entity = mapper(result, columnMap)
+                runAfterFindHooks(entity)
+                entities.add(entity)
+            }
+            entities.toArray()
+        } finally {
             closeExecutor(exec)
-            return r
         }
-        var entities = ArrayList<T>()
-        while (result.next()) {
-            let entity = mapper(result, columnMap)
-            runAfterFindHooks(entity)
-            entities.add(entity)
-        }
-        closeExecutor(exec)
-        entities.toArray()
     }
 
     public func one(): Option<T> {
@@ -459,45 +472,49 @@ public class Query<T> {
 
     public func one(mapper: (QueryResult, HashMap<String, Int64>) -> T): Option<T> {
         let exec = requireExecutor()
-        let dialect = getDialect()
-        processIncluded(dialect)
-        let hasCollection = hasCollectionInclude()
-        let oneStmt = Statement()
-        for (clause in stmt.clauses) {
-            oneStmt.addClause(clause)
-        }
-        if (!hasCollection) {
-            oneStmt.addClause(LimitClause(1))
-        }
-        let (sql, params) = dialect.render(oneStmt)
-        Logger.logSQL(sql, params)
-        let start = MonoTime.now()
-        let result = exec.query(sql, params)
-        let elapsed = MonoTime.now() - start
-        Logger.logSlowQuery(sql, elapsed)
-        let columnMap = buildColumnMap(result.columnInfos, columnOffset)
-        if (hasCollection) {
-            let all = aggregateWithCollections(result, columnMap, mapper)
+        try {
+            let dialect = getDialect()
+            processIncluded(dialect)
+            let hasCollection = hasCollectionInclude()
+            let oneStmt = Statement()
+            for (clause in stmt.clauses) {
+                oneStmt.addClause(clause)
+            }
+            if (!hasCollection) {
+                oneStmt.addClause(LimitClause(1))
+            }
+            let (sql, params) = dialect.render(oneStmt)
+            Logger.logSQL(sql, params)
+            let start = MonoTime.now()
+            let result = exec.query(sql, params)
+            let elapsed = MonoTime.now() - start
+            Logger.logSlowQuery(sql, elapsed)
+            let columnMap = buildColumnMap(result.columnInfos, columnOffset)
+            if (hasCollection) {
+                let all = aggregateWithCollections(result, columnMap, mapper)
+                if (all.size > 0) { return Some(all[0]) }
+                return None
+            }
+            var res: Option<T> = None
+            if (result.next()) {
+                let entity = mapper(result, columnMap)
+                runAfterFindHooks(entity)
+                res = Some(entity)
+            }
+            res
+        } finally {
             closeExecutor(exec)
-            if (all.size > 0) { return Some(all[0]) }
-            return None
         }
-        var res: Option<T> = None
-        if (result.next()) {
-            let entity = mapper(result, columnMap)
-            runAfterFindHooks(entity)
-            res = Some(entity)
-        }
-        closeExecutor(exec)
-        res
     }
 
     public func count(): Int64 {
         let exec = requireExecutor()
-        let dialect = getDialect()
-        let cnt = countWith(exec, dialect)
-        closeExecutor(exec)
-        cnt
+        try {
+            let dialect = getDialect()
+            countWith(exec, dialect)
+        } finally {
+            closeExecutor(exec)
+        }
     }
 
     // countWith/exists()/aggregate 复用的数据子句拷贝：仅保留 FROM/WHERE/JOIN。
@@ -539,17 +556,19 @@ public class Query<T> {
 
     public func exists(): Bool {
         let exec = requireExecutor()
-        let dialect = getDialect()
-        let existsStmt = Statement()
-        existsStmt.addClause(SelectClause([Raw("1")]))
-        copyDataClauses(stmt, existsStmt)
-        existsStmt.addClause(LimitClause(1))
-        let (sql, params) = dialect.render(existsStmt)
-        Logger.logSQL(sql, params)
-        let result = exec.query(sql, params)
-        let found = result.next()
-        closeExecutor(exec)
-        found
+        try {
+            let dialect = getDialect()
+            let existsStmt = Statement()
+            existsStmt.addClause(SelectClause([Raw("1")]))
+            copyDataClauses(stmt, existsStmt)
+            existsStmt.addClause(LimitClause(1))
+            let (sql, params) = dialect.render(existsStmt)
+            Logger.logSQL(sql, params)
+            let result = exec.query(sql, params)
+            result.next()
+        } finally {
+            closeExecutor(exec)
+        }
     }
 
     public func sum(col: Col<Int64>): Int64 { aggregateInt("SUM", col) }
@@ -573,22 +592,25 @@ public class Query<T> {
 
     private func aggregate<R>(fn: String, colName: String, zero: R, read: (QueryResult, Int64) -> ?R): R {
         let exec = requireExecutor()
-        let aggStmt = Statement()
-        aggStmt.addClause(SelectClause([Raw(fn + "(" + colName + ")")]))
-        copyDataClauses(stmt, aggStmt)
-        let dialect = getDialect()
-        let (sql, params) = dialect.render(aggStmt)
-        Logger.logSQL(sql, params)
-        let result = exec.query(sql, params)
-        var value = zero
-        if (result.next()) {
-            match (read(result, columnOffset)) {
-                case Some(v) => value = v
-                case None => ()
+        try {
+            let aggStmt = Statement()
+            aggStmt.addClause(SelectClause([Raw(fn + "(" + colName + ")")]))
+            copyDataClauses(stmt, aggStmt)
+            let dialect = getDialect()
+            let (sql, params) = dialect.render(aggStmt)
+            Logger.logSQL(sql, params)
+            let result = exec.query(sql, params)
+            var value = zero
+            if (result.next()) {
+                match (read(result, columnOffset)) {
+                    case Some(v) => value = v
+                    case None => ()
+                }
             }
+            value
+        } finally {
+            closeExecutor(exec)
         }
-        closeExecutor(exec)
-        value
     }
 
     private func requireExecutor(): ExecutionContext {

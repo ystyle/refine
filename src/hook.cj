@@ -11,7 +11,7 @@ public enum HookKind {
     | TxBeforeDelete
     | TxAfterDelete
 
-    // 查询后钩子 —— all()/one() 映射后触发（须绑定 Refine 实例）
+    // 查询后钩子 —— all()/one()/page() 映射后触发（须绑定 Refine 实例）
     | AfterFind
 }
 

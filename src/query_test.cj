@@ -3,7 +3,29 @@ package refine
 import std.unittest.*
 import std.unittest.testmacro.*
 import std.collection.HashMap
-import std.database.sql.{QueryResult, ColumnInfo as SqlColumnInfo}
+import std.database.sql.{QueryResult, ColumnInfo as SqlColumnInfo, Connection, Datasource, ConnectionState, Transaction}
+import std.database.sql.Statement as SqlStatement
+
+// I14 回归：Query 直接执行路径（using(rf) 创建的 Session）在 AfterFind 钩子抛错时
+// 必须 finally 关闭底层连接，否则池化连接泄漏。closedCount 追踪连接关闭次数。
+class QueryTrackConnection <: Connection {
+    public var stmt: CaptureStatement = CaptureStatement()
+    public var closedCount: Int64 = 0
+    public func close(): Unit { closedCount++ }
+    public func isClosed(): Bool { closedCount > 0 }
+    public prop state: ConnectionState { get() { ConnectionState.Connected } }
+    public func createTransaction(): Transaction { MockTransaction() }
+    public func getMetaData(): HashMap<String, String> { HashMap<String, String>() }
+    public func prepareStatement(sql: String): SqlStatement { stmt }
+}
+
+class QueryTrackDatasource <: Datasource {
+    public var conn: QueryTrackConnection = QueryTrackConnection()
+    public func connect(): Connection { conn }
+    public func close(): Unit {}
+    public func isClosed(): Bool { false }
+    public func setOption(_key: String, _value: String): Unit {}
+}
 
 private func checkInt(v: Any, expected: Int64): Bool {
     match (v) {
@@ -643,6 +665,79 @@ public class QueryTest {
         let rows = q.all({ r: QueryResult, cm: HashMap<String, Int64> => 0 })
         @Expect(rows.size, 1)
         @Expect(flag.called, true)
+    }
+
+    // I14 回归：using(rf) 直接执行路径（rf.session() 持有真实连接）在 AfterFind 钩子
+    // 抛错时，Session 必须 finally 关闭（修复前 closeExecutor 被跳过 → 连接泄漏）。
+    @TestCase
+    public func testAfterFindThrowClosesSessionAll(): Unit {
+        let ds = QueryTrackDatasource()
+        let rf = Refine(ds, SQLiteDialect(), 0)
+        rf.hook<Int64>("LeakAll", HookKind.AfterFind) { scope: Scope<Int64> =>
+            throw QueryException("hook boom all")
+        }
+        let cols: Array<SqlColumnInfo> = [MapperMockColumnInfo("id", false)]
+        ds.conn.stmt.queryResult = MapperMockQueryResult(cols, [Array<Any>(1, {i => 1})])
+        let q = Query<Int64>()
+            .select([Expr.Column("id")])
+            .from("t")
+            .using(rf)
+        q.typeName = "LeakAll"
+        try {
+            q.all({ r: QueryResult, cm: HashMap<String, Int64> => 0 })
+            @Fail("expected QueryException from AfterFind hook")
+        } catch (e: QueryException) {
+            @Expect(e.message, "hook boom all")
+        }
+        @Expect(ds.conn.closedCount, 1)
+    }
+
+    @TestCase
+    public func testAfterFindThrowClosesSessionOne(): Unit {
+        let ds = QueryTrackDatasource()
+        let rf = Refine(ds, SQLiteDialect(), 0)
+        rf.hook<Int64>("LeakOne", HookKind.AfterFind) { scope: Scope<Int64> =>
+            throw QueryException("hook boom one")
+        }
+        let cols: Array<SqlColumnInfo> = [MapperMockColumnInfo("id", false)]
+        ds.conn.stmt.queryResult = MapperMockQueryResult(cols, [Array<Any>(1, {i => 1})])
+        let q = Query<Int64>()
+            .select([Expr.Column("id")])
+            .from("t")
+            .using(rf)
+        q.typeName = "LeakOne"
+        try {
+            q.one({ r: QueryResult, cm: HashMap<String, Int64> => 0 })
+            @Fail("expected QueryException from AfterFind hook")
+        } catch (e: QueryException) {
+            @Expect(e.message, "hook boom one")
+        }
+        @Expect(ds.conn.closedCount, 1)
+    }
+
+    @TestCase
+    public func testAfterFindThrowClosesSessionPage(): Unit {
+        let ds = QueryTrackDatasource()
+        let rf = Refine(ds, SQLiteDialect(), 0)
+        rf.hook<Int64>("LeakPage", HookKind.AfterFind) { scope: Scope<Int64> =>
+            throw QueryException("hook boom page")
+        }
+        let cols: Array<SqlColumnInfo> = [MapperMockColumnInfo("id", false)]
+        ds.conn.stmt.queryResultQueue.add(RowQueryResult(1))
+        ds.conn.stmt.queryResultQueue.add(MapperMockQueryResult(cols, [Array<Any>(1, {i => 1})]))
+        let q = Query<Int64>()
+            .select([Expr.Column("id")])
+            .from("t")
+            .using(rf)
+        q.setMapper({ r: QueryResult, cm: HashMap<String, Int64> => 0 })
+        q.typeName = "LeakPage"
+        try {
+            q.page(1, 10)
+            @Fail("expected QueryException from AfterFind hook")
+        } catch (e: QueryException) {
+            @Expect(e.message, "hook boom page")
+        }
+        @Expect(ds.conn.closedCount, 1)
     }
 
     @TestCase

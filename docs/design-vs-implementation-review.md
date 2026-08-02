@@ -3,6 +3,11 @@
 > 对比 `docs/design.md` 与实际代码实现的一致性。
 > 最后更新: 2026-05-24
 
+> ⚠️ **I14 变更（2026-08-02）**：本文是历史快照，其中钩子相关条目（§1 行 26、§2 行 41、§4 修复历史行 67）
+> 已过时：全局 `registerHook`/`executeHooks`/`clearHooks` 及非事务写钩子（`BeforeCreate` 等）
+> 已在 I14 移除，钩子全部实例级（`Refine.hook`/`Refine.executeHooks`/`Refine.clearHooks`）。
+> 其余条目与现状一致。
+
 ---
 
 ## 1. ✅ 已正确实现

@@ -476,16 +476,16 @@ public class MacroSaveTest {
         let rf = Refine(RMockDS(), SQLiteDialect(), 0)
         let tx = Tx(conn, rf, 0)
 
-        let nonTxFlag = HookFlag()
+        let afterFindFlag = HookFlag()
         rf.hook<Post>("Post", HookKind.AfterFind) { scope: Scope<Post> =>
-            nonTxFlag.called = true
+            afterFindFlag.called = true
         }
 
         let p = Post()
-        p.title = "Separation Test"
+        p.title = "Kind Separation"
         tx.save(p)
 
-        @Expect(nonTxFlag.called, false)
+        @Expect(afterFindFlag.called, false)
     }
 
     // ─── Batch Save Tests ────────────────────────────────
