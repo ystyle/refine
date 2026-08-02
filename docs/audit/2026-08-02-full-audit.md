@@ -188,6 +188,12 @@
 - **修法**：junction 相关 SQL 改为运行时 `dialect.quoteIdentifier`（与 I19 写路径一致）。
 - **备注**：由 I19 修复暴露（2026-08-02），I19 范围外遗留，列为下一项排期任务。
 
+### I22. `qualifyExpr` 不递归 `Expr.Range`，JOIN 场景 between 列不加表前缀
+- **位置**：`src/query.cj:686-694`（`qualifyExpr`）
+- **问题**：`qualifyExpr` 只对 `Column/Binary/Unary/Aliased/Ordered` 递归，`Expr.Range`（I16 新增的 BETWEEN 三操作数变体）落入 `case _` 原样返回。表限定 JOIN 查询里若用 `between()` 谓词（内层列名），列不会被加上 `表名.` 前缀 → 多表时列歧义或错指。与既有 `FuncCall/Raw/SubQuery` 的浅处理一致，非 B5 回归。
+- **修法**：`qualifyExpr` 增加 `case Expr.Range(subject, low, high) => Expr.Range(qualifyExpr(subject, ...), qualifyExpr(low, ...), qualifyExpr(high, ...))`。
+- **备注**：B5 自审发现（2026-08-02），列为后续排期项。
+
 ---
 
 ## 四、Minor（Nice to Have）

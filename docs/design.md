@@ -228,7 +228,7 @@ struct Col<T> {
         result
     }
 
-    // BETWEEN low AND high → 三操作数 Expr.Range（`in`/`between` 均不是仓颉关键字）
+    // BETWEEN low AND high → 三操作数 Expr.Range（`between` 不是仓颉关键字；`in` 是，见下方 inSubquery）
     public func between(low: T, high: T): Expr {
         Expr.Range(Column(name), Value(low), Value(high))
     }
@@ -317,19 +317,19 @@ class PostRel {
     static let author = RefTo<User>(
         name: "author",
         fk: Col<Any>("authorId"),
-        fields: [User.col.id, User.col.name]
+        fields: [Col<Any>("id"), Col<Any>("name")]
     )
     static let tags = RefMany<Tag>(
         name: "tags",
         via: "post_tags",
-        fields: [Tag.col.id, Tag.col.name]
+        fields: [Col<Any>("id"), Col<Any>("name")]
     )
 }
 ```
 
 **类型安全的边界**：
 
-- `Post.rel.author`、`Tag.col.name` 等**宏生成的标识符**：拼错 → 编译报错 ✅
+- `PostRel.author`、`Tag.col().name` 等**宏生成的标识符**：拼错 → 编译报错 ✅
   （`Rel` 描述符类与 `Cols` 结构体的成员是编译期实体）
 - 但 `@Ref` / `@Rel` 注解里的 `by` / `via` / `fields` 是**普通字符串**，宏**不做跨类校验**：
   拼错（如 `by: "authorrId"` 或 `fields: ["id", "namee"]`）能编译通过，
@@ -394,42 +394,42 @@ struct Statement {
 ### 4.6 使用示例
 
 ```cangjie
-// 宏生成：Post.col 返回 PostCols 静态属性
-// 宏生成：Post.query() 返回 Query<Post>
+// 宏生成：Post.col() 返回 PostCols（字段描述符集合）；Post.query() 返回 Query<Post>
+// 宏生成：PostRel 是关系描述符类（静态成员如 PostRel.author、PostRel.tags）
 
 // 查询已发布的文章，按时间倒序
 let posts = Post.query()
-    .where(Post.col.published == true)
-    .where(Post.col.createdAt > DateTime.of(2024, 1, 1))
-    .orderBy(Post.col.createdAt.desc())
+    .where(Post.col().published == true)
+    .where(Post.col().createdAt > DateTime.of(2024, 1, 1))
+    .orderBy(Post.col().createdAt.desc())
     .limit(10)
     .all()
 
 // 复杂条件组合
 let results = Post.query()
     .where(
-        (Post.col.title.like("%refine%"))
-            .and(Post.col.published == true)
-            .or(Post.col.authorId == 1)
+        (Post.col().title.like("%refine%"))
+            .and(Post.col().published == true)
+            .or(Post.col().authorId == 1)
     )
     .all()
 
 // 关联预加载（类型安全）
 let postsWithAuthor = Post.query()
-    .include(Post.rel.author)
+    .include(PostRel.author)
     .all()
 // postsWithAuthor[0].getAuthor() 直接返回，不触发二次查询
 
 // 预加载 + 覆盖字段（include 双参重载）
 // 注：setFields 返回 Relation 基类、不能直接链式传给 include(IRelation)，字段覆盖用双参重载
 let postsWithTags = Post.query()
-    .include(Post.rel.tags, [Col<Any>("name")])
+    .include(PostRel.tags, [Col<Any>("name")])
     .all()
 
 // 聚合查询：按作者分组统计文章数
 let stats = Post.query()
-    .select(Post.col.authorId, count().as("total"))
-    .groupBy(Post.col.authorId)
+    .select(Post.col().authorId, count().as("total"))
+    .groupBy(Post.col().authorId)
     .having(count() > 5)
     .all()
 ```
@@ -904,9 +904,9 @@ let rf = Refine.open("sqlite://refine.db")
 let posts = rf.transaction { tx =>
     Post.query()
         .using(tx)
-        .where(Post.col.published == true)
-        .include(Post.rel.author)
-        .orderBy(Post.col.createdAt.desc())
+        .where(Post.col().published == true)
+        .include(PostRel.author)
+        .orderBy(Post.col().createdAt.desc())
         .limit(10)
         .all()
 }
@@ -957,7 +957,7 @@ func mapPost(result: QueryResult, columnMap: HashMap<String, Int64>): Post {
 `include()` 生成 LEFT JOIN 时，SQL 输出列使用带前缀的别名：
 
 ```sql
--- Post.query().include(Post.rel.author).all()
+-- Post.query().include(PostRel.author).all()
 -- @Ref[ref_to, target: User, by: "authorId", fields: ["id", "name"]]
 SELECT
   p.id      AS "id",
@@ -969,7 +969,7 @@ FROM post p
 LEFT JOIN user u ON p.author_id = u.id
 ```
 
-前缀名取自 `Relation.name`（即 `Post.rel.author` 的 name）。结果映射时按前缀分拆：
+前缀名取自 `Relation.name`（即 `PostRel.author` 的 name）。结果映射时按前缀分拆：
 
 ```cangjie
 // @Refine 宏生成，含 include(author) 时的逻辑
