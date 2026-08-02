@@ -123,6 +123,11 @@ public class Query<T> {
         let (sql, params) = dialect.render(pager)
         Logger.logSQL(sql, params)
         let result = exec.query(sql, params)
+        // 集合 include 已知局限（单查询 LEFT JOIN 方案的固有约束）：
+        // - LIMIT/OFFSET 作用于 JOIN 展开后的行（先于内存去重）：某父实体子行较多时，
+        //   单页可能返回少于 size 个唯一父实体，且父子可能跨页拆分；
+        // - 集合 include 下 ORDER BY 顺序在 aggregateWithCollections 返回时可能不保证（HashMap 迭代序）。
+        // TODO: 后续用子查询/分步查询（batch include）方案解决。
         let columnMap = buildColumnMap(result.columnInfos, columnOffset)
         let mapper = this.mapper.getOrThrow()
         let entities: Array<T>
@@ -132,13 +137,7 @@ public class Query<T> {
             var list = ArrayList<T>()
             while (result.next()) {
                 let entity = mapper(result, columnMap)
-                if (typeName != "") {
-                    let s = Scope<T>(entity)
-                    match (this.ref) {
-                        case Some(rf) => rf.executeHooks(typeName, HookKind.AfterFind, s)
-                        case None => executeHooks(typeName, HookKind.AfterFind, s)
-                    }
-                }
+                runAfterFindHooks(entity)
                 list.add(entity)
             }
             entities = list.toArray()
@@ -187,14 +186,22 @@ public class Query<T> {
         result.rowCount
     }
 
-    private func requireTable(): String {
+    private func getSourceTable(): String {
         for (clause in stmt.clauses) {
             match (clause) {
-                case FromClause(t) => return t
+                case Clause.FromClause(t) => return t
                 case _ => ()
             }
         }
-        throw QueryException("No table set. Call from() before updateWhere/deleteWhere.")
+        ""
+    }
+
+    private func requireTable(): String {
+        let t = getSourceTable()
+        if (t == "") {
+            throw QueryException("No table set. Call from() before updateWhere/deleteWhere.")
+        }
+        t
     }
 
     private func runQuery(target: Statement): Array<T> {
@@ -259,13 +266,7 @@ public class Query<T> {
 
     public func processIncluded(dialect: Dialect): Unit {
         if (included.size == 0) { return }
-        var sourceTable = ""
-        for (clause in stmt.clauses) {
-            match (clause) {
-                case Clause.FromClause(t) => sourceTable = t
-                case _ => ()
-            }
-        }
+        let sourceTable = getSourceTable()
         if (sourceTable == "") { return }
         var aliasFields = ArrayList<Expr>()
         for (i in 0..included.size) {
@@ -390,13 +391,7 @@ public class Query<T> {
         var entities = ArrayList<T>()
         while (result.next()) {
             let entity = mapper(result, columnMap)
-            if (typeName != "") {
-                let s = Scope<T>(entity)
-                match (this.ref) {
-                    case Some(rf) => rf.executeHooks(typeName, HookKind.AfterFind, s)
-                    case None => executeHooks(typeName, HookKind.AfterFind, s)
-                }
-            }
+            runAfterFindHooks(entity)
             entities.add(entity)
         }
         closeExecutor(exec)
@@ -438,13 +433,7 @@ public class Query<T> {
         var res: Option<T> = None
         if (result.next()) {
             let entity = mapper(result, columnMap)
-                if (typeName != "") {
-                    let s = Scope<T>(entity)
-                    match (this.ref) {
-                        case Some(rf) => rf.executeHooks(typeName, HookKind.AfterFind, s)
-                        case None => executeHooks(typeName, HookKind.AfterFind, s)
-                    }
-                }
+            runAfterFindHooks(entity)
             res = Some(entity)
         }
         closeExecutor(exec)
@@ -462,16 +451,10 @@ public class Query<T> {
     private func countWith(exec: ExecutionContext, dialect: Dialect): Int64 {
         let countStmt = Statement()
         // 集合 include（has_many / ref_many）的 LEFT JOIN 会按子行展开，COUNT(*) 会放大 total。
-        // 改为对源表主键去重计数。假设单列 "id" 主键（与 processIncluded 的 JOIN 写法一致；
-        // 复合主键 + 集合 include + 分页目前不支持）。
+        // 改为对源表主键去重计数，但仅支持单列 "id" 主键：复合主键 + 集合 include 时
+        // COUNT(DISTINCT 单列) 结果不正确/未定义（all()/one() 同样受影响）。
         if (hasCollectionInclude()) {
-            var sourceTable = ""
-            for (clause in stmt.clauses) {
-                match (clause) {
-                    case FromClause(t) => sourceTable = t
-                    case _ => ()
-                }
-            }
+            let sourceTable = getSourceTable()
             countStmt.addClause(SelectClause([Raw(
                 "COUNT(DISTINCT " + dialect.quoteIdentifier(sourceTable) + "." + dialect.quoteIdentifier("id") + ")"
             )]))
@@ -570,6 +553,16 @@ public class Query<T> {
         }
     }
 
+    private func runAfterFindHooks(entity: T): Unit {
+        if (typeName != "") {
+            let s = Scope<T>(entity)
+            match (this.ref) {
+                case Some(rf) => rf.executeHooks(typeName, HookKind.AfterFind, s)
+                case None => executeHooks(typeName, HookKind.AfterFind, s)
+            }
+        }
+    }
+
     private func hasCollectionInclude(): Bool {
         for (inc in included) {
             let (kind, _, _, _, _, _) = inc.resolve()
@@ -601,13 +594,7 @@ public class Query<T> {
             let id = extractKey(result, columnMap)
             if (!map.contains(id)) {
                 let entity = mapper(result, columnMap)
-                if (typeName != "") {
-                    let s = Scope<T>(entity)
-                    match (this.ref) {
-                        case Some(rf) => rf.executeHooks(typeName, HookKind.AfterFind, s)
-                        case None => executeHooks(typeName, HookKind.AfterFind, s)
-                    }
-                }
+                runAfterFindHooks(entity)
                 map[id] = entity
             }
             let entity = map.get(id).getOrThrow()

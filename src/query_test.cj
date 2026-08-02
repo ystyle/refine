@@ -757,7 +757,6 @@ public class C4PageCollectionTest {
         let q = UuidPostWithRel.query().include(commentsRel(), [Col<Any>("id"), Col<Any>("body")]).using(tx)
         let pg = q.page(1, 10)
         @Expect(pg.total, 2)
-        @Expect(conn.stmt.capturedSqlHistory.size >= 1, true)
         @Expect(conn.stmt.capturedSqlHistory[0].contains("COUNT(DISTINCT"), true)
         @Expect(conn.stmt.capturedSqlHistory[0].contains("\"uuidPostWithRel\".\"id\""), true)
     }
