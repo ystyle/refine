@@ -454,6 +454,46 @@ public class RefineTest {
         r.close()
     }
 
+    // I9: copy 对 clauses 列表必须是深拷贝。带 include 时 all() 内部 processIncluded
+    // 会在副本的 stmt 上追加 JoinClause 并改写 SelectClause（限定列 + 追加别名列）。
+    // 若 copy 浅共享 clauses，原始 Query 会被连带改写——这里专门验证原始 stmt 完全不受影响，
+    // 且查询仍正常执行。用 PostWithRel.query() 自带生成 mapper，走真实 include 路径。
+    @TestCase
+    public func testAllIncludeDoesNotMutateQueryClauses(): Unit {
+        let r = Refine(RMockDS(), SQLiteDialect(), 0)
+        let q = PostWithRel.query().include(PostWithRelRel.author)
+        let clauseCount = q.stmt.clauses.size
+        var selectFieldCount: Int64 = -1
+        match (q.stmt.clauses[0]) {
+            case Clause.SelectClause(fields) => selectFieldCount = fields.size
+            case _ => @Fail("expected SelectClause before all()")
+        }
+        let result = r.all(q)
+        @Expect(result.size, 0)
+        // 原始 stmt 不得新增任何子句（processIncluded 会在副本上追加 JoinClause）
+        @Expect(q.stmt.clauses.size, clauseCount)
+        for (clause in q.stmt.clauses) {
+            match (clause) {
+                case Clause.JoinClause(_, _, _) => @Fail("original query must not gain JoinClause")
+                case _ => ()
+            }
+        }
+        // 原始 SelectClause 不得被 processIncluded 改写：字段数不变，且仍为未限定列的
+        // Expr.Column（若浅共享，会被替换为 Raw(table.column) 并追加 author.* 别名）。
+        match (q.stmt.clauses[0]) {
+            case Clause.SelectClause(fields) =>
+                @Expect(fields.size, selectFieldCount)
+                for (f in fields) {
+                    match (f) {
+                        case Expr.Column(_) => ()
+                        case _ => @Fail("original SELECT must not be rewritten by processIncluded")
+                    }
+                }
+            case _ => @Fail("expected SelectClause")
+        }
+        r.close()
+    }
+
     // I9: all() 成功路径，底层连接恰好关闭一次（closeExecutor 与 finally 不重复 close）。
     @TestCase
     public func testAllClosesSessionOnce(): Unit {

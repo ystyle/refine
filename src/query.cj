@@ -53,6 +53,7 @@ public class Query<T> {
     // clauses/included 逐项拷贝：Statement 的 clauses 是可变 ArrayList，
     // 执行路径（processIncluded 等）会替换/追加 clause，必须独立成副本；
     // clause 内部（Expr 数组）在现有代码中不会被原地修改，直接共享即可。
+    // 注意：新增 Query 字段时必须同步更新此处 copy()，否则 Refine.all/one 副本会丢字段。
     public func copy(): Query<T> {
         let q = Query<T>()
         for (clause in stmt.clauses) {

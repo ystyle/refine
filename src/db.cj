@@ -148,6 +148,7 @@ public class Session {
 
     // I9: close() 幂等。Query 执行路径（closeExecutor）与 Refine.all/one 的
     // finally 都可能关闭同一个 Session，幂等保证底层连接只被真正关闭一次。
+    // 假设每个 Session 只被单个线程使用（check-then-set 非原子，并发 close 仍可能双关）。
     public func close(): Unit {
         if (!closed) {
             closed = true
