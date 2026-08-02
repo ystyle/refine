@@ -39,6 +39,11 @@ public interface IRelation {
     func getForeignKeyExtractor(): (Any) -> Any {
         throw RefineException("relation does not expose fk extractor")
     }
+    // Task 5: ref_many 的中间表目标列名（lowerTableName(目标类) + "_id"）。
+    // 中间表目标列由目标「类名」决定而非目标「表名」（buildJunctionSchema 与
+    // INSERT/LOAD 路径一致，见 schema_gen.cj / relation_gen.cj）——@Table 覆盖目标
+    // 表名时二者不同，宏层必须显式把类名派生的列名传进 RefMany。非 ref_many 无此列。
+    func getJunctionTargetCol(): String { "" }
     // 新增：嵌套 include（默认 no-op）
     func withInclude(rel: IRelation): IRelation { this }
     // 新增：该关系支持的嵌套列表
@@ -59,6 +64,9 @@ public open class Relation<TTarget> <: IRelation {
     var fieldSetter: (Any, Any) -> Unit
     // Task 3: ref_to 的外键读取器闭包（宏层为 ref_to 生成，其余关系保持 None）
     var fkExtractor: Option<(Any) -> Any> = None
+    // Task 5: ref_many 的中间表目标列名（见 IRelation.getJunctionTargetCol 注释），
+    // 仅 RefMany 构造时由宏层设置，其余关系保持 ""
+    var junctionTargetCol: String = ""
     private var nested = ArrayList<IRelation>()
 
     public init(name: String, targetTable: String, kind: RelationKind,
@@ -102,6 +110,10 @@ public open class Relation<TTarget> <: IRelation {
         }
     }
 
+    public func getJunctionTargetCol(): String {
+        this.junctionTargetCol
+    }
+
     public func withInclude(rel: IRelation): IRelation {
         if (hasNested(rel)) {
             return this
@@ -117,6 +129,7 @@ public open class Relation<TTarget> <: IRelation {
         let c = Relation<TTarget>(name, targetTable, kind, foreignKey, via, fields, targetMapper, fieldSetter)
         c.fkExtractor = this.fkExtractor
         c.condition = this.condition
+        c.junctionTargetCol = this.junctionTargetCol
         for (n in nested) {
             c.nested.add(n)
         }
@@ -156,8 +169,10 @@ public class RefTo<TTarget> <: Relation<TTarget> {
 public class RefMany<TTarget> <: Relation<TTarget> {
     public init(name: String, via: String, fields: Array<Col<Any>>, targetTable: String,
                 mapper: (QueryResult, HashMap<String, Int64>) -> Any,
-                setter: (Any, Any) -> Unit) {
+                setter: (Any, Any) -> Unit,
+                junctionTargetCol: String) {
         super(name, targetTable, RelationKind.RefManyRel, "", Some(via), fields, mapper, setter)
+        this.junctionTargetCol = junctionTargetCol
     }
 }
 

@@ -477,4 +477,48 @@ public class PostgreSQLIntegrationTest {
             case None => @Expect(true, true)
         }
     }
+
+    // ─── batch include Task 5：ref_many junction 批量装配（真实 PG） ───────────────────
+    // CustomTagPost(@Table custom_tag_posts) → CustomTag(@Table custom_tags) via custom_post_tags。
+    // 中间表列名验证：源列 custom_tag_posts_id、目标列 customTag_id——@Table 覆盖目标表名
+    // 时目标列仍基于目标「类名」（customTag_id 而非 custom_tags_id），装配 SQL 必须命中前者。
+    // 中间表行用带引号的 raw INSERT 写入（宏层 appendTags 写路径列名未加引号，PG 折叠
+    // customTag_id→customtag_id 无法命中，属既有限制；批量装配读路径全部 quoteIdentifier，
+    // 不受影响）。
+    @TestCase
+    public func testRefManyIncludeAssembles(): Unit {
+        match (tryPostgres()) {
+            case Some(rf) =>
+                rf.transaction { tx: Tx =>
+                    tx.execute("DROP TABLE IF EXISTS \"custom_post_tags\"", [])
+                    tx.execute("DROP TABLE IF EXISTS \"custom_tag_posts\"", [])
+                    tx.execute("DROP TABLE IF EXISTS \"custom_tags\"", [])
+                }
+                let m = rf.migrator()
+                m.autoMigrate([CustomTagSchema(), CustomTagPostSchema(), CustomTagPost_TagsJunctionSchema()])
+                rf.transaction { tx: Tx => tx.execute("INSERT INTO \"custom_tags\" (\"name\") VALUES (?)", ["red"]) }
+                rf.transaction { tx: Tx => tx.execute("INSERT INTO \"custom_tags\" (\"name\") VALUES (?)", ["blue"]) }
+                rf.transaction { tx: Tx => tx.execute("INSERT INTO \"custom_tag_posts\" (\"title\") VALUES (?)", ["p1"]) }
+                let post = CustomTagPost.query().using(rf).filter(CustomTagPost.col().title == "p1").one()
+                @Expect(post.isSome(), true)
+                let p = post.getOrThrow()
+                let tagAll = CustomTag.query().using(rf).all()
+                @Expect(tagAll.size, 2)
+                // post 关联两个真实 tag + 一个孤儿中间表行（指向不存在 tag id 999999）
+                rf.transaction { tx: Tx =>
+                    tx.execute("INSERT INTO \"custom_post_tags\" (\"custom_tag_posts_id\", \"customTag_id\") VALUES (?, ?)", [p.id, tagAll[0].id])
+                    tx.execute("INSERT INTO \"custom_post_tags\" (\"custom_tag_posts_id\", \"customTag_id\") VALUES (?, ?)", [p.id, tagAll[1].id])
+                    tx.execute("INSERT INTO \"custom_post_tags\" (\"custom_tag_posts_id\", \"customTag_id\") VALUES (?, ?)", [p.id, 999999])
+                }
+                let found = CustomTagPost.query().include(CustomTagPostRel.tags).using(rf).filter(CustomTagPost.col().title == "p1").one()
+                @Expect(found.isSome(), true)
+                let fp = found.getOrThrow()
+                // 孤儿行被 INNER JOIN 跳过，只装配 2 个真实 tag
+                @Expect(fp.tags.size, 2)
+                let names = [fp.tags[0].name, fp.tags[1].name]
+                @Expect(names.contains("red") && names.contains("blue"), true)
+                rf.close()
+            case None => @Expect(true, true)
+        }
+    }
 }

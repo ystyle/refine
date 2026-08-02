@@ -165,6 +165,17 @@ public class UuidTagPost {
     var tags: ArrayList<UuidTag> = ArrayList<UuidTag>()
 }
 
+// Task 5: ref_many String-pk 主实体 fixture（中间表源列按 String 存取，
+// 覆盖 assembleRefMany 的 isStringPk 分支）。默认 id String 字段即为主键。
+@Refine
+public class UuidKeyTagPost {
+    var id: String = ""
+    var title: String = ""
+
+    @Ref[UuidTag, via: uuid_key_tag_post_tags]
+    var tags: ArrayList<UuidTag> = ArrayList<UuidTag>()
+}
+
 @Refine
 public class UnderscoreFieldEntity {
     var id: Int64 = 0
@@ -3608,27 +3619,31 @@ public class C2IncludePreloadTest {
         @Expect(conn.stmt.capturedSqlHistory[1].contains("SELECT \"id\", \"post_id\", \"body\" FROM \"uuidComment\""), true)
     }
 
-    // Task 5 恢复：ref_many 改为 junction 批量查询装配。JOIN 装配路径（aggregateWithCollections）
-    // 已在 Task 4 删除，当前 ref_many include 不装配，测试保持 Skip 至 Task 5。
+    // Task 5 批量协议：ref_many 主查询无 JOIN 列；junction 批量查询按中间表源 id IN
+    // 主实体 id 取回，SELECT 强制目标主键 id + 中间表源 id 分组键 + 字段子集并集，
+    // RowMapper 对未选字段保持宽容（不抛异常）。目标是 String-pk 的 UuidTag。
     @TestCase
-    @Skip
     public func testRefManyIncludeSubsetFieldsNoThrow(): Unit {
-        // 仅 mock 固定即将删除的 JOIN 装配路径（aggregateWithCollections），Task 5 随装配代码一并重写。
         let conn = CaptureConnection()
         let tx = Tx(conn)
-        let cols: Array<ColumnInfo> = [
+        let mainCols: Array<ColumnInfo> = [
             MapperMockColumnInfo("id", false),
             MapperMockColumnInfo("title", false),
-            MapperMockColumnInfo("tags.id", false),
         ]
-        let rows = [
-            Array<Any>(3, {i => if (i == 0) { 3 } else if (i == 1) { "post1" } else { "t1" }}),
-            Array<Any>(3, {i => if (i == 0) { 3 } else if (i == 1) { "post1" } else { "t2" }}),
+        let mainRow = Array<Any>(2, {i => if (i == 0) { 3 } else { "post1" }})
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(mainCols, [mainRow]))
+        let batchCols: Array<ColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("uuidTagPost_id", false),
         ]
-        conn.stmt.queryResult = MapperMockQueryResult(cols, rows)
+        let batchRows = [
+            Array<Any>(2, {i => if (i == 0) { "t1" } else { 3 }}),
+            Array<Any>(2, {i => if (i == 0) { "t2" } else { 3 }}),
+        ]
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(batchCols, batchRows))
         let rel = RefMany<UuidTag>("tags", "uuid_tag_post_tags",
             [Col<Any>("id")], "uuidTag",
-            UuidTagRowMapper, UuidTagPostRel.tagsSetter)
+            UuidTagRowMapper, UuidTagPostRel.tagsSetter, "uuidTag_id")
         let q = UuidTagPost.query().include(rel, [Col<Any>("id")]).using(tx)
         let entities = q.all()
         @Expect(entities.size, 1)
@@ -3637,6 +3652,12 @@ public class C2IncludePreloadTest {
         @Expect(ts[0].id, "t1")
         @Expect(ts[0].name, "")
         @Expect(ts[1].id, "t2")
+        // junction 批量查询：强制目标主键 id + 中间表源 id 分组键，未选 name 列
+        @Expect(conn.stmt.capturedSqlHistory.size, 2)
+        @Expect(conn.stmt.capturedSqlHistory[1].contains(
+            "SELECT \"uuidTag\".\"id\", \"uuid_tag_post_tags\".\"uuidTagPost_id\""), true)
+        @Expect(conn.stmt.capturedSqlHistory[1].contains("\"uuid_tag_post_tags\".\"uuidTag_id\" = \"uuidTag\".\"id\""), true)
+        @Expect(conn.stmt.capturedSqlHistory[1].contains("\"uuid_tag_post_tags\".\"uuidTagPost_id\" IN (?)"), true)
     }
 
     @TestCase

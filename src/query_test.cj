@@ -712,20 +712,206 @@ public class QueryTest {
         @Expect(entities[1].comments[0].post_id, 2)
     }
 
-    // batch include 重构中，Task 5 恢复：ref_many 改为 junction 批量查询装配，主查询无 JOIN。
+    // batch include Task 5：ref_many 改为 junction 批量查询装配，主查询无 JOIN。
+    // 主查询返回 Post 实体后，按中间表 post_tags JOIN 目标表批量取关联 Tag 回填。
     @TestCase
-    @Skip
     public func testProcessIncludedRefMany(): Unit {
-        let q = Query<Int64>()
-        q.select([Expr.Column("id")])
-        q.from("posts")
-        let rel: IRelation = RefMany<Int64>("tags", "post_tags", [Col<Any>("id"), Col<Any>("name")], "tags", dummyMapper, dummySetter)
-        q.include(rel)
-        let dialect = SQLiteDialect()
-        q.processIncluded(dialect)
-        let (sql, _) = dialect.render(q.stmt)
-        @Expect(sql.contains("LEFT JOIN"), true)
-        @Expect(sql.contains("post_tags"), true)
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        let mainCols: Array<SqlColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("title", false),
+        ]
+        let mainRows = [Array<Any>(2, {i => if (i == 0) { 1 } else { "p" }})]
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(mainCols, mainRows))
+        let batchCols: Array<SqlColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("name", false),
+            MapperMockColumnInfo("postWithRel_id", false),
+        ]
+        let batchRows = [Array<Any>(3, {i => if (i == 0) { 9 } else if (i == 1) { "t" } else { 1 }})]
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(batchCols, batchRows))
+        let q = PostWithRel.query().include(PostWithRelRel.tags).using(tx)
+        let entities = q.all()
+        @Expect(conn.stmt.capturedSqlHistory.size, 2)
+        // 主查询不再生成 include JOIN
+        @Expect(conn.stmt.capturedSqlHistory[0].contains("JOIN"), false)
+        // junction 批量查询：中间表 JOIN 目标表（INNER JOIN）+ 中间表源 id IN 主实体 id
+        @Expect(conn.stmt.capturedSqlHistory[1].contains("FROM \"post_tags\" JOIN \"tag\""), true)
+        @Expect(conn.stmt.capturedSqlHistory[1].contains("\"post_tags\".\"tag_id\" = \"tag\".\"id\""), true)
+        @Expect(conn.stmt.capturedSqlHistory[1].contains("\"post_tags\".\"postWithRel_id\" IN (?)"), true)
+        @Expect(entities.size, 1)
+        @Expect(entities[0].tags.size, 1)
+        @Expect(entities[0].tags[0].id, 9)
+        @Expect(entities[0].tags[0].name, "t")
+    }
+
+    // ref_many 批量装配基础：2 个 Post × 各自 tags，按中间表源 id 正确分组回填。
+    @TestCase
+    public func testRefManyIncludeAssemblesBatch(): Unit {
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        let mainCols: Array<SqlColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("title", false),
+        ]
+        let mainRows = [
+            Array<Any>(2, {i => if (i == 0) { 1 } else { "p1" }}),
+            Array<Any>(2, {i => if (i == 0) { 2 } else { "p2" }}),
+        ]
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(mainCols, mainRows))
+        let batchCols: Array<SqlColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("name", false),
+            MapperMockColumnInfo("postWithRel_id", false),
+        ]
+        let batchRows = [
+            Array<Any>(3, {i => if (i == 0) { 10 } else if (i == 1) { "t1" } else { 1 }}),
+            Array<Any>(3, {i => if (i == 0) { 11 } else if (i == 1) { "t2" } else { 1 }}),
+            Array<Any>(3, {i => if (i == 0) { 12 } else if (i == 1) { "t3" } else { 2 }}),
+        ]
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(batchCols, batchRows))
+        let q = PostWithRel.query().include(PostWithRelRel.tags).using(tx)
+        let entities = q.all()
+        @Expect(conn.stmt.capturedSqlHistory.size, 2)
+        @Expect(conn.stmt.capturedSqlHistory[1].contains("IN (?, ?)"), true)
+        @Expect(entities.size, 2)
+        @Expect(entities[0].tags.size, 2)
+        @Expect(entities[0].tags[0].id, 10)
+        @Expect(entities[0].tags[0].name, "t1")
+        @Expect(entities[0].tags[1].id, 11)
+        @Expect(entities[0].tags[1].name, "t2")
+        @Expect(entities[1].tags.size, 1)
+        @Expect(entities[1].tags[0].id, 12)
+        @Expect(entities[1].tags[0].name, "t3")
+    }
+
+    // ref_many 空装配：中间表无该源 id 的行 → 批量查询空结果 → tags 保持空列表。
+    @TestCase
+    public func testRefManyIncludeEmptyNoJunctionRows(): Unit {
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        let mainCols: Array<SqlColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("title", false),
+        ]
+        let mainRows = [Array<Any>(2, {i => if (i == 0) { 5 } else { "lonely" }})]
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(mainCols, mainRows))
+        let batchCols: Array<SqlColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("name", false),
+            MapperMockColumnInfo("postWithRel_id", false),
+        ]
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(batchCols, []))
+        let q = PostWithRel.query().include(PostWithRelRel.tags).using(tx)
+        let entities = q.all()
+        @Expect(conn.stmt.capturedSqlHistory.size, 2)
+        @Expect(entities.size, 1)
+        @Expect(entities[0].tags.size, 0)
+    }
+
+    // ref_many 同 (via, 目标表) 多个关系合并为一条 junction 批量查询。
+    // rel2 用 dummy setter 只验证 SQL 合并路径；真实回填由 tags 完成。
+    @TestCase
+    public func testRefManyIncludeMergesSameViaTarget(): Unit {
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        let mainCols: Array<SqlColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("title", false),
+        ]
+        let mainRows = [Array<Any>(2, {i => if (i == 0) { 1 } else { "p" }})]
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(mainCols, mainRows))
+        let batchCols: Array<SqlColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("name", false),
+            MapperMockColumnInfo("postWithRel_id", false),
+        ]
+        let batchRows = [
+            Array<Any>(3, {i => if (i == 0) { 10 } else if (i == 1) { "t1" } else { 1 }}),
+            Array<Any>(3, {i => if (i == 0) { 11 } else if (i == 1) { "t2" } else { 1 }}),
+        ]
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(batchCols, batchRows))
+        let rel2: IRelation = RefMany<Int64>("moreTags", "post_tags",
+            [Col<Any>("name")], "tag", dummyMapper, dummySetter, "tag_id")
+        let q = PostWithRel.query().include(PostWithRelRel.tags).include(rel2).using(tx)
+        let entities = q.all()
+        // 主查询 + 1 条合并的 junction 批量查询
+        @Expect(conn.stmt.capturedSqlHistory.size, 2)
+        @Expect(conn.stmt.capturedSqlHistory[1].contains("IN (?)"), true)
+        @Expect(entities.size, 1)
+        @Expect(entities[0].tags.size, 2)
+        @Expect(entities[0].tags[0].id, 10)
+        @Expect(entities[0].tags[1].id, 11)
+    }
+
+    // ref_many 孤儿中间表行（指向已删目标）：INNER JOIN 语义下批量查询不返回该行，
+    // 装配不抛错、该源实体不获得该关联（跳过）。
+    @TestCase
+    public func testRefManyIncludeOrphanJunctionSkipped(): Unit {
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        let mainCols: Array<SqlColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("title", false),
+        ]
+        let mainRows = [
+            Array<Any>(2, {i => if (i == 0) { 1 } else { "p1" }}),
+            Array<Any>(2, {i => if (i == 0) { 2 } else { "p2" }}),
+        ]
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(mainCols, mainRows))
+        let batchCols: Array<SqlColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("name", false),
+            MapperMockColumnInfo("postWithRel_id", false),
+        ]
+        // p2 的中间表行指向已删除的 tag → INNER JOIN 过滤后不出现在批量结果
+        let batchRows = [Array<Any>(3, {i => if (i == 0) { 10 } else if (i == 1) { "t1" } else { 1 }})]
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(batchCols, batchRows))
+        let q = PostWithRel.query().include(PostWithRelRel.tags).using(tx)
+        let entities = q.all()
+        @Expect(conn.stmt.capturedSqlHistory.size, 2)
+        // 必须是 INNER JOIN 而非 LEFT JOIN：孤儿行被数据库侧过滤
+        @Expect(conn.stmt.capturedSqlHistory[1].contains("LEFT JOIN"), false)
+        @Expect(conn.stmt.capturedSqlHistory[1].contains(" JOIN \""), true)
+        @Expect(entities.size, 2)
+        @Expect(entities[0].tags.size, 1)
+        @Expect(entities[0].tags[0].id, 10)
+        @Expect(entities[1].tags.size, 0)
+    }
+
+    // ref_many String-pk 主实体：中间表源 id 列按 String 读取分组（isStringPk 分支）。
+    // 主实体主键是 String，rawId 用 String 值作为 IN 参数。
+    @TestCase
+    public func testRefManyIncludeStringPkMainEntity(): Unit {
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        let mainCols: Array<SqlColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("title", false),
+        ]
+        let mainRows = [Array<Any>(2, {i => if (i == 0) { "p-a" } else { "post" }})]
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(mainCols, mainRows))
+        let batchCols: Array<SqlColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("name", false),
+            MapperMockColumnInfo("uuidKeyTagPost_id", false),
+        ]
+        let batchRows = [
+            Array<Any>(3, {i => if (i == 0) { "t1" } else if (i == 1) { "one" } else { "p-a" }}),
+            Array<Any>(3, {i => if (i == 0) { "t2" } else if (i == 1) { "two" } else { "p-a" }}),
+        ]
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(batchCols, batchRows))
+        let q = UuidKeyTagPost.query().include(UuidKeyTagPostRel.tags).using(tx)
+        let entities = q.all()
+        @Expect(conn.stmt.capturedSqlHistory.size, 2)
+        @Expect(conn.stmt.capturedSqlHistory[1].contains("WHERE \"uuid_key_tag_post_tags\".\"uuidKeyTagPost_id\" IN (?)"), true)
+        @Expect(entities.size, 1)
+        @Expect(entities[0].tags.size, 2)
+        @Expect(entities[0].tags[0].id, "t1")
+        @Expect(entities[0].tags[0].name, "one")
+        @Expect(entities[0].tags[1].id, "t2")
+        @Expect(entities[0].tags[1].name, "two")
     }
 
     @TestCase

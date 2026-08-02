@@ -105,8 +105,12 @@ func buildRelClass(className: String, rels: ArrayList<RelInfo>): Tokens {
             )
         } else {
             let viaLit = Token(TokenKind.STRING_LITERAL, r.via)
+            // Task 5: 中间表目标列名固定用 lowerTableName(目标类) + "_id"（与 buildJunctionSchema
+            // 和 relation_gen.cj 的 INSERT/LOAD SQL 一致，不能用 targetTable + "_id"，
+            // 否则 @Table 覆盖目标表名时列名不一致）。宏层在编译期计算并传入 RefMany。
+            let junctionTargetColLit = Token(TokenKind.STRING_LITERAL, lowerTableName(r.target) + "_id")
             body = body + quote(
-                public static let $(fieldIdent) = RefMany<$(targetType)>($(nameLit), $(viaLit), $(fieldsTok), $(targetTableExpr), $(mapperIdent), $(setterIdent))
+                public static let $(fieldIdent) = RefMany<$(targetType)>($(nameLit), $(viaLit), $(fieldsTok), $(targetTableExpr), $(mapperIdent), $(setterIdent), $(junctionTargetColLit))
             )
         }
         first = false

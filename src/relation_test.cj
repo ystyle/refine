@@ -27,13 +27,15 @@ public class RelationTest {
     @TestCase
     public func testRefManyConstruction(): Unit {
         let fields = [Col<Any>("id"), Col<Any>("name")]
-        let rel = RefMany<RelTag>("tags", "post_tags", fields, "reltag", dummyMapper, dummySetter)
+        let rel = RefMany<RelTag>("tags", "post_tags", fields, "reltag", dummyMapper, dummySetter, "reltag_id")
         @Expect(rel.name, "tags")
         @Expect(rel.kind, RelationKind.RefManyRel)
         match (rel.via) {
             case Some(v) => @Expect(v, "post_tags")
             case _ => @Fail("expected Some")
         }
+        // Task 5: 中间表目标列名随 RefMany 构造传入
+        @Expect(rel.getJunctionTargetCol(), "reltag_id")
     }
 
     @TestCase
@@ -54,7 +56,7 @@ public class RelationTest {
     @TestCase
     public func testIRelationResolveRefMany(): Unit {
         let fields = [Col<Any>("id"), Col<Any>("name")]
-        let rel: IRelation = RefMany<RelTag>("tags", "post_tags", fields, "reltag", dummyMapper, dummySetter)
+        let rel: IRelation = RefMany<RelTag>("tags", "post_tags", fields, "reltag", dummyMapper, dummySetter, "reltag_id")
         let (kind, name, targetTable, foreignKey, via, resolvedFields) = rel.resolve()
         @Expect(kind, RelationKind.RefManyRel)
         @Expect(name, "tags")

@@ -43,6 +43,10 @@ class FieldOverrideRelation <: IRelation {
     public func isBatchSupported(): Bool {
         inner.isBatchSupported()
     }
+
+    public func getJunctionTargetCol(): String {
+        inner.getJunctionTargetCol()
+    }
 }
 
 public class Query<T> {
@@ -298,9 +302,9 @@ public class Query<T> {
     }
 
     // Task 2: 主查询分离——include 不再生成 LEFT JOIN/别名 SELECT/限定（qualify）。
-    // 主查询只渲染源表自身（无 JOIN），include 预加载改由批量分步查询协议完成
-    // （ref_to 批量装配 Task 3、has_one/has_many 批量装配 Task 4 已接入 all()/one()/page()，
-    // ref_many 在 Task 5 接入）。此方法保留为 no-op 挂接入口。
+    // 主查询只渲染源表自身（无 JOIN），include 预加载改由批量分步查询协议完成：
+    // ref_to（Task 3）、has_one/has_many（Task 4）、ref_many（Task 5）均已接入
+    // all()/one()/page()，经 assembleIncludes 按各自协议批量装配。此方法保留为 no-op 挂接入口。
     public func processIncluded(dialect: Dialect): Unit {
         ()
     }
@@ -399,10 +403,16 @@ public class Query<T> {
     // 本 WHERE 子句内不能再有其它 Value 占位符（否则 render 收集的参数顺序会与占位符错位）。
     // 批量装配目前只有 IN 列表一个参数源，此契约在 Task 4/5 复用批量装配时同样成立。
     private func buildInClause(dialect: Dialect, col: String, ids: Array<Any>): (String, Array<Any>) {
+        buildInClauseCol(dialect.quoteIdentifier(col), ids)
+    }
+
+    // buildInClause 的通用形态：colSQL 是调用方已构造好的列引用片段（可带表限定，
+    // 如 SQLite 的 `"post_tags"."postWithRel_id"`），仅负责生成占位符与参数。
+    // Task 5 ref_many junction 查询的 IN 列在中间表上且需表限定，不能经 quoteIdentifier 二次转义。
+    private func buildInClauseCol(colSQL: String, ids: Array<Any>): (String, Array<Any>) {
         var placeholders = ArrayList<String>()
         for (_ in 0..ids.size) { placeholders.add("?") }
-        let sql = dialect.quoteIdentifier(col) + " IN (" + String.join(placeholders.toArray(), delimiter: ", ") + ")"
-        (sql, ids)
+        (colSQL + " IN (" + String.join(placeholders.toArray(), delimiter: ", ") + ")", ids)
     }
 
     // 批量 SELECT 的字段并集 + 强制列：同表多关系合并时取所有选中列；forced 为必须选中的列
@@ -719,8 +729,8 @@ public class Query<T> {
         (list.toArray(), rawIds.toArray())
     }
 
-    // 批量装配调度：ref_to 先行、集合（has_one/has_many）随后，二者独立、顺序保持一致。
-    // rawIds 与 entities 按索引对齐，仅在 needsCollectionAssembly() 时有意义。
+    // 批量装配调度：ref_to 先行、集合（has_one / has_many / ref_many）随后，三者独立、
+    // 顺序保持一致。rawIds 与 entities 按索引对齐，仅在 needsCollectionAssembly() 时有意义。
     private func assembleIncludes(
         exec: ExecutionContext,
         dialect: Dialect,
@@ -728,31 +738,37 @@ public class Query<T> {
         rawIds: Array<Any>
     ): Unit {
         assembleRefTo(exec, dialect, entities)
-        if (needsCollectionAssembly()) { assembleCollections(exec, dialect, entities, rawIds) }
+        if (needsCollectionAssembly()) {
+            assembleCollections(exec, dialect, entities, rawIds)
+            assembleRefMany(exec, dialect, entities, rawIds)
+        }
     }
 
-    // 是否有需要批量装配的集合 include（has_one / has_many）。ref_many 走 junction
-    // 中间表（Task 5 接入），此处不判定 RefManyRel（旧 JOIN 路径的 hasCollectionInclude 已删除）。
+    // 是否有需要批量装配的集合 include（has_one / has_many / ref_many）。
+    // ref_many 走 junction 中间表（Task 5 接入，与 has 系共用主实体原始主键 rawIds），
+    // 故同样判定为需要收集 rawIds（旧 JOIN 路径的 hasCollectionInclude 已删除）。
     private func needsCollectionAssembly(): Bool {
         for (inc in included) {
             let (kind, _, _, _, _, _) = inc.resolve()
-            if (kind == RelationKind.HasManyRel || kind == RelationKind.HasOneRel) {
+            if (kind == RelationKind.HasManyRel || kind == RelationKind.HasOneRel ||
+                kind == RelationKind.RefManyRel) {
                 return true
             }
         }
         false
     }
 
-    // 集合 include 装配前置守卫：批量 has_many/has_one 需要主实体单列主键的原始值
-    // （rawIdExtractor，宏层随 query() 挂载）。复合主键主实体或手工构造的 Query 未挂载
-    // 时，主查询执行前就抛带说明的 QueryException（计划 D6 限制），避免发无意义的主查询。
+    // 集合 include 装配前置守卫：批量 has_many/has_one/ref_many 需要主实体单列主键的
+    // 原始值（rawIdExtractor，宏层随 query() 挂载）。复合主键主实体或手工构造的 Query
+    // 未挂载时，主查询执行前就抛带说明的 QueryException（计划 D6 限制），避免发无意义的主查询。
     private func requireCollectionIdSupport(): Unit {
         if (!needsCollectionAssembly()) { return }
         match (this.rawIdExtractor) {
             case Some(_) => ()
             case None => throw QueryException(
-                "batch has_many/has_one include requires a single-column primary key on the main entity" +
-                " (type=" + typeName + "); composite primary key / missing raw id extractor not supported"
+                "batch collection include (has_many/has_one/ref_many) requires a single-column primary key" +
+                " on the main entity (type=" + typeName + "); composite primary key / missing raw id extractor" +
+                " not supported"
             )
         }
     }
@@ -877,6 +893,157 @@ public class Query<T> {
                             } else {
                                 setter(entities[ei], ts[0])
                             }
+                        case None => ()
+                    }
+                }
+            }
+        }
+    }
+
+    // Task 5: ref_many 批量装配（多对多，经 junction 中间表）。主查询返回实体后调用：
+    //   1. 按 (via 中间表, 目标表) 分组，同组多个 ref_many 关系合并为一条批量查询；
+    //   2. 复用主实体主键原始值（rawIds，映射循环内已按实体对齐收集），去重并过滤 0/""；
+    //   3. 空集合跳过（不产生额外查询）；
+    //   4. `SELECT 目标表."id", 目标表.<字段...>, 中间表."<源表>_id" FROM 中间表 JOIN 目标表
+    //      ON 中间表."<目标类>_id" = 目标表."id" WHERE 中间表."<源表>_id" IN (?, ...)` 批量取
+    //      关联目标，目标列不带表限定（targetMapper 按列名读，中间表无同名列可裸读），
+    //      中间表源 id 列强制选中（分组键）；
+    //   5. 按中间表源 id 值分组建 HashMap<srcId, Array<TargetEntity>>；
+    //   6. 回填：主实体按各自主键命中分组，逐个 add。孤儿行（中间表行指向已删目标）
+    //      由 INNER JOIN 天然排除，不装配、不抛错。
+    // 中间表列名与 buildJunctionSchema / relation_gen.cj 一致：
+    //   源列 = <源表名>_id（源表名取主查询 FROM，getSourceTable），
+    //   目标列 = lowerTableName(目标类) + "_id"（由宏层随 RefMany 构造传入，
+    //            @Table 覆盖目标表名时目标列名仍基于类名，见 getJunctionTargetCol）。
+    // SQL 手写（quoteIdentifier + 占位符，对齐 relation_gen.cj 的 ref_many 单行查询风格）：
+    // junction JOIN 语义必须是 INNER JOIN（孤儿行跳过），而 Statement/方言渲染只支持
+    // LEFT JOIN 且 FromClause 无别名，无法表达该 JOIN；IN 列带表限定也超出 buildInClause。
+    private func assembleRefMany(
+        exec: ExecutionContext,
+        dialect: Dialect,
+        entities: Array<T>,
+        rawIds: Array<Any>
+    ): Unit {
+        if (included.size == 0 || entities.size == 0) { return }
+        if (rawIds.size != entities.size) {
+            throw QueryException("internal error: rawId collection size mismatch in assembleRefMany")
+        }
+        let sourceTable = getSourceTable()
+        if (sourceTable == "") { return }
+
+        // 1. 按 (via 中间表, 目标表) 分组
+        var groups = ArrayList<(String, String, ArrayList<IRelation>)>()
+        for (inc in included) {
+            let (kind, _, targetTable, _, via, _) = inc.resolve()
+            if (kind != RelationKind.RefManyRel) { continue }
+            let viaTable = via.getOrThrow()
+            var found = false
+            for (i in 0..groups.size) {
+                if (groups[i][0] == viaTable && groups[i][1] == targetTable) {
+                    groups[i][2].add(inc)
+                    found = true
+                    break
+                }
+            }
+            if (!found) {
+                let rels = ArrayList<IRelation>()
+                rels.add(inc)
+                groups.add((viaTable, targetTable, rels))
+            }
+        }
+        if (groups.size == 0) { return }
+
+        // 2. 收集主实体 id（去重、过滤 0/"" 未设置值），同 assembleCollections
+        var ids = ArrayList<Any>()
+        var seen = HashMap<String, Bool>()
+        for (id in rawIds) {
+            if (isEmptyFk(id)) { continue }
+            let key = fkKey(id)
+            if (!seen.contains(key)) {
+                seen[key] = true
+                ids.add(id)
+            }
+        }
+        if (ids.size == 0) { return }
+
+        let srcCol = sourceTable + "_id"
+
+        for (i in 0..groups.size) {
+            let viaTable = groups[i][0]
+            let targetTable = groups[i][1]
+            let rels = groups[i][2]
+
+            // 3. 目标字段并集 + 强制目标主键 id；另强制中间表源 id 列（分组键）
+            let cols = buildBatchSelectCols(rels, ["id"])
+            let tgtCol = rels[0].getJunctionTargetCol()
+            if (tgtCol == "") {
+                throw QueryException("ref_many relation '" + rels[0].resolve()[1] +
+                    "' has empty junction target column; RefMany requires junctionTargetCol")
+            }
+
+            // 4. 手写 junction 批量查询（INNER JOIN 语义见方法注释）
+            var selectParts = ArrayList<String>()
+            for (c in cols) {
+                match (c) {
+                    case Expr.Column(name) =>
+                        selectParts.add(dialect.quoteIdentifier(targetTable) + "." + dialect.quoteIdentifier(name))
+                    case _ => throw QueryException("internal error: batch select contains non-column expr")
+                }
+            }
+            selectParts.add(dialect.quoteIdentifier(viaTable) + "." + dialect.quoteIdentifier(srcCol))
+            let srcColSQL = dialect.quoteIdentifier(viaTable) + "." + dialect.quoteIdentifier(srcCol)
+            let (inSQL, inParams) = buildInClauseCol(srcColSQL, ids.toArray())
+            let sql = "SELECT " + String.join(selectParts.toArray(), delimiter: ", ") +
+                " FROM " + dialect.quoteIdentifier(viaTable) +
+                " JOIN " + dialect.quoteIdentifier(targetTable) +
+                " ON " + dialect.quoteIdentifier(viaTable) + "." + dialect.quoteIdentifier(tgtCol) +
+                " = " + dialect.quoteIdentifier(targetTable) + "." + dialect.quoteIdentifier("id") +
+                " WHERE " + inSQL
+            Logger.logSQL(sql, inParams)
+            let result = exec.query(sql, inParams)
+
+            // 5. 按中间表源 id 值分组成目标实体列表（源 id 类型跟随主实体主键：Int64 或 String）。
+            //    INNER JOIN 已排除孤儿行；中间表源 id 列非空，getOrNull 仅防御。
+            let columnMap = buildColumnMap(result.columnInfos, exec.getParamOffset())
+            let srcIdx = columnMap.get(srcCol).getOrThrow()
+            let isStringPk = fkIsString(ids[0])
+            let targetMapper = rels[0].getTargetMapper()
+            var groupMap = HashMap<String, ArrayList<Any>>()
+            while (result.next()) {
+                let keyOpt: Option<String> = if (isStringPk) {
+                    match (result.getOrNull<String>(srcIdx)) {
+                        case Some(v) => Some(fkKey(v))
+                        case None => None
+                    }
+                } else {
+                    match (result.getOrNull<Int64>(srcIdx)) {
+                        case Some(v) => Some(fkKey(v))
+                        case None => None
+                    }
+                }
+                match (keyOpt) {
+                    case Some(key) =>
+                        var group = match (groupMap.get(key)) {
+                            case Some(g) => g
+                            case None =>
+                                let ng = ArrayList<Any>()
+                                groupMap[key] = ng
+                                ng
+                        }
+                        group.add(targetMapper(result, columnMap))
+                    case None => ()
+                }
+            }
+
+            // 6. 回填：逐目标 add
+            for (rel in rels) {
+                let setter = rel.getFieldSetter()
+                for (ei in 0..entities.size) {
+                    let rawId = rawIds[ei]
+                    if (isEmptyFk(rawId)) { continue }
+                    let key = fkKey(rawId)
+                    match (groupMap.get(key)) {
+                        case Some(ts) => for (t in ts) { setter(entities[ei], t) }
                         case None => ()
                     }
                 }
