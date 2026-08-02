@@ -267,8 +267,8 @@ public class DialectTest {
     @TestCase
     public func testDialectFeatureFlags(): Unit {
         let sqlite = SQLiteDialect()
-        @Expect(sqlite.hasReturningSupport(), false)
-        @Expect(sqlite.hasJSONSupport(), false)
+        @Expect(sqlite.hasReturningSupport(), true)
+        @Expect(sqlite.hasJSONSupport(), true)
         @Expect(sqlite.hasIsolationSupport(), false)
 
         let mysql = MySQLDialect()
@@ -357,9 +357,37 @@ public class DialectTest {
     @TestCase
     public func testUpsertSupport(): Unit {
         let dialect = SQLiteDialect()
-        @Expect(dialect.hasUpsertSupport(), false)
-        let (sql, extraCount) = dialect.upsertSQL("users", ["id", "name"], ["id"], [], [], "")
-        @Expect(sql, "")
+        @Expect(dialect.hasUpsertSupport(), true)
+        let (sql, extraCount) = dialect.upsertSQL("users", ["id", "name", "email"], ["id"], [], ["updated_at"], "version")
+        @Expect(sql, "INSERT INTO \"users\" (\"id\", \"name\", \"email\") VALUES (?, ?, ?) ON CONFLICT (\"id\") DO UPDATE SET \"id\" = excluded.\"id\", \"name\" = excluded.\"name\", \"email\" = excluded.\"email\"")
+        @Expect(extraCount, 0)
+    }
+
+    // SQLite upsert 使用 excluded.col（不区分大小写，对齐官方文档小写），不需要额外参数；
+    // version 列冲突时自增（未限定列名引用原行；SQLite 的 DO UPDATE SET 不支持 table.col 限定符）
+    @TestCase
+    public func testUpsertSQLVersionCol(): Unit {
+        let dialect = SQLiteDialect()
+        let (sql, extraCount) = dialect.upsertSQL("users", ["id", "name", "version"], ["id"], [], [], "version")
+        @Expect(sql, "INSERT INTO \"users\" (\"id\", \"name\", \"version\") VALUES (?, ?, ?) ON CONFLICT (\"id\") DO UPDATE SET \"id\" = excluded.\"id\", \"name\" = excluded.\"name\", \"version\" = \"version\" + 1")
+        @Expect(extraCount, 0)
+    }
+
+    // SQLite upsert 审计创建列（created_at）冲突时不覆盖：不生成更新子句，无需额外参数
+    @TestCase
+    public func testUpsertSQLAuditCreateSkipped(): Unit {
+        let dialect = SQLiteDialect()
+        let (sql, extraCount) = dialect.upsertSQL("posts", ["id", "title", "created_at"], ["id"], ["created_at"], [], "")
+        @Expect(sql, "INSERT INTO \"posts\" (\"id\", \"title\", \"created_at\") VALUES (?, ?, ?) ON CONFLICT (\"id\") DO UPDATE SET \"id\" = excluded.\"id\", \"title\" = excluded.\"title\"")
+        @Expect(extraCount, 0)
+    }
+
+    // 回归（I15）：SQLite 复合主键冲突目标必须完整列出（ON CONFLICT ("pk1", "pk2")）
+    @TestCase
+    public func testUpsertSQLCompoundConflict(): Unit {
+        let dialect = SQLiteDialect()
+        let (sql, extraCount) = dialect.upsertSQL("order_tags", ["order_id", "tag_id", "quantity"], ["order_id", "tag_id"], [], [], "")
+        @Expect(sql, "INSERT INTO \"order_tags\" (\"order_id\", \"tag_id\", \"quantity\") VALUES (?, ?, ?) ON CONFLICT (\"order_id\", \"tag_id\") DO UPDATE SET \"order_id\" = excluded.\"order_id\", \"tag_id\" = excluded.\"tag_id\", \"quantity\" = excluded.\"quantity\"")
         @Expect(extraCount, 0)
     }
 

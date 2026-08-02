@@ -159,9 +159,35 @@ public class SQLiteDialect <: Dialect {
         }
     }
 
-    public func hasUpsertSupport(): Bool { false }
+    // 现代 SQLite（≥3.24 支持 ON CONFLICT，≥3.35 支持 RETURNING，JSON1 内建）启用这些能力。
+    // 后续引入连接抽象后，再按实际 SQLite 版本细化开关（见 audit I15 决策）。
+    public func hasUpsertSupport(): Bool { true }
 
-    public func upsertSQL(_table: String, _columns: Array<String>, _conflictColumns: Array<String>, _auditCreateCols: Array<String>, _auditUpdateCols: Array<String>, _versionCol: String): (String, Int64) { ("", 0) }
+    // SQLite upsert 用 ON CONFLICT ... DO UPDATE；冲突行引用用 excluded.col（关键字不区分大小写，
+    // 对齐 SQLite 文档采用小写），不需要额外参数（extraParamCount = 0）。
+    // version 冲突自增用无表前缀的列名（SQLite 的 DO UPDATE SET 不支持 table.col 限定符，
+    // 未限定列名即引用冲突前的原行值，与 PG 的 EXCLUDED 语义对应）。
+    // 契约：auditCreateCols 与 auditUpdateCols 不相交；auditCreate 优先（continue 跳过，不生成更新子句）。
+    public func upsertSQL(table: String, columns: Array<String>, conflictColumns: Array<String>, auditCreateCols: Array<String>, auditUpdateCols: Array<String>, versionCol: String): (String, Int64) {
+        var cols = ArrayList<String>()
+        var placeholders = ArrayList<String>()
+        var updates = ArrayList<String>()
+        for (c in columns) {
+            cols.add(quoteIdentifier(c))
+            placeholders.add("?")
+            if (auditCreateCols.contains(c)) { continue }
+            if (c == versionCol) {
+                updates.add(quoteIdentifier(c) + " = " + quoteIdentifier(c) + " + 1")
+            } else {
+                updates.add(quoteIdentifier(c) + " = excluded." + quoteIdentifier(c))
+            }
+        }
+        var conflictCols = ArrayList<String>()
+        for (c in conflictColumns) {
+            conflictCols.add(quoteIdentifier(c))
+        }
+        ("INSERT INTO " + quoteIdentifier(table) + " (" + String.join(cols.toArray(), delimiter: ", ") + ") VALUES (" + String.join(placeholders.toArray(), delimiter: ", ") + ") ON CONFLICT (" + String.join(conflictCols.toArray(), delimiter: ", ") + ") DO UPDATE SET " + String.join(updates.toArray(), delimiter: ", "), 0)
+    }
 
     public func dataTypeOf(st: StorageType): String {
         match (st) {
@@ -177,10 +203,12 @@ public class SQLiteDialect <: Dialect {
         }
     }
 
-    public func hasReturningSupport(): Bool { false }
+    // 现代 SQLite（≥3.35 支持 RETURNING；JSON1 自 SQLite 3.38 起为内建，更早版本多为编译期启用）
+    public func hasReturningSupport(): Bool { true }
 
-    public func hasJSONSupport(): Bool { false }
+    public func hasJSONSupport(): Bool { true }
 
+    // SQLite 无事务隔离级别概念（单写者），保持不支持
     public func hasIsolationSupport(): Bool { false }
 
     public func migrator(db: DB): Migrator { SQLiteMigrator(db) }
