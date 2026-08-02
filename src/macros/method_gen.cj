@@ -245,27 +245,43 @@ func buildKeyExtractor(className: String, pkFields: ArrayList<FieldInfo>): Token
 // keyExtractor 输出 String（复合主键 ":" 拼接），无法直接作为 SQL 参数原值，故另设 rawId。
 // 复合主键（pkSize > 1）不生成：目标 fk 是单列，无法匹配 ":" 拼接键（计划 D6 限制），
 // 返回空 Tokens，refine_macro.cj 亦不 setRawIdExtractor → 装配入口抛 QueryException。
+// 生成的函数内嵌主键列存在性守卫：用户 `.select(...)` 省略主键列时，
+// 抛带列名的 QueryException（而非 Option.getOrThrow 的裸错误）。
 func buildRawIdExtractor(className: String, pkFields: ArrayList<FieldInfo>): Tokens {
     let funcName = Token(TokenKind.IDENTIFIER, className + "RawIdFromResult")
     let pkSize = pkFields.size
     if (pkSize == 0) {
+        let guardMsg = "主查询 SELECT 必须包含主键列 'id' 以支持集合 include（批量装配需要主键）"
+        let idLit = Token(TokenKind.STRING_LITERAL, "id")
+        let guardMsgLit = Token(TokenKind.STRING_LITERAL, guardMsg)
         return quote(
             func $(funcName)(result: QueryResult, columnMap: HashMap<String, Int64>): Any {
-                result.get<Int64>(columnMap.get("id").getOrThrow())
+                if (!columnMap.contains($(idLit))) {
+                    throw QueryException($(guardMsgLit))
+                }
+                result.get<Int64>(columnMap.get($(idLit)).getOrThrow())
             }
         )
     } else if (pkSize == 1) {
         let pk = pkFields.get(0).getOrThrow()
         let pkNameLit = Token(TokenKind.STRING_LITERAL, pk.name)
+        let guardMsg = "主查询 SELECT 必须包含主键列 '" + pk.name + "' 以支持集合 include（批量装配需要主键）"
+        let guardMsgLit = Token(TokenKind.STRING_LITERAL, guardMsg)
         if (pk.typeName == "String") {
             return quote(
                 func $(funcName)(result: QueryResult, columnMap: HashMap<String, Int64>): Any {
+                    if (!columnMap.contains($(pkNameLit))) {
+                        throw QueryException($(guardMsgLit))
+                    }
                     result.get<String>(columnMap.get($(pkNameLit)).getOrThrow())
                 }
             )
         } else {
             return quote(
                 func $(funcName)(result: QueryResult, columnMap: HashMap<String, Int64>): Any {
+                    if (!columnMap.contains($(pkNameLit))) {
+                        throw QueryException($(guardMsgLit))
+                    }
                     result.get<Int64>(columnMap.get($(pkNameLit)).getOrThrow())
                 }
             )

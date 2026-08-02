@@ -1679,4 +1679,52 @@ public class C4CollectionBatchTest {
         @Expect(captured[1].body, "world")
         @Expect(captured[1].post_key, "p-a")
     }
+
+    // 主查询 SELECT 省略主键列（如 select([title])）→ 集合 include 批量装配无法读主键，
+    // 必须抛带说明的 QueryException（而不是 Option.getOrThrow 的裸错误）。
+    @TestCase
+    public func testCollectionIncludeMissingPkColumnThrows(): Unit {
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        let cols: Array<SqlColumnInfo> = [MapperMockColumnInfo("title", false)]
+        let rows = [Array<Any>(1, {i => "p1"})]
+        conn.stmt.queryResult = MapperMockQueryResult(cols, rows)
+        let q = PostWithRel.query().select([Expr.Column("title")]).include(PostWithRelRel.comments).using(tx)
+        try {
+            let _ = q.all()
+            @Fail("expected QueryException for missing pk column in select")
+        } catch (e: QueryException) {
+            @Expect(e.message.contains("必须包含主键列"), true)
+        }
+    }
+
+    // 批量结果中目标 fk 为 NULL 的脏行（可空 fk）→ 分组时跳过，不抛异常、不装配。
+    @TestCase
+    public func testHasManyIncludeSkipsNullFkRow(): Unit {
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        let mainCols: Array<SqlColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("title", false),
+            MapperMockColumnInfo("user_id", false),
+            MapperMockColumnInfo("post_id", false),
+        ]
+        let mainRows = [Array<Any>(4, {i => if (i == 0) { 1 } else if (i == 1) { "p1" } else { 0 }})]
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(mainCols, mainRows))
+        let batchCols: Array<SqlColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("post_id", false),
+        ]
+        // 第二行 post_id 用非 Int64 值模拟驱动 NULL（MapperMockQueryResult.getOrNull 类型不匹配 → None）
+        let batchRows = [
+            Array<Any>(2, {i => if (i == 0) { 10 } else { 1 }}),
+            Array<Any>(2, {i => if (i == 0) { 99 } else { "orphan" }}),
+        ]
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(batchCols, batchRows))
+        let q = PostWithRel.query().include(PostWithRelRel.comments).using(tx)
+        let entities = q.all()
+        @Expect(entities.size, 1)
+        @Expect(entities[0].comments.size, 1)
+        @Expect(entities[0].comments[0].id, 10)
+    }
 }

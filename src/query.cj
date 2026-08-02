@@ -176,20 +176,9 @@ public class Query<T> {
             let result = exec.query(sql, params)
             // 主查询无 include JOIN：LIMIT/OFFSET 作用于源表行，单页恰好返回 size 个主实体。
             let columnMap = buildColumnMap(result.columnInfos, columnOffset)
-            let mapper = this.mapper.getOrThrow()
-            let collectIds = needsCollectionAssembly()
-            var list = ArrayList<T>()
-            var rawIds = ArrayList<Any>()
-            while (result.next()) {
-                let entity = mapper(result, columnMap)
-                runAfterFindHooks(entity)
-                list.add(entity)
-                if (collectIds) { rawIds.add(collectRawId(result, columnMap)) }
-            }
-            let entities = list.toArray()
+            let (entities, rawIds) = mapMainResult(result, columnMap, this.mapper.getOrThrow())
             // 批量装配在 AfterFind hook 之后执行（同 all()：hook 读关联字段为未装配状态）。
-            assembleRefTo(exec, dialect, entities)
-            if (collectIds) { assembleCollections(exec, dialect, entities, rawIds.toArray()) }
+            assembleIncludes(exec, dialect, entities, rawIds)
             Page(entities, total, page, size)
         } finally {
             closeExecutor(exec)
@@ -273,25 +262,6 @@ public class Query<T> {
                 case JoinClause(_, _, _) => throw QueryException(operation + " does not support JOIN")
                 case _ => ()
             }
-        }
-    }
-
-    private func runQuery(target: Statement): Array<T> {
-        let exec = requireExecutor()
-        try {
-            let dialect = getDialect()
-            let (sql, params) = dialect.render(target)
-            Logger.logSQL(sql, params)
-            let result = exec.query(sql, params)
-            let columnMap = buildColumnMap(result.columnInfos, columnOffset)
-            var entities = ArrayList<T>()
-            while (result.next()) {
-                let entity = this.mapper.getOrThrow()(result, columnMap)
-                entities.add(entity)
-            }
-            entities.toArray()
-        } finally {
-            closeExecutor(exec)
         }
     }
 
@@ -388,40 +358,12 @@ public class Query<T> {
             }
             if (ids.size == 0) { continue }
 
-            // 2. 字段并集：同表多关系合并时取所有选中列。取舍：合并查询按「并集」SELECT，
-            //    共享 identity-map 实体携带所有选中关系列的值——某关系只声明了子集列，
-            //    但其目标实体仍带并集中其它关系选中的列（非该关系声明的子集），属预期行为。
-            var fieldNames = ArrayList<String>()
-            var seenField = HashMap<String, Bool>()
-            for (rel in rels) {
-                let (_, _, _, _, _, fields) = rel.resolve()
-                for (c in fields) {
-                    if (!seenField.contains(c.name)) {
-                        seenField[c.name] = true
-                        fieldNames.add(c.name)
-                    }
-                }
-            }
-            var cols = ArrayList<Expr>()
-            cols.add(Expr.Column("id"))   // 强制选中目标主键，装配查表与回填都用
-            for (name in fieldNames) {
-                if (name != "id") { cols.add(Expr.Column(name)) }
-            }
-
-            // 3. 批量 SQL：SELECT <cols> FROM <table> WHERE <col> IN (?, ...)
-            let bs = Statement()
-            bs.addClause(Clause.SelectClause(cols.toArray()))
-            bs.addClause(Clause.FromClause(targetTable))
+            // 2. 字段并集 + 强制目标主键列（装配查表与回填都用），批量查询
+            let cols = buildBatchSelectCols(rels, ["id"])
             let (inSQL, inParams) = buildInClause(dialect, "id", ids.toArray())
-            bs.addClause(Clause.WhereClause([Expr.Raw(inSQL)]))
-            let (sql, baseParams) = dialect.render(bs)
-            var params = ArrayList<Any>()
-            for (p in baseParams) { params.add(p) }
-            for (v in inParams) { params.add(v) }
-            Logger.logSQL(sql, params.toArray())
-            let result = exec.query(sql, params.toArray())
+            let result = execBatchQuery(exec, dialect, targetTable, cols, inSQL, inParams)
 
-            // 4. 目标 id → 实体 映射（同表关系共享同一目标 RowMapper）
+            // 3. 目标 id → 实体 映射（同表关系共享同一目标 RowMapper）
             let columnMap = buildColumnMap(result.columnInfos, exec.getParamOffset())
             let idIdx = columnMap.get("id").getOrThrow()
             let isStringPk = fkIsString(ids[0])
@@ -436,7 +378,7 @@ public class Query<T> {
                 targetMap[idKey] = targetMapper(result, columnMap)
             }
 
-            // 5. 回填：fk 命中即挂载，未命中（目标被删）保持未挂载
+            // 4. 回填：fk 命中即挂载，未命中（目标被删）保持未挂载
             for (rel in rels) {
                 let extractor = rel.getForeignKeyExtractor()
                 let setter = rel.getFieldSetter()
@@ -461,6 +403,59 @@ public class Query<T> {
         for (_ in 0..ids.size) { placeholders.add("?") }
         let sql = dialect.quoteIdentifier(col) + " IN (" + String.join(placeholders.toArray(), delimiter: ", ") + ")"
         (sql, ids)
+    }
+
+    // 批量 SELECT 的字段并集 + 强制列：同表多关系合并时取所有选中列；forced 为必须选中的列
+    // （目标主键 id、has_many/has_one 的 fk 分组键），即使不在字段子集里也强制前置。
+    // 取舍：合并查询按「并集」SELECT，共享目标实体携带并集列值（非某关系声明的子集），属预期行为。
+    private func buildBatchSelectCols(rels: ArrayList<IRelation>, forced: Array<String>): Array<Expr> {
+        var fieldNames = ArrayList<String>()
+        var seenField = HashMap<String, Bool>()
+        for (rel in rels) {
+            let (_, _, _, _, _, fields) = rel.resolve()
+            for (c in fields) {
+                if (!seenField.contains(c.name)) {
+                    seenField[c.name] = true
+                    fieldNames.add(c.name)
+                }
+            }
+        }
+        var cols = ArrayList<Expr>()
+        var selected = HashMap<String, Bool>()
+        for (name in forced) {
+            cols.add(Expr.Column(name))
+            selected[name] = true
+        }
+        for (name in fieldNames) {
+            if (!selected.contains(name)) {
+                selected[name] = true
+                cols.add(Expr.Column(name))
+            }
+        }
+        cols.toArray()
+    }
+
+    // 执行批量 IN 查询：SELECT <cols> FROM <table> WHERE <inSQL>，返回结果集。
+    // inSQL/inParams 必须由 buildInClause 一体生成（本 WHERE 内无其它 Value 占位符），
+    // SELECT/FROM 走 Statement 机器、WHERE 的 IN 部分手写占位符（见 assembleRefTo 注释）。
+    private func execBatchQuery(
+        exec: ExecutionContext,
+        dialect: Dialect,
+        targetTable: String,
+        cols: Array<Expr>,
+        inSQL: String,
+        inParams: Array<Any>
+    ): QueryResult {
+        let bs = Statement()
+        bs.addClause(Clause.SelectClause(cols))
+        bs.addClause(Clause.FromClause(targetTable))
+        bs.addClause(Clause.WhereClause([Expr.Raw(inSQL)]))
+        let (sql, baseParams) = dialect.render(bs)
+        var params = ArrayList<Any>()
+        for (p in baseParams) { params.add(p) }
+        for (v in inParams) { params.add(v) }
+        Logger.logSQL(sql, params.toArray())
+        exec.query(sql, params.toArray())
     }
 
     private func isEmptyFk(v: Any): Bool {
@@ -519,21 +514,11 @@ public class Query<T> {
             let elapsed = MonoTime.now() - start
             Logger.logSlowQuery(sql, elapsed)
             let columnMap = buildColumnMap(result.columnInfos, columnOffset)
-            let collectIds = needsCollectionAssembly()
-            var list = ArrayList<T>()
-            var rawIds = ArrayList<Any>()
-            while (result.next()) {
-                let entity = mapper(result, columnMap)
-                runAfterFindHooks(entity)
-                list.add(entity)
-                if (collectIds) { rawIds.add(collectRawId(result, columnMap)) }
-            }
-            let entities = list.toArray()
+            let (entities, rawIds) = mapMainResult(result, columnMap, mapper)
             // 批量装配在 AfterFind hook 之后执行：主映射循环内先跑 runAfterFindHooks，
             // hook 内读取关联字段（如 entity.author）为未装配状态（None）——批量架构的固有取舍，
             // 旧 LEFT JOIN 方案在 hook 前已完成 ref_to 装配。
-            assembleRefTo(exec, dialect, entities)
-            if (collectIds) { assembleCollections(exec, dialect, entities, rawIds.toArray()) }
+            assembleIncludes(exec, dialect, entities, rawIds)
             entities
         } finally {
             closeExecutor(exec)
@@ -565,20 +550,12 @@ public class Query<T> {
             let elapsed = MonoTime.now() - start
             Logger.logSlowQuery(sql, elapsed)
             let columnMap = buildColumnMap(result.columnInfos, columnOffset)
-            let collectIds = needsCollectionAssembly()
+            let (entities, rawIds) = mapMainResult(result, columnMap, mapper)
             var res: Option<T> = None
-            var rawIds = ArrayList<Any>()
-            if (result.next()) {
-                let entity = mapper(result, columnMap)
-                runAfterFindHooks(entity)
-                res = Some(entity)
-                if (collectIds) { rawIds.add(collectRawId(result, columnMap)) }
-            }
+            if (entities.size > 0) { res = Some(entities[0]) }
             // 批量装配在 AfterFind hook 之后执行（同 all()：hook 读关联字段为未装配状态）。
             match (res) {
-                case Some(e) =>
-                    assembleRefTo(exec, dialect, [e])
-                    if (collectIds) { assembleCollections(exec, dialect, [e], rawIds.toArray()) }
+                case Some(_) => assembleIncludes(exec, dialect, entities, rawIds)
                 case None => ()
             }
             res
@@ -723,6 +700,37 @@ public class Query<T> {
         }
     }
 
+    // 主查询映射循环：逐行 mapper + AfterFind hook + 收集 rawId（集合 include 需要主实体主键），
+    // 返回 (entities, rawIds) 两个按索引对齐的数组；无集合 include 时 rawIds 为空。
+    private func mapMainResult(
+        result: QueryResult,
+        columnMap: HashMap<String, Int64>,
+        mapper: (QueryResult, HashMap<String, Int64>) -> T
+    ): (Array<T>, Array<Any>) {
+        let collectIds = needsCollectionAssembly()
+        var list = ArrayList<T>()
+        var rawIds = ArrayList<Any>()
+        while (result.next()) {
+            let entity = mapper(result, columnMap)
+            runAfterFindHooks(entity)
+            list.add(entity)
+            if (collectIds) { rawIds.add(collectRawId(result, columnMap)) }
+        }
+        (list.toArray(), rawIds.toArray())
+    }
+
+    // 批量装配调度：ref_to 先行、集合（has_one/has_many）随后，二者独立、顺序保持一致。
+    // rawIds 与 entities 按索引对齐，仅在 needsCollectionAssembly() 时有意义。
+    private func assembleIncludes(
+        exec: ExecutionContext,
+        dialect: Dialect,
+        entities: Array<T>,
+        rawIds: Array<Any>
+    ): Unit {
+        assembleRefTo(exec, dialect, entities)
+        if (needsCollectionAssembly()) { assembleCollections(exec, dialect, entities, rawIds) }
+    }
+
     // 是否有需要批量装配的集合 include（has_one / has_many）。ref_many 走 junction
     // 中间表（Task 5 接入），此处不判定 RefManyRel（旧 JOIN 路径的 hasCollectionInclude 已删除）。
     private func needsCollectionAssembly(): Bool {
@@ -815,57 +823,43 @@ public class Query<T> {
             let rels = groups[i][2]
 
             // 3. 字段并集 + 强制目标主键 id + 强制 fk 分组键（fk 不在字段子集里也必须选中）
-            var fieldNames = ArrayList<String>()
-            var seenField = HashMap<String, Bool>()
-            for (rel in rels) {
-                let (_, _, _, _, _, fields) = rel.resolve()
-                for (c in fields) {
-                    if (!seenField.contains(c.name)) {
-                        seenField[c.name] = true
-                        fieldNames.add(c.name)
-                    }
-                }
-            }
-            var cols = ArrayList<Expr>()
-            cols.add(Expr.Column("id"))
-            cols.add(Expr.Column(fk))
-            for (name in fieldNames) {
-                if (name != "id" && name != fk) { cols.add(Expr.Column(name)) }
-            }
+            let cols = buildBatchSelectCols(rels, ["id", fk])
 
-            // 4. 批量 SQL：SELECT <cols> FROM <table> WHERE <fk> IN (?, ...)
-            let bs = Statement()
-            bs.addClause(Clause.SelectClause(cols.toArray()))
-            bs.addClause(Clause.FromClause(targetTable))
+            // 4. 批量查询：SELECT <cols> FROM <table> WHERE <fk> IN (?, ...)
             let (inSQL, inParams) = buildInClause(dialect, fk, ids.toArray())
-            bs.addClause(Clause.WhereClause([Expr.Raw(inSQL)]))
-            let (sql, baseParams) = dialect.render(bs)
-            var params = ArrayList<Any>()
-            for (p in baseParams) { params.add(p) }
-            for (v in inParams) { params.add(v) }
-            Logger.logSQL(sql, params.toArray())
-            let result = exec.query(sql, params.toArray())
+            let result = execBatchQuery(exec, dialect, targetTable, cols, inSQL, inParams)
 
-            // 5. 按 fk 值分组成目标实体列表（fk 类型跟随主实体主键：Int64 或 String）
+            // 5. 按 fk 值分组成目标实体列表（fk 类型跟随主实体主键：Int64 或 String）。
+            //    可空 fk 的脏行（驱动返回 NULL）用 getOrNull 判空跳过，不抛异常（旧 isNullId 防御）。
             let columnMap = buildColumnMap(result.columnInfos, exec.getParamOffset())
             let fkIdx = columnMap.get(fk).getOrThrow()
             let isStringPk = fkIsString(ids[0])
             let targetMapper = rels[0].getTargetMapper()
             var groupMap = HashMap<String, ArrayList<Any>>()
             while (result.next()) {
-                let key = if (isStringPk) {
-                    fkKey(result.get<String>(fkIdx))
+                let keyOpt: Option<String> = if (isStringPk) {
+                    match (result.getOrNull<String>(fkIdx)) {
+                        case Some(v) => Some(fkKey(v))
+                        case None => None
+                    }
                 } else {
-                    fkKey(result.get<Int64>(fkIdx))
+                    match (result.getOrNull<Int64>(fkIdx)) {
+                        case Some(v) => Some(fkKey(v))
+                        case None => None
+                    }
                 }
-                var group = match (groupMap.get(key)) {
-                    case Some(g) => g
-                    case None =>
-                        let ng = ArrayList<Any>()
-                        groupMap[key] = ng
-                        ng
+                match (keyOpt) {
+                    case Some(key) =>
+                        var group = match (groupMap.get(key)) {
+                            case Some(g) => g
+                            case None =>
+                                let ng = ArrayList<Any>()
+                                groupMap[key] = ng
+                                ng
+                        }
+                        group.add(targetMapper(result, columnMap))
+                    case None => ()
                 }
-                group.add(targetMapper(result, columnMap))
             }
 
             // 6. 回填：has_many 逐目标 add；has_one 取组内第一条（重复 fk 时取先读到的行）
