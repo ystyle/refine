@@ -222,90 +222,6 @@ public class QueryTest {
     }
 
     @TestCase
-    public func testQualifyExpr(): Unit {
-        let dialect = SQLiteDialect()
-        let col = Expr.Column("id")
-        let qualified = qualifyExpr(col, "user", dialect)
-        match (qualified) {
-            case Expr.Raw(s) => @Expect(s, "\"user\".\"id\"")
-            case _ => @Fail("expected Raw")
-        }
-        let binary = Expr.Binary(Expr.Column("id"), BinOp.Eq, Expr.Value(1))
-        let qBinary = qualifyExpr(binary, "user", dialect)
-        match (qBinary) {
-            case Expr.Binary(l, op, r) =>
-                @Expect(op, BinOp.Eq)
-                match (l) {
-                    case Expr.Raw(s) => @Expect(s, "\"user\".\"id\"")
-                    case _ => @Fail("expected Raw left")
-                }
-            case _ => @Fail("expected Binary")
-        }
-    }
-
-    @TestCase
-    public func testQualifyExprUnary(): Unit {
-        let dialect = SQLiteDialect()
-        let unary = Expr.Unary(UnaryOp.Not, Expr.Column("id"))
-        let q = qualifyExpr(unary, "t", dialect)
-        match (q) {
-            case Expr.Unary(op, e) =>
-                @Expect(op, UnaryOp.Not)
-                match (e) {
-                    case Expr.Raw(s) => @Expect(s, "\"t\".\"id\"")
-                    case _ => @Fail("expected Raw")
-                }
-            case _ => @Fail("expected Unary")
-        }
-    }
-
-    @TestCase
-    public func testQualifyExprAliased(): Unit {
-        let dialect = SQLiteDialect()
-        let aliased = Expr.Aliased(Expr.Column("id"), "myid")
-        let q = qualifyExpr(aliased, "t", dialect)
-        match (q) {
-            case Expr.Aliased(e, alias) =>
-                @Expect(alias, "myid")
-                match (e) {
-                    case Expr.Raw(s) => @Expect(s, "\"t\".\"id\"")
-                    case _ => @Fail("expected Raw")
-                }
-            case _ => @Fail("expected Aliased")
-        }
-    }
-
-    @TestCase
-    public func testQualifyExprOrdered(): Unit {
-        let dialect = SQLiteDialect()
-        let ordered = Expr.Ordered(Expr.Column("id"), "ASC")
-        let q = qualifyExpr(ordered, "t", dialect)
-        match (q) {
-            case Expr.Ordered(e, dir) =>
-                @Expect(dir, "ASC")
-                match (e) {
-                    case Expr.Raw(s) => @Expect(s, "\"t\".\"id\"")
-                    case _ => @Fail("expected Raw")
-                }
-            case _ => @Fail("expected Ordered")
-        }
-    }
-
-    @TestCase
-    public func testQualifyExprValuePassThrough(): Unit {
-        let dialect = SQLiteDialect()
-        let v = Expr.Value(42)
-        let q = qualifyExpr(v, "t", dialect)
-        match (q) {
-            case Expr.Value(n) => match (n) {
-                case i: Int64 => @Expect(i, 42)
-                case _ => @Fail("expected Int64")
-            }
-            case _ => @Fail("expected Value")
-        }
-    }
-
-    @TestCase
     public func testHasCollectionInclude(): Unit {
         let q = Query<Int64>()
         @Expect(q.included.size, 0)
@@ -740,7 +656,10 @@ public class QueryTest {
         @Expect(ds.conn.closedCount, 1)
     }
 
+    // batch include 重构中，Task 3 恢复：processIncluded 已改为 no-op，
+    // 不再生成 LEFT JOIN/别名 SELECT/限定；批量装配在 Task 3-6 接入后重写。
     @TestCase
+    @Skip
     public func testProcessIncludedAddsJoins(): Unit {
         let q = Query<Int64>()
         q.select([Expr.Column("id"), Expr.Column("name")])
@@ -760,7 +679,10 @@ public class QueryTest {
         @Expect(hasJoin, true)
     }
 
+    // batch include 重构中，Task 3 恢复：批量模式主查询无 JOIN、无列歧义，
+    // 不再对 WHERE 做表名限定，该用例断言已不成立。
     @TestCase
+    @Skip
     public func testProcessIncludedQualifiesWhere(): Unit {
         let q = Query<Int64>()
         q.select([Expr.Column("id")])
@@ -775,7 +697,9 @@ public class QueryTest {
         @Expect(sql.contains("\"users\".\"id\""), true)
     }
 
+    // batch include 重构中，Task 4 恢复：has_many 改为批量按 fk IN 查询装配，主查询无 JOIN。
     @TestCase
+    @Skip
     public func testProcessIncludedHasMany(): Unit {
         let q = Query<Int64>()
         q.select([Expr.Column("id")])
@@ -789,7 +713,9 @@ public class QueryTest {
         @Expect(sql.contains("posts"), true)
     }
 
+    // batch include 重构中，Task 5 恢复：ref_many 改为 junction 批量查询装配，主查询无 JOIN。
     @TestCase
+    @Skip
     public func testProcessIncludedRefMany(): Unit {
         let q = Query<Int64>()
         q.select([Expr.Column("id")])
@@ -805,7 +731,7 @@ public class QueryTest {
 
     @TestCase
     public func testProcessIncludedEmptySourceTable(): Unit {
-        // Query without FROM clause — processIncluded should return early
+        // Task 2: processIncluded 已是 no-op，无 FROM 或任何查询都不产生 include JOIN
         let q = Query<Int64>()
         q.select([Expr.Column("id")])
         let fk = Col<Any>("user_id")
@@ -817,7 +743,9 @@ public class QueryTest {
         @Expect(sql.contains("LEFT JOIN"), false)
     }
 
+    // batch include 重构中，Task 4 恢复：has_one 改为批量按 fk IN 查询装配，主查询无 JOIN。
     @TestCase
+    @Skip
     public func testProcessIncludedHasOne(): Unit {
         let q = Query<Int64>()
         q.select([Expr.Column("id")])
@@ -841,7 +769,10 @@ public class QueryTest {
         @Expect(q.stmt.clauses.size, countBefore)
     }
 
+    // batch include 重构中，Task 3 恢复：批量模式主查询无 JOIN、无列歧义，
+    // 不再对 SELECT 追加别名列，该用例断言已不成立。
     @TestCase
+    @Skip
     public func testProcessIncludedQualifiesSelect(): Unit {
         let q = Query<Int64>()
         q.select([Expr.Column("id")])
@@ -855,7 +786,10 @@ public class QueryTest {
         @Expect(sql.contains("\"users\".\"id\""), true)
     }
 
+    // batch include 重构中，Task 3 恢复：批量模式主查询无 JOIN、无列歧义，
+    // ORDER BY/GROUP BY/HAVING 不再做表名限定，该用例断言已不成立。
     @TestCase
+    @Skip
     public func testProcessIncludedQualifiesOrderByGroupByHaving(): Unit {
         // I1: include 产生的 JOIN 后，ORDER BY / GROUP BY / HAVING 必须同样限定表名，
         // 否则两侧表都有 "id" 时所有方言都会报 ambiguous column。
@@ -1112,7 +1046,10 @@ public class C4PageCollectionTest {
         @Expect(pg.items[0].body, "hooked")
     }
 
+    // batch include 重构中，Task 3 恢复：主查询不再生成 RefTo 的 LEFT JOIN，
+    // 分页 SQL 断言（含 LEFT JOIN）已不成立，装配改为批量 IN 查询后重写。
     @TestCase
+    @Skip
     public func testPageWithRefToIncludeJoins(): Unit {
         let conn = CaptureConnection()
         let tx = Tx(conn)

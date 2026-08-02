@@ -330,84 +330,13 @@ public class Query<T> {
         this
     }
 
-    private func qualifyExprs(exprs: Array<Expr>, table: String, dialect: Dialect): Array<Expr> {
-        var qualified = ArrayList<Expr>()
-        for (e in exprs) { qualified.add(qualifyExpr(e, table, dialect)) }
-        qualified.toArray()
-    }
-
+    // Task 2: 主查询分离——include 不再生成 LEFT JOIN/别名 SELECT/限定（qualify）。
+    // 主查询只渲染源表自身（无 JOIN），include 预加载改由批量分步查询协议完成
+    // （ref_to/has_one/has_many/ref_many 批量装配在 Task 3-6 接入）。batch 模式下
+    // 无 JOIN 因此无列歧义，无需 qualify。此方法保留为 no-op，供 Task 3-6 在
+    // all()/one()/page() 主查询之后挂接批量装配入口。
     public func processIncluded(dialect: Dialect): Unit {
-        if (included.size == 0) { return }
-        let sourceTable = getSourceTable()
-        if (sourceTable == "") { return }
-        var aliasFields = ArrayList<Expr>()
-        for (i in 0..included.size) {
-            let rel = included[i]
-            let (kind, name, table, fk, via, fields) = rel.resolve()
-            let prefix = name + "."
-            let srcRef = Raw(dialect.quoteIdentifier(sourceTable) + "." + dialect.quoteIdentifier(fk))
-            let tgtRef = Raw(dialect.quoteIdentifier(name) + "." + dialect.quoteIdentifier("id"))
-            let srcId = Raw(dialect.quoteIdentifier(sourceTable) + "." + dialect.quoteIdentifier("id"))
-            let tgtFk = Raw(dialect.quoteIdentifier(name) + "." + dialect.quoteIdentifier(fk))
-            match (kind) {
-                case RelationKind.RefToRel =>
-                    stmt.addJoinClause(table, name, Binary(srcRef, Eq, tgtRef))
-                case RelationKind.HasOneRel =>
-                    stmt.addJoinClause(table, name, Binary(srcId, Eq, tgtFk))
-                case RelationKind.HasManyRel =>
-                    stmt.addJoinClause(table, name, Binary(srcId, Eq, tgtFk))
-                case RelationKind.RefManyRel =>
-                    let junctionVia = via.getOrThrow()
-                    let srcFk = sourceTable + "_id"
-                    let tgtFk = table + "_id"
-                    let junctionAlias = name + "_junction"
-                    let join1On = Binary(srcId, Eq,
-                        Raw(dialect.quoteIdentifier(junctionAlias) + "." + dialect.quoteIdentifier(srcFk)))
-                    stmt.addJoinClause(junctionVia, junctionAlias, join1On)
-                    let join2On = Binary(
-                        Raw(dialect.quoteIdentifier(junctionAlias) + "." + dialect.quoteIdentifier(tgtFk)),
-                        Eq, tgtRef)
-                    stmt.addJoinClause(table, name, join2On)
-            }
-            for (j in 0..fields.size) {
-                let col = fields[j]
-                let colRef = Raw(dialect.quoteIdentifier(name) + "." + dialect.quoteIdentifier(col.name))
-                aliasFields.add(Aliased(colRef, prefix + col.name))
-            }
-        }
-        if (aliasFields.size > 0) {
-            for (i in 0..stmt.clauses.size) {
-                match (stmt.clauses[i]) {
-                    case Clause.SelectClause(fields) =>
-                        var combined = ArrayList<Expr>()
-                        for (f in fields) {
-                            match (f) {
-                                case Expr.Column(colName) =>
-                                    combined.add(Raw(dialect.quoteIdentifier(sourceTable) + "." + dialect.quoteIdentifier(colName)))
-                                case _ =>
-                                    combined.add(f)
-                            }
-                        }
-                        for (a in aliasFields) { combined.add(a) }
-                        stmt.clauses[i] = SelectClause(combined.toArray())
-                    case _ => ()
-                }
-            }
-            // qualify WHERE/ORDER BY/GROUP BY/HAVING column refs with sourceTable to avoid ambiguity after JOIN
-            for (i in 0..stmt.clauses.size) {
-                match (stmt.clauses[i]) {
-                    case Clause.WhereClause(predicates) =>
-                        stmt.clauses[i] = WhereClause(qualifyExprs(predicates, sourceTable, dialect))
-                    case Clause.OrderByClause(fields) =>
-                        stmt.clauses[i] = OrderByClause(qualifyExprs(fields, sourceTable, dialect))
-                    case Clause.GroupByClause(fields) =>
-                        stmt.clauses[i] = GroupByClause(qualifyExprs(fields, sourceTable, dialect))
-                    case Clause.HavingClause(predicates) =>
-                        stmt.clauses[i] = HavingClause(qualifyExprs(predicates, sourceTable, dialect))
-                    case _ => ()
-                }
-            }
-        }
+        ()
     }
 
     private func wrapMapper(
@@ -746,15 +675,4 @@ func stripPrefix(
         }
     }
     result
-}
-
-func qualifyExpr(expr: Expr, table: String, dialect: Dialect): Expr {
-    match (expr) {
-        case Expr.Column(name) => Raw(dialect.quoteIdentifier(table) + "." + dialect.quoteIdentifier(name))
-        case Expr.Binary(l, op, r) => Binary(qualifyExpr(l, table, dialect), op, qualifyExpr(r, table, dialect))
-        case Expr.Unary(op, e) => Unary(op, qualifyExpr(e, table, dialect))
-        case Expr.Aliased(e, alias) => Aliased(qualifyExpr(e, table, dialect), alias)
-        case Expr.Ordered(e, dir) => Ordered(qualifyExpr(e, table, dialect), dir)
-        case _ => expr
-    }
 }
