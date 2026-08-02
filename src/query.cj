@@ -199,25 +199,21 @@ public class Query<T> {
 
     public func include(rel: IRelation): Query<T> {
         included.add(rel)
-        let (kind, _, _, _, _, _) = rel.resolve()
-        if (kind != RelationKind.HasManyRel && kind != RelationKind.RefManyRel) {
-            match (this.mapper) {
-                case Some(m) =>
-                    this.mapper = Some(wrapMapper(m, rel))
-                case None => ()
-            }
-        }
-        this
+        wrapNonCollection(rel)
     }
 
     public func include(rel: IRelation, fields: Array<Col<Any>>): Query<T> {
         let override = FieldOverrideRelation(rel, fields)
         included.add(override)
-        let (kind, _, _, _, _, _) = override.resolve()
+        wrapNonCollection(override)
+    }
+
+    private func wrapNonCollection(rel: IRelation): Query<T> {
+        let (kind, _, _, _, _, _) = rel.resolve()
         if (kind != RelationKind.HasManyRel && kind != RelationKind.RefManyRel) {
             match (this.mapper) {
                 case Some(m) =>
-                    this.mapper = Some(wrapMapper(m, override))
+                    this.mapper = Some(wrapMapper(m, rel))
                 case None => ()
             }
         }

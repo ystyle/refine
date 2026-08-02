@@ -163,10 +163,9 @@ func buildRowMapper(className: String, cd: ClassDecl, rels: ArrayList<RelInfo>, 
                 if (isGeneratedInternalField(vd.identifier.value, internalNames)) { continue }
                 if (!first) { assignments = assignments + Token(TokenKind.NL) }
                 let fieldNameLit = Token(TokenKind.STRING_LITERAL, vd.identifier.value)
-                let fieldTypeTok = vd.declType.toTokens()
                 let fieldAssign = quote(
                     if (columnMap.contains($(fieldNameLit))) {
-                        entity.$(vd.identifier) = result.get<$(fieldTypeTok)>(columnMap.get($(fieldNameLit)).getOrThrow())
+                        entity.$(vd.identifier) = result.get<$(vd.declType)>(columnMap.get($(fieldNameLit)).getOrThrow())
                     }
                 )
                 assignments = assignments + fieldAssign
