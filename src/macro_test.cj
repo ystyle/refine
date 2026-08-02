@@ -947,6 +947,7 @@ public class MacroSaveTest {
     @TestCase
     public func testTxUpsertDBPathSQLite(): Unit {
         clearHooks()
+        // 本项目无真实 SQLite 驱动，此处用 CaptureConnection（mock）仅验证宏层生成的 upsert SQL
         let conn = CaptureConnection()
         let tx = Tx(conn, 0, SQLiteDialect())
 
@@ -963,6 +964,8 @@ public class MacroSaveTest {
     @TestCase
     public func testTxSaveDBPathSQLite(): Unit {
         clearHooks()
+        // 本项目无真实 SQLite 驱动，此处用 CaptureConnection（mock）仅验证宏层生成的 save SQL 与
+        // lastInsertId 回填路径（SQLite hasReturningSupport=false，走 execute/lastInsertId）
         let conn = CaptureConnection()
         conn.stmt.mockLastInsertId = 7
         let tx = Tx(conn, 0, SQLiteDialect())
@@ -1828,6 +1831,29 @@ public class VersionedEntityTest {
         @Expect(conn.stmt.capturedSql.contains("\"versionedpost\".\"version\" = \"versionedpost\".\"version\" + 1"), true)
         @Expect(conn.stmt.capturedSql.contains("\"updated_at\" = EXCLUDED.\"updated_at\""), true)
         @Expect(conn.stmt.capturedSql.contains("\"created_at\" = EXCLUDED.\"created_at\""), false)
+        @Expect(conn.stmt.capturedSetValues.size, 5)
+    }
+
+    @TestCase
+    public func testTxUpsertVersionedPostSQLite(): Unit {
+        clearHooks()
+        // 本项目无真实 SQLite 驱动，此处用 CaptureConnection（mock）仅验证宏层生成的
+        // SQLite versioned upsert SQL（version 冲突自增 + excluded 引用 + extraParamCount=0）
+        let conn = CaptureConnection()
+        let rf = Refine(RMockDS(), SQLiteDialect(), 0)
+        let tx = Tx(conn, rf, 0)
+
+        let p = VersionedPost()
+        p.id = 1
+        p.title = "T"
+        tx.upsert(p)
+
+        @Expect(p.version, 1)
+        @Expect(conn.stmt.capturedSql.contains("INSERT INTO \"versionedPost\" (\"id\", \"title\", \"created_at\", \"updated_at\", \"version\")"), true)
+        @Expect(conn.stmt.capturedSql.contains("ON CONFLICT (\"id\") DO UPDATE SET"), true)
+        @Expect(conn.stmt.capturedSql.contains("\"version\" = \"version\" + 1"), true)
+        @Expect(conn.stmt.capturedSql.contains("\"updated_at\" = excluded.\"updated_at\""), true)
+        @Expect(conn.stmt.capturedSql.contains("\"created_at\" = excluded.\"created_at\""), false)
         @Expect(conn.stmt.capturedSetValues.size, 5)
     }
 

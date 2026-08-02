@@ -159,7 +159,7 @@ public class SQLiteDialect <: Dialect {
         }
     }
 
-    // 现代 SQLite（≥3.24 支持 ON CONFLICT，≥3.35 支持 RETURNING，JSON1 内建）。
+    // 现代 SQLite（≥3.24 支持 ON CONFLICT，≥3.35 支持 RETURNING，JSON1 自 3.38 起内建）。
     // upsert 与 json 已启用：upsert SQL 经真实 sqlite3 CLI（3.53.4）验证通过。
     // 后续引入连接抽象后，再按实际 SQLite 版本细化开关（见 audit I15 决策）。
     public func hasUpsertSupport(): Bool { true }
