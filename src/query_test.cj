@@ -720,6 +720,34 @@ public class QueryTest {
         @Expect(sql, "DELETE FROM `users` WHERE `age` > ?")
     }
 
+    // 回归（I4）：updateWhere 带 JOIN 必须拒绝，避免 dialect 渲染静默丢弃 JOIN 导致误更新
+    @TestCase
+    public func testUpdateWhereRejectsJoin(): Unit {
+        let q = Query<Int64>()
+        q.from("users")
+        q.stmt.addClause(JoinClause("posts", "p", Expr.Binary(Expr.Column("user_id"), BinOp.Eq, Expr.Column("id"))))
+        try {
+            q.updateWhere(["name"], ["bob"])
+            @Fail("expected QueryException")
+        } catch (e: QueryException) {
+            @Expect(e.message.contains("does not support JOIN"), true)
+        }
+    }
+
+    // 回归（I4）：deleteWhere 带 JOIN 必须拒绝，避免 dialect 渲染静默丢弃 JOIN 导致误删除
+    @TestCase
+    public func testDeleteWhereRejectsJoin(): Unit {
+        let q = Query<Int64>()
+        q.from("users")
+        q.stmt.addClause(JoinClause("posts", "p", Expr.Binary(Expr.Column("user_id"), BinOp.Eq, Expr.Column("id"))))
+        try {
+            q.deleteWhere()
+            @Fail("expected QueryException")
+        } catch (e: QueryException) {
+            @Expect(e.message.contains("does not support JOIN"), true)
+        }
+    }
+
     @TestCase
     public func testForUpdateRendersMySQL(): Unit {
         let q = Query<Int64>()

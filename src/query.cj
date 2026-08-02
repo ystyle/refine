@@ -147,6 +147,7 @@ public class Query<T> {
     }
 
     public func updateWhere(setCols: Array<String>, setVals: Array<Any>): Int64 {
+        rejectJoin("updateWhere")
         if (setCols.size != setVals.size) { throw QueryException("setCols and setVals must have same size") }
         if (setCols.size == 0) { throw QueryException("no columns to update") }
         let table = requireTable()
@@ -168,6 +169,7 @@ public class Query<T> {
     }
 
     public func deleteWhere(): Int64 {
+        rejectJoin("deleteWhere")
         let table = requireTable()
         let deleter = Statement()
         deleter.addClause(DeleteClause(table))
@@ -202,6 +204,18 @@ public class Query<T> {
             throw QueryException("No table set. Call from() before updateWhere/deleteWhere.")
         }
         t
+    }
+
+    // 回归（I4）：updateWhere/deleteWhere 的 dialect 渲染只输出 UPDATE/DELETE + WHERE，
+    // JOIN 会被静默丢弃（且 ON 参数仍进 params 导致 PG $n 错位），有误更新/误删除风险。
+    // 构建器层直接拒绝：带 JOIN 的查询禁止用于 updateWhere/deleteWhere。
+    private func rejectJoin(operation: String): Unit {
+        for (clause in stmt.clauses) {
+            match (clause) {
+                case JoinClause(_, _, _) => throw QueryException(operation + " does not support JOIN")
+                case _ => ()
+            }
+        }
     }
 
     private func runQuery(target: Statement): Array<T> {
