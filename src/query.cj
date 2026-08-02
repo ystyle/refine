@@ -316,7 +316,7 @@ public class Query<T> {
         baseMapper: (QueryResult, HashMap<String, Int64>) -> T,
         rel: IRelation
     ): (QueryResult, HashMap<String, Int64>) -> T {
-        let (kind, name, _, _, _, _) = rel.resolve()
+        let (_, name, _, _, _, _) = rel.resolve()
         let targetMapper = rel.getTargetMapper()
         let setter = rel.getFieldSetter()
 
@@ -539,7 +539,7 @@ public class Query<T> {
 
     private func hasCollectionInclude(): Bool {
         for (inc in included) {
-            let (kind, name, _, _, _, _) = inc.resolve()
+            let (kind, _, _, _, _, _) = inc.resolve()
             if (kind == RelationKind.HasManyRel || kind == RelationKind.RefManyRel) {
                 return true
             }

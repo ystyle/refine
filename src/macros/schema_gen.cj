@@ -1,0 +1,104 @@
+macro package refine.macros
+
+import std.ast.*
+import std.collection.ArrayList
+
+func buildColumnNamesFunc(className: String, cd: ClassDecl, internalNames: ArrayList<String>): Tokens {
+    let funcName = Token(TokenKind.IDENTIFIER, className + "ColumnNames")
+    var columns = Tokens()
+    columns = columns + Token(TokenKind.LSQUARE)
+    var first = true
+    for (i in 0..cd.body.decls.size) {
+        match (cd.body.decls[i] as VarDecl) {
+            case Some(vd) =>
+                let fieldTypeStr = vd.declType.toTokens().toString()
+                if (isRelationField(fieldTypeStr)) { continue }
+                if (isGeneratedInternalField(vd.identifier.value, internalNames)) { continue }
+                if (!first) { columns = columns + Token(TokenKind.COMMA) }
+                let nameLit = Token(TokenKind.STRING_LITERAL, vd.identifier.value)
+                columns = columns + quote(Col<Any>($(nameLit)))
+                first = false
+            case _ => ()
+        }
+    }
+    columns = columns + Token(TokenKind.RSQUARE)
+    quote(
+        func $(funcName)(): Array<Col<Any>> { $(columns) }
+    )
+}
+
+func buildSchemaClass(className: String, fields: ArrayList<FieldInfo>, tableName: String): Tokens {
+    let schemaName = Token(TokenKind.IDENTIFIER, className + "Schema")
+    let tableNameLit = Token(TokenKind.STRING_LITERAL, tableName)
+    var colDefs = Tokens()
+    var first = true
+    for (i in 0..fields.size) {
+        let f = fields[i]
+        if (isRelationField(f.typeName)) { continue }
+        if (!first) { colDefs = colDefs + Token(TokenKind.COMMA) + Token(TokenKind.NL) }
+        let nameLit = Token(TokenKind.STRING_LITERAL, f.name)
+        let st = if (f.storageOverride != "") { "StorageType." + f.storageOverride } else { typeNameToStorageType(f.typeName) }
+        let isPk = if (f.isPk) { "true" } else { "false" }
+        let isAutoInc = if (f.autoInc) { "true" } else { "false" }
+        colDefs = colDefs + Token(TokenKind.IDENTIFIER, "ColumnDef") + Token(TokenKind.LPAREN) + nameLit + Token(TokenKind.COMMA)
+        if (f.storageOverride == "Bool" || (f.storageOverride == "" && f.typeName == "Bool")) {
+            colDefs = colDefs + Token(TokenKind.IDENTIFIER, "StorageType") + Token(TokenKind.DOT)
+            colDefs = colDefs + Token(TokenKind.IDENTIFIER, "`Bool`")
+        } else {
+            let stParts = st.split(".")
+            colDefs = colDefs + Token(TokenKind.IDENTIFIER, stParts[0]) + Token(TokenKind.DOT)
+            colDefs = colDefs + Token(TokenKind.IDENTIFIER, stParts[1])
+        }
+        colDefs = colDefs + Token(TokenKind.COMMA) + Token(TokenKind.IDENTIFIER, isPk) + Token(TokenKind.COMMA)
+        colDefs = colDefs + Token(TokenKind.IDENTIFIER, isAutoInc) + Token(TokenKind.COMMA)
+        colDefs = colDefs + Token(TokenKind.IDENTIFIER, "false") + Token(TokenKind.RPAREN)
+        first = false
+    }
+    quote(
+        public class $(schemaName) <: TableSchema {
+            public func tableName(): String { $(tableNameLit) }
+            public func columns(): Array<ColumnDef> { [$(colDefs)] }
+            public func indexes(): Array<IndexDef> { [] }
+        }
+    )
+}
+
+func buildJunctionSchema(className: String, rel: RelInfo, tableName: String): Tokens {
+    let sourceTable = tableName
+    let viaLit = Token(TokenKind.STRING_LITERAL, rel.via)
+    let srcColLit = Token(TokenKind.STRING_LITERAL, sourceTable + "_id")
+    let tgtColLit = Token(TokenKind.STRING_LITERAL, lowerTableName(rel.target) + "_id")
+    let schemaName = Token(TokenKind.IDENTIFIER, className + "_" + upperFirstLetter(rel.fieldName) + "JunctionSchema")
+    quote(
+        public class $(schemaName) <: TableSchema {
+            public func tableName(): String { $(viaLit) }
+            public func columns(): Array<ColumnDef> {
+                [ColumnDef($(srcColLit), StorageType.Integer, false, false, false),
+                 ColumnDef($(tgtColLit), StorageType.Integer, false, false, false)]
+            }
+            public func indexes(): Array<IndexDef> { [] }
+        }
+    )
+}
+
+func buildSchemasFunc(className: String, junctionRelNames: ArrayList<String>): Tokens {
+    let schemaName = Token(TokenKind.IDENTIFIER, className + "Schema")
+    if (junctionRelNames.size == 0) {
+        quote(
+            public static func schemas(): Array<TableSchema> { [$(schemaName)()] }
+        )
+    } else {
+        var arr = Tokens()
+        arr = arr + Token(TokenKind.IDENTIFIER, className + "Schema")
+        arr = arr + Token(TokenKind.LPAREN) + Token(TokenKind.RPAREN)
+        for (relName in junctionRelNames) {
+            arr = arr + Token(TokenKind.COMMA)
+            let jsName = Token(TokenKind.IDENTIFIER, className + "_" + upperFirstLetter(relName) + "JunctionSchema")
+            arr = arr + jsName
+            arr = arr + Token(TokenKind.LPAREN) + Token(TokenKind.RPAREN)
+        }
+        quote(
+            public static func schemas(): Array<TableSchema> { [$(arr)] }
+        )
+    }
+}

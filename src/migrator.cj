@@ -1,7 +1,5 @@
 package refine
 
-import std.collection.ArrayList
-
 public struct ColumnDef {
     var name: String
     var storageType: StorageType

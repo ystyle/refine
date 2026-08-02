@@ -6,6 +6,7 @@
   license = ["MIT"]
   authors = ["ystyle"]
   repository = "https://atomgit.com/ystyle/refine"
+  compile-option = "-Woff unused"
   output-type = "static"
 
 [dependencies]

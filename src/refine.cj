@@ -1,6 +1,6 @@
 package refine
 
-import std.database.sql.{Datasource, Connection, Transaction, QueryResult, UpdateResult, Driver, DriverManager, PooledDatasource}
+import std.database.sql.{Datasource, Connection, Driver, DriverManager, PooledDatasource}
 import std.collection.HashMap
 import std.collection.ArrayList
 import std.convert.*

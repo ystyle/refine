@@ -24,7 +24,6 @@ public class SQLiteDialect <: Dialect {
         var hasSelect = false
         var updateSQL = ""
         var deleteSQL = ""
-        var hasLock = false
         var whereAdded = false
         for (i in 0..stmt.clauses.size) {
             let clause = stmt.clauses[i]
@@ -61,7 +60,7 @@ public class SQLiteDialect <: Dialect {
                 case DeleteClause(table) =>
                     deleteSQL = "DELETE FROM " + quoteIdentifier(table)
                 case LockClause =>
-                    hasLock = true
+                    ()
             }
         }
         var parts = ArrayList<String>()
