@@ -154,7 +154,14 @@ func buildRelationMethods(className: String, rels: ArrayList<RelInfo>, cd: Class
             let removeName = Token(TokenKind.IDENTIFIER, "remove" + prefix)
             cd.body.decls.add(FuncDecl(quote(
                 public func $(addName)(tx: Tx, entity: $(targetType)): $(cn) {
-                    entity.$(byField) = this.id; tx.save(entity); this
+                    entity.$(byField) = this.id
+                    let anyId: Any = entity.id
+                    match (anyId) {
+                        case v: Int64 => if (v != 0) { tx.update(entity) } else { tx.save(entity) }
+                        case v: String => if (v != "") { tx.update(entity) } else { tx.save(entity) }
+                        case _ => tx.save(entity)
+                    }
+                    this
                 }
             )))
             cd.body.decls.add(FuncDecl(quote(
@@ -192,7 +199,18 @@ func buildRelationMethods(className: String, rels: ArrayList<RelInfo>, cd: Class
             let removeName = Token(TokenKind.IDENTIFIER, "remove" + prefix)
             cd.body.decls.add(FuncDecl(quote(
                 public func $(setName)(tx: Tx, entity: $(targetType)): $(cn) {
-                    entity.$(byField) = this.id; tx.save(entity); this
+                    match (this.$(loadName)(tx)) {
+                        case Some(old) => if (old.id != entity.id) { this.$(removeName)(tx) }
+                        case None => ()
+                    }
+                    entity.$(byField) = this.id
+                    let anyId: Any = entity.id
+                    match (anyId) {
+                        case v: Int64 => if (v != 0) { tx.update(entity) } else { tx.save(entity) }
+                        case v: String => if (v != "") { tx.update(entity) } else { tx.save(entity) }
+                        case _ => tx.save(entity)
+                    }
+                    this
                 }
             )))
             cd.body.decls.add(FuncDecl(quote(

@@ -3730,3 +3730,119 @@ private func containsInt(arr: ArrayList<Any>, target: Int64): Bool {
     }
     false
 }
+
+// I11 回归：has_many addX / has_one setX 的持久化语义
+// - addX：子对象已有 id → update（回填 fk），无 id → save（INSERT），不再无条件 INSERT 导致主键冲突
+// - setX：先解除旧关联（与 removeProfile 一致，DELETE 旧子对象），再按 id 区分 save/update
+@Test
+public class RelationMutationTest {
+    @TestCase
+    public func testAddCommentsNewChildInserts(): Unit {
+        clearHooks()
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        let post = PostWithRel()
+        post.id = 1
+        let c = Comment()
+        c.body = "first"
+        post.addComments(tx, c)
+        @Expect(conn.stmt.capturedSql, "INSERT INTO \"comment\" (\"body\", \"post_id\") VALUES (?, ?)")
+        @Expect(c.post_id, 1)
+    }
+
+    @TestCase
+    public func testAddCommentsPersistedChildUpdates(): Unit {
+        clearHooks()
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        let post = PostWithRel()
+        post.id = 1
+        let c = Comment()
+        c.id = 5
+        c.body = "re-parent"
+        post.addComments(tx, c)
+        @Expect(conn.stmt.capturedSql, "UPDATE \"comment\" SET \"body\" = ?, \"post_id\" = ? WHERE \"id\" = ?")
+        @Expect(c.post_id, 1)
+    }
+
+    @TestCase
+    public func testSetProfileNewChildInserts(): Unit {
+        clearHooks()
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        let user = UserWithRel()
+        user.id = 1
+        let p = ProfileWithRel()
+        p.bio = "fresh"
+        user.setProfile(tx, p)
+        @Expect(conn.stmt.capturedSql, "INSERT INTO \"profileWithRel\" (\"bio\", \"user_id\") VALUES (?, ?)")
+        @Expect(p.user_id, 1)
+    }
+
+    // 旧 profile 已存在且新 profile 是不同持久化行：先 DELETE 旧子对象再 update 新子对象
+    @TestCase
+    public func testSetProfileClearsOldThenUpdates(): Unit {
+        clearHooks()
+        let conn = CaptureConnection()
+        conn.stmt.queryResult = profileResult(5, "old", 1)
+        let tx = Tx(conn)
+        let user = UserWithRel()
+        user.id = 1
+        let p = ProfileWithRel()
+        p.id = 9
+        p.bio = "new"
+        user.setProfile(tx, p)
+        @Expect(conn.stmt.capturedSqlHistory.size >= 3, true)
+        @Expect(conn.stmt.capturedSqlHistory[1].contains("DELETE FROM profileWithRel"), true)
+        @Expect(conn.stmt.capturedSqlHistory[2].contains("UPDATE \"profileWithRel\""), true)
+        @Expect(p.user_id, 1)
+    }
+
+    // 重置同一个持久化 profile：不得 DELETE（避免删除后 update 命中 0 行丢数据）
+    @TestCase
+    public func testSetProfileSameChildNoDelete(): Unit {
+        clearHooks()
+        let conn = CaptureConnection()
+        conn.stmt.queryResult = profileResult(5, "old", 1)
+        let tx = Tx(conn)
+        let user = UserWithRel()
+        user.id = 1
+        let p = ProfileWithRel()
+        p.id = 5
+        p.bio = "edited"
+        user.setProfile(tx, p)
+        for (s in conn.stmt.capturedSqlHistory) {
+            @Expect(s.contains("DELETE"), false)
+        }
+        @Expect(conn.stmt.capturedSqlHistory[1].contains("UPDATE \"profileWithRel\""), true)
+        @Expect(p.user_id, 1)
+    }
+
+    // 旧 profile 已存在而新 profile 是新行：先 DELETE 旧子对象再 INSERT 新子对象
+    @TestCase
+    public func testSetProfileNewChildWithOldClears(): Unit {
+        clearHooks()
+        let conn = CaptureConnection()
+        conn.stmt.queryResult = profileResult(5, "old", 1)
+        let tx = Tx(conn)
+        let user = UserWithRel()
+        user.id = 1
+        let p = ProfileWithRel()
+        p.bio = "replacement"
+        user.setProfile(tx, p)
+        @Expect(conn.stmt.capturedSqlHistory[1].contains("DELETE FROM profileWithRel"), true)
+        @Expect(conn.stmt.capturedSqlHistory[2].contains("INSERT INTO \"profileWithRel\""), true)
+        @Expect(p.user_id, 1)
+    }
+}
+
+private func profileResult(id: Int64, bio: String, uid: Int64): QueryResult {
+    let cols: Array<ColumnInfo> = [
+        MapperMockColumnInfo("id", false),
+        MapperMockColumnInfo("bio", false),
+        MapperMockColumnInfo("user_id", false)
+    ]
+    let row: Array<Any> = [id, bio, uid]
+    let rows: Array<Array<Any>> = [row]
+    MapperMockQueryResult(cols, rows)
+}
