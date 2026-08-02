@@ -289,10 +289,10 @@ func buildUpdateSQLFunc(className: String, fields: ArrayList<FieldInfo>, tableNa
             let setColNameArr: Array<String> = $(setColArr)
             var setParts = ArrayList<String>()
             for (_su_ in setColNameArr) { setParts.add(dialect.quoteIdentifier(_su_) + " = ?") }
+            if ($(hasVersionLit)) { setParts.add(dialect.quoteIdentifier($(versionLit)) + " = " + dialect.quoteIdentifier($(versionLit)) + " + 1") }
             $(pkWhereTok)
-            let versionSet = if ($(hasVersionLit)) { ", " + dialect.quoteIdentifier($(versionLit)) + " = " + dialect.quoteIdentifier($(versionLit)) + " + 1" } else { "" }
             let versionCheck = if ($(hasVersionLit)) { " AND " + dialect.quoteIdentifier($(versionLit)) + " = ?" } else { "" }
-            let sql = "UPDATE " + dialect.quoteIdentifier($(tblLit)) + " SET " + String.join(setParts.toArray(), delimiter: ", ") + versionSet + pkWhere + versionCheck
+            let sql = "UPDATE " + dialect.quoteIdentifier($(tblLit)) + " SET " + String.join(setParts.toArray(), delimiter: ", ") + pkWhere + versionCheck
             (sql, $(entityArray))
         }
     )

@@ -1426,6 +1426,15 @@ public class VersionedOrderItem {
     var order_id: Int64 = 0
 }
 
+// I19 回归 fixture：仅 pk + version、无其它可更新列 —— update 时 SET 子句只有
+// version 自增一项，验证无前导逗号（修复前生成 `SET , "version" = "version" + 1`）
+@Refine
+public class VersionedOnly {
+    var id: Int64 = 0
+    @Version
+    var version: Int64 = 0
+}
+
 @Test
 public class VersionedEntityTest {
     @TestCase
@@ -3416,6 +3425,33 @@ public class WritePathDialectQuotingTest {
         ot.quantity = 5
         tx.update(ot)
         @Expect(conn.stmt.capturedSql, "UPDATE \"orderItemTag\" SET \"quantity\" = ? WHERE \"order_id\" = ? AND \"item_id\" = ?")
+    }
+
+    @TestCase
+    public func testUpdateOnlyPkAndVersionNoLeadingCommaSQLite(): Unit {
+        clearHooks()
+        let (conn, tx) = txWith(SQLiteDialect())
+        conn.stmt.mockRowCount = 1
+        let e = VersionedOnly()
+        e.id = 1
+        e.version = 1
+        tx.update(e)
+        // 回归：setParts 为空时 version 自增仍须是合法 SET 子句（无前导逗号）
+        @Expect(conn.stmt.capturedSql, "UPDATE \"versionedOnly\" SET \"version\" = \"version\" + 1 WHERE \"id\" = ? AND \"version\" = ?")
+        @Expect(e.version, 2)
+    }
+
+    @TestCase
+    public func testUpdateOnlyPkAndVersionNoLeadingCommaPostgres(): Unit {
+        clearHooks()
+        let (conn, tx) = txWith(PostgreSQLDialect())
+        conn.stmt.mockRowCount = 1
+        let e = VersionedOnly()
+        e.id = 1
+        e.version = 1
+        tx.update(e)
+        @Expect(conn.stmt.capturedSql, "UPDATE \"versionedOnly\" SET \"version\" = \"version\" + 1 WHERE \"id\" = ? AND \"version\" = ?")
+        @Expect(e.version, 2)
     }
 
     @TestCase
