@@ -418,11 +418,9 @@ public class PostgreSQLIntegrationTest {
         }
     }
 
-    // ─── I2: include 别名保留大小写，stripPrefix 按原大小写匹配到关系字段 ───────────────────
-    // batch include 重构中，Task 3 恢复：主查询不再 LEFT JOIN 装配 ref_to，
-    // 待批量 IN 装配实现后重写为两次查询（主查询 + 批量查询）断言。
+    // ─── I2: include 保留别名大小写，批量 ref_to 装配按外键 IN 回填 ───────────────────
+    // batch include Task 3：主查询后按 fk（authorId）IN 批量查询 camelUser 回填 authorProfile。
     @TestCase
-    @Skip
     public func testCamelCaseIncludeRefTo(): Unit {
         match (tryPostgres()) {
             case Some(rf) =>
@@ -454,10 +452,8 @@ public class PostgreSQLIntegrationTest {
         }
     }
 
-    // I7 follow-up: 真实 LEFT JOIN 无匹配（authorId 指向不存在的用户），目标列「存在但为 NULL」。
-    // 生成 base mapper 用 getOrNull<Int64> 读取 NULL → None 不挂载，不崩溃；
-    // wrapMapper.isNullId 用 getOrNull<String> 读同一 NULL 列 → true 跳过目标映射。
-    // 修复前生成代码 result.get<Int64>(NULL) 在真实驱动上抛异常。
+    // batch include Task 3：authorId 指向不存在的用户时，批量 IN 查询无匹配
+    // → authorProfile 保持 None、不崩溃（旧 LEFT JOIN 目标侧全 NULL 路径已移除）。
     @TestCase
     public func testCamelCaseIncludeRefToNullAuthorNoCrash(): Unit {
         match (tryPostgres()) {
@@ -468,7 +464,7 @@ public class PostgreSQLIntegrationTest {
                 }
                 let m = rf.migrator()
                 m.autoMigrate([CamelUserSchema(), CamelPostSchema()])
-                // authorId=999999 无对应 camelUser → LEFT JOIN 目标侧全 NULL
+                // authorId=999999 无对应 camelUser → 批量查询空结果
                 let postParams: Array<Any> = ["OrphanPost", 999999]
                 rf.transaction { tx: Tx => tx.execute("INSERT INTO \"camelPost\" (\"title\", \"authorId\") VALUES (?, ?)", postParams) }
                 let found = CamelPost.query().include(CamelPostRel.authorProfile).using(rf).filter(CamelPost.col().title == "OrphanPost").one()

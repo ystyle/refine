@@ -31,6 +31,14 @@ public interface IRelation {
     func resolve(): (RelationKind, String, String, String, Option<String>, Array<Col<Any>>)
     func getTargetMapper(): (QueryResult, HashMap<String, Int64>) -> Any
     func getFieldSetter(): (Any, Any) -> Unit
+    // Task 3: ref_to 批量装配的外键值读取器。ref_to 的 fk 字段在「主实体」上
+    // （`@Ref[User, user_id]` 的 user_id 是 Post 的普通字段），宏层生成
+    // `{ entity: Any => (entity as Post).getOrThrow().user_id }` 闭包读取。
+    // 仅 ref_to 需要主侧 fk 提取；has_one/has_many 的 fk 在目标侧（Task 4 处理），
+    // ref_many 走中间表（Task 5 处理），故默认抛错强制只读路径明确。
+    func getForeignKeyExtractor(): (Any) -> Any {
+        throw RefineException("relation does not expose fk extractor")
+    }
     // 新增：嵌套 include（默认 no-op）
     func withInclude(rel: IRelation): IRelation { this }
     // 新增：该关系支持的嵌套列表
@@ -49,6 +57,8 @@ public open class Relation<TTarget> <: IRelation {
     var condition: Option<Expr>
     var targetMapper: (QueryResult, HashMap<String, Int64>) -> Any
     var fieldSetter: (Any, Any) -> Unit
+    // Task 3: ref_to 的外键读取器闭包（宏层为 ref_to 生成，其余关系保持 None）
+    var fkExtractor: Option<(Any) -> Any> = None
     private var nested = ArrayList<IRelation>()
 
     public init(name: String, targetTable: String, kind: RelationKind,
@@ -83,6 +93,15 @@ public open class Relation<TTarget> <: IRelation {
         this.fieldSetter
     }
 
+    public func getForeignKeyExtractor(): (Any) -> Any {
+        match (this.fkExtractor) {
+            case Some(e) => e
+            case None => throw RefineException(
+                "relation '" + name + "' does not expose a foreign-key extractor; cannot batch assemble ref_to"
+            )
+        }
+    }
+
     public func withInclude(rel: IRelation): IRelation {
         if (hasNested(rel)) {
             return this
@@ -96,6 +115,7 @@ public open class Relation<TTarget> <: IRelation {
     // 返回 Relation<TTarget> 基类类型：所有接口方法都在基类上，具体类型由 kind 字段表达。
     public func clone(): Relation<TTarget> {
         let c = Relation<TTarget>(name, targetTable, kind, foreignKey, via, fields, targetMapper, fieldSetter)
+        c.fkExtractor = this.fkExtractor
         c.condition = this.condition
         for (n in nested) {
             c.nested.add(n)
@@ -126,8 +146,10 @@ public open class Relation<TTarget> <: IRelation {
 public class RefTo<TTarget> <: Relation<TTarget> {
     public init(name: String, fk: Col<Any>, fields: Array<Col<Any>>, targetTable: String,
                 mapper: (QueryResult, HashMap<String, Int64>) -> Any,
-                setter: (Any, Any) -> Unit) {
+                setter: (Any, Any) -> Unit,
+                fkExtractor: (Any) -> Any) {
         super(name, targetTable, RelationKind.RefToRel, fk.name, None, fields, mapper, setter)
+        this.fkExtractor = Some(fkExtractor)
     }
 }
 
@@ -157,3 +179,4 @@ public class HasMany<TTarget> <: Relation<TTarget> {
 
 public func dummyMapper(result: QueryResult, cm: HashMap<String, Int64>): Any { 0 }
 public func dummySetter(entity: Any, target: Any): Unit {}
+public func dummyFkExtractor(entity: Any): Any { 0 }

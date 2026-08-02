@@ -28,6 +28,10 @@ class FieldOverrideRelation <: IRelation {
         inner.getFieldSetter()
     }
 
+    public func getForeignKeyExtractor(): (Any) -> Any {
+        inner.getForeignKeyExtractor()
+    }
+
     public func withInclude(rel: IRelation): IRelation {
         FieldOverrideRelation(inner.withInclude(rel), overrides)
     }
@@ -165,7 +169,7 @@ public class Query<T> {
             let result = exec.query(sql, params)
             // Task 2 后主查询不再含 include JOIN：LIMIT/OFFSET 作用于源表行，无展开放大，
             // 单页恰好返回 size 个主实体（旧 LEFT JOIN 方案的父子跨页拆分/页内去重局限已消除）。
-            // 集合 include 装配改由批量分步查询完成（Task 4 接入），当前处于惰性中间态。
+            // ref_to 装配由 Task 3 批量分步查询完成；集合 include（has_many/ref_many）在 Task 4 接入。
             let columnMap = buildColumnMap(result.columnInfos, columnOffset)
             let mapper = this.mapper.getOrThrow()
             let entities: Array<T>
@@ -180,6 +184,7 @@ public class Query<T> {
                 }
                 entities = list.toArray()
             }
+            assembleRefTo(exec, dialect, entities)
             Page(entities, total, page, size)
         } finally {
             closeExecutor(exec)
@@ -287,25 +292,12 @@ public class Query<T> {
 
     public func include(rel: IRelation): Query<T> {
         included.add(rel)
-        wrapNonCollection(rel)
+        this
     }
 
     public func include(rel: IRelation, fields: Array<Col<Any>>): Query<T> {
         let override = FieldOverrideRelation(rel, fields)
         included.add(override)
-        wrapNonCollection(override)
-    }
-
-    // TODO(batch-include Task 3): 随批量装配实现删除
-    private func wrapNonCollection(rel: IRelation): Query<T> {
-        let (kind, _, _, _, _, _) = rel.resolve()
-        if (kind != RelationKind.HasManyRel && kind != RelationKind.RefManyRel) {
-            match (this.mapper) {
-                case Some(m) =>
-                    this.mapper = Some(wrapMapper(m, rel))
-                case None => ()
-            }
-        }
         this
     }
 
@@ -332,35 +324,152 @@ public class Query<T> {
 
     // Task 2: 主查询分离——include 不再生成 LEFT JOIN/别名 SELECT/限定（qualify）。
     // 主查询只渲染源表自身（无 JOIN），include 预加载改由批量分步查询协议完成
-    // （ref_to/has_one/has_many/ref_many 批量装配在 Task 3-6 接入）。batch 模式下
-    // 无 JOIN 因此无列歧义，无需 qualify。此方法保留为 no-op，供 Task 3-6 在
-    // all()/one()/page() 主查询之后挂接批量装配入口。
+    // （ref_to 批量装配已在 Task 3 接入 all()/one()/page()，has_one/has_many/ref_many 在 Task 4-6 接入）。
+    // batch 模式下无 JOIN 因此无列歧义，无需 qualify。此方法保留为 no-op，
+    // 供 Task 3-6 在 all()/one()/page() 主查询之后挂接批量装配入口。
     public func processIncluded(dialect: Dialect): Unit {
         ()
     }
 
-    // TODO(batch-include Task 3): 随批量装配实现删除
-    private func wrapMapper(
-        baseMapper: (QueryResult, HashMap<String, Int64>) -> T,
-        rel: IRelation
-    ): (QueryResult, HashMap<String, Int64>) -> T {
-        let (_, name, _, _, _, _) = rel.resolve()
-        let targetMapper = rel.getTargetMapper()
-        let setter = rel.getFieldSetter()
+    // Task 3: ref_to 批量装配。主查询返回实体后调用：
+    //   1. 按目标表分组（保持 included 顺序），同表多个 ref_to 关系合并为一条批量查询；
+    //   2. 收集各实体外键值（getForeignKeyExtractor），去重并过滤 0/"" 未设置值；
+    //   3. 空集合跳过（不产生额外查询）；
+    //   4. `SELECT <字段并集> FROM <目标表> WHERE "id" IN (?, ...)` 批量取目标；
+    //   5. 目标 id → 实体 映射，按各关系 fk 值命中回填（未命中保持未挂载，不抛错）。
+    // 批量 SQL 采用手写占位符（与 relation_gen.cj 一致）：IN 列表不是 Expr 模型的一部分
+    // （Expr.Value 数组渲染为单个参数，无法展开为 ?,?,...），且在 scope 内不允许改动
+    // 三方言 renderExpr 为 IN 列表新增变体，故 SELECT/FROM 走 Statement 机器，
+    // WHERE 的 IN 部分以 Raw + 末尾追加参数完成。
+    private func assembleRefTo(exec: ExecutionContext, dialect: Dialect, entities: Array<T>): Unit {
+        if (included.size == 0 || entities.size == 0) { return }
 
-        func wrapper(result: QueryResult, columnMap: HashMap<String, Int64>): T {
-            let entity = baseMapper(result, columnMap)
-            let prefix = name + "."
-            if (columnMap.contains(prefix + "id")) {
-                if (!isNullId(result, columnMap.get(prefix + "id").getOrThrow())) {
-                    let stripped = stripPrefix(columnMap, prefix)
-                    let target = targetMapper(result, stripped)
-                    setter(entity, target)
+        var groups = ArrayList<(String, ArrayList<IRelation>)>()
+        for (inc in included) {
+            let (kind, _, targetTable, _, _, _) = inc.resolve()
+            if (kind != RelationKind.RefToRel) { continue }
+            var found = false
+            for (i in 0..groups.size) {
+                if (groups[i][0] == targetTable) {
+                    groups[i][1].add(inc)
+                    found = true
+                    break
                 }
             }
-            entity
+            if (!found) {
+                let rels = ArrayList<IRelation>()
+                rels.add(inc)
+                groups.add((targetTable, rels))
+            }
         }
-        wrapper
+
+        for (i in 0..groups.size) {
+            let targetTable = groups[i][0]
+            let rels = groups[i][1]
+
+            // 1. 收集该目标表全部 fk 值（跨关系去重、过滤 0/""）
+            var ids = ArrayList<Any>()
+            var seen = HashMap<String, Bool>()
+            for (rel in rels) {
+                let extractor = rel.getForeignKeyExtractor()
+                for (entity in entities) {
+                    let v = extractor(entity)
+                    if (isEmptyFk(v)) { continue }
+                    let key = fkKey(v)
+                    if (!seen.contains(key)) {
+                        seen[key] = true
+                        ids.add(v)
+                    }
+                }
+            }
+            if (ids.size == 0) { continue }
+
+            // 2. 字段并集：同表多关系合并时取所有选中列
+            var fieldNames = ArrayList<String>()
+            var seenField = HashMap<String, Bool>()
+            for (rel in rels) {
+                let (_, _, _, _, _, fields) = rel.resolve()
+                for (c in fields) {
+                    if (!seenField.contains(c.name)) {
+                        seenField[c.name] = true
+                        fieldNames.add(c.name)
+                    }
+                }
+            }
+            var cols = ArrayList<Expr>()
+            cols.add(Expr.Column("id"))   // 强制选中目标主键，装配查表与回填都用
+            for (name in fieldNames) {
+                if (name != "id") { cols.add(Expr.Column(name)) }
+            }
+
+            // 3. 批量 SQL：SELECT <cols> FROM <table> WHERE "id" IN (?, ...)
+            let bs = Statement()
+            bs.addClause(Clause.SelectClause(cols.toArray()))
+            bs.addClause(Clause.FromClause(targetTable))
+            var placeholders = ArrayList<String>()
+            for (_ in 0..ids.size) { placeholders.add("?") }
+            let inSQL = dialect.quoteIdentifier("id") + " IN (" + String.join(placeholders.toArray(), delimiter: ", ") + ")"
+            bs.addClause(Clause.WhereClause([Expr.Raw(inSQL)]))
+            let (sql, baseParams) = dialect.render(bs)
+            var params = ArrayList<Any>()
+            for (p in baseParams) { params.add(p) }
+            for (v in ids) { params.add(v) }
+            Logger.logSQL(sql, params.toArray())
+            let result = exec.query(sql, params.toArray())
+
+            // 4. 目标 id → 实体 映射（同表关系共享同一目标 RowMapper）
+            let columnMap = buildColumnMap(result.columnInfos, exec.getParamOffset())
+            let idIdx = columnMap.get("id").getOrThrow()
+            let isStringPk = fkIsString(ids[0])
+            let targetMapper = rels[0].getTargetMapper()
+            var targetMap = HashMap<String, Any>()
+            while (result.next()) {
+                let idKey = if (isStringPk) {
+                    result.get<String>(idIdx)
+                } else {
+                    result.get<Int64>(idIdx).toString()
+                }
+                targetMap[idKey] = targetMapper(result, columnMap)
+            }
+
+            // 5. 回填：fk 命中即挂载，未命中（目标被删）保持未挂载
+            for (rel in rels) {
+                let extractor = rel.getForeignKeyExtractor()
+                let setter = rel.getFieldSetter()
+                for (entity in entities) {
+                    let v = extractor(entity)
+                    if (isEmptyFk(v)) { continue }
+                    let key = fkKey(v)
+                    match (targetMap.get(key)) {
+                        case Some(t) => setter(entity, t)
+                        case None => ()
+                    }
+                }
+            }
+        }
+    }
+
+    private func isEmptyFk(v: Any): Bool {
+        match (v) {
+            case i: Int64 => i == 0
+            case s: String => s == ""
+            case _ => false
+        }
+    }
+
+    private func fkKey(v: Any): String {
+        match (v) {
+            case i: Int64 => i.toString()
+            case s: String => s
+            case _ => throw QueryException("unsupported foreign key value type for batch ref_to")
+        }
+    }
+
+    private func fkIsString(v: Any): Bool {
+        match (v) {
+            case _: String => true
+            case _ => false
+        }
     }
 
     public func setMapper(m: (QueryResult, HashMap<String, Int64>) -> T): Unit {
@@ -390,16 +499,20 @@ public class Query<T> {
             let elapsed = MonoTime.now() - start
             Logger.logSlowQuery(sql, elapsed)
             let columnMap = buildColumnMap(result.columnInfos, columnOffset)
+            let entities: Array<T>
             if (hasCollectionInclude()) {
-                return aggregateWithCollections(result, columnMap, mapper)
+                entities = aggregateWithCollections(result, columnMap, mapper)
+            } else {
+                var list = ArrayList<T>()
+                while (result.next()) {
+                    let entity = mapper(result, columnMap)
+                    runAfterFindHooks(entity)
+                    list.add(entity)
+                }
+                entities = list.toArray()
             }
-            var entities = ArrayList<T>()
-            while (result.next()) {
-                let entity = mapper(result, columnMap)
-                runAfterFindHooks(entity)
-                entities.add(entity)
-            }
-            entities.toArray()
+            assembleRefTo(exec, dialect, entities)
+            entities
         } finally {
             closeExecutor(exec)
         }
@@ -432,16 +545,20 @@ public class Query<T> {
             let elapsed = MonoTime.now() - start
             Logger.logSlowQuery(sql, elapsed)
             let columnMap = buildColumnMap(result.columnInfos, columnOffset)
+            var res: Option<T> = None
             if (hasCollection) {
                 let all = aggregateWithCollections(result, columnMap, mapper)
-                if (all.size > 0) { return Some(all[0]) }
-                return None
+                if (all.size > 0) { res = Some(all[0]) }
+            } else {
+                if (result.next()) {
+                    let entity = mapper(result, columnMap)
+                    runAfterFindHooks(entity)
+                    res = Some(entity)
+                }
             }
-            var res: Option<T> = None
-            if (result.next()) {
-                let entity = mapper(result, columnMap)
-                runAfterFindHooks(entity)
-                res = Some(entity)
+            match (res) {
+                case Some(e) => assembleRefTo(exec, dialect, [e])
+                case None => ()
             }
             res
         } finally {

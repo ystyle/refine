@@ -1146,20 +1146,42 @@ public class MacroExistingTest {
         @Expect(sql, "SELECT \"id\", \"name\" AS \"user.name\" FROM \"users\"")
     }
 
-    // batch include 重构中，Task 3 恢复：include 不再生成 LEFT JOIN，
-    // 改为主查询 + 批量 IN 装配，SQL 断言需重写。
+    // batch include Task 3：ref_to include 走批量 IN 装配（主查询 + 批量查询），
+    // 主查询不再生成 LEFT JOIN；批量 SQL 为 `SELECT <列> FROM "user" WHERE "id" IN (?)`。
     @TestCase
-    @Skip
-    public func testIncludeRendersJoin(): Unit {
+    public func testIncludeRefToBatchAssembly(): Unit {
         let conn = CaptureConnection()
         let tx = Tx(conn)
-        let _ = PostWithRel.findAll(PostWithRel.query()
-            .select([Column("id")])
-            .from("postWithRel")
+        // 主查询：postWithRel 自身列（user_id=99）
+        let mainCols: Array<ColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("title", false),
+            MapperMockColumnInfo("user_id", false),
+            MapperMockColumnInfo("post_id", false),
+        ]
+        let mainRow = Array<Any>(4, {i => if (i == 0) { 5 } else if (i == 1) { "post" } else if (i == 2) { 99 } else { 0 }})
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(mainCols, [mainRow]))
+        // 批量查询：user 表 id IN (99)
+        let userCols: Array<ColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("name", false),
+            MapperMockColumnInfo("email", false),
+        ]
+        let userRow = Array<Any>(3, {i => if (i == 0) { 99 } else if (i == 1) { "Alice" } else { "a@x.com" }})
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(userCols, [userRow]))
+        let entities = PostWithRel.findAll(PostWithRel.query()
             .include(PostWithRelRel.author)
             .using(tx))
-        @Expect(conn.stmt.capturedSql.contains("LEFT JOIN"), true)
-        @Expect(conn.stmt.capturedSql.contains("author"), true)
+        @Expect(conn.stmt.capturedSqlHistory.size, 2)
+        @Expect(conn.stmt.capturedSqlHistory[0].contains("LEFT JOIN"), false)
+        @Expect(conn.stmt.capturedSqlHistory[1].contains("LEFT JOIN"), false)
+        @Expect(conn.stmt.capturedSqlHistory[1].contains("FROM \"user\""), true)
+        @Expect(conn.stmt.capturedSqlHistory[1].contains("IN (?)"), true)
+        @Expect(entities.size, 1)
+        @Expect(entities[0].author.isSome(), true)
+        let author = entities[0].author.getOrThrow()
+        @Expect(author.id, 99)
+        @Expect(author.name, "Alice")
     }
 
     @TestCase
@@ -3442,22 +3464,27 @@ public class WritePathDialectQuotingTest {
 public class C2IncludePreloadTest {
     @TestCase
     public func testRefToIncludeDefaultAllColumns(): Unit {
-        // 仅 mock 固定即将删除的 JOIN 装配路径（wrapMapper），Task 3 随装配代码一并重写。
+        // Task 3 批量协议：主查询 + 批量查询两次，String-pk 目标按 fk 回填全列
         let conn = CaptureConnection()
         let tx = Tx(conn)
-        let cols: Array<ColumnInfo> = [
+        let mainCols: Array<ColumnInfo> = [
             MapperMockColumnInfo("id", false),
             MapperMockColumnInfo("body", false),
             MapperMockColumnInfo("post_id", false),
-            MapperMockColumnInfo("post.id", false),
-            MapperMockColumnInfo("post.title", false),
-            MapperMockColumnInfo("post.content", false),
         ]
-        let row = Array<Any>(6, {i =>
-            if (i == 0) { 5 } else if (i == 1) { "nice" } else if (i == 2) { "p1" }
-            else if (i == 3) { "p1" } else if (i == 4) { "First" } else { "Hello" }
+        let mainRow = Array<Any>(3, {i =>
+            if (i == 0) { 5 } else if (i == 1) { "nice" } else { "p1" }
         })
-        conn.stmt.queryResult = MapperMockQueryResult(cols, [row])
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(mainCols, [mainRow]))
+        let postCols: Array<ColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("title", false),
+            MapperMockColumnInfo("content", false),
+        ]
+        let postRow = Array<Any>(3, {i =>
+            if (i == 0) { "p1" } else if (i == 1) { "First" } else { "Hello" }
+        })
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(postCols, [postRow]))
         let q = UuidRefComment.query().include(UuidRefCommentRel.post).using(tx)
         let entities = q.all()
         @Expect(entities.size, 1)
@@ -3470,24 +3497,29 @@ public class C2IncludePreloadTest {
 
     @TestCase
     public func testRefToIncludeSubsetFieldsNoThrow(): Unit {
-        // 仅 mock 固定即将删除的 JOIN 装配路径（wrapMapper），Task 3 随装配代码一并重写。
+        // Task 3 批量协议：include(rel, fields) 字段子集 → 批量查询只选子集列，
+        // 缺列字段保持默认值（content 缺列 → ""），不缺行不抛异常
         let conn = CaptureConnection()
         let tx = Tx(conn)
-        let cols: Array<ColumnInfo> = [
+        let mainCols: Array<ColumnInfo> = [
             MapperMockColumnInfo("id", false),
             MapperMockColumnInfo("body", false),
             MapperMockColumnInfo("post_id", false),
-            MapperMockColumnInfo("post.id", false),
-            MapperMockColumnInfo("post.title", false),
         ]
-        let row = Array<Any>(5, {i =>
-            if (i == 0) { 5 } else if (i == 1) { "nice" } else if (i == 2) { "p1" }
-            else if (i == 3) { "p1" } else { "First" }
+        let mainRow = Array<Any>(3, {i =>
+            if (i == 0) { 5 } else if (i == 1) { "nice" } else { "p1" }
         })
-        conn.stmt.queryResult = MapperMockQueryResult(cols, [row])
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(mainCols, [mainRow]))
+        let postCols: Array<ColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("title", false),
+        ]
+        let postRow = Array<Any>(2, {i => if (i == 0) { "p1" } else { "First" }})
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(postCols, [postRow]))
         let rel = RefTo<UuidPost>("post", Col<Any>("post_id"),
             [Col<Any>("id"), Col<Any>("title")], "uuidPost",
-            UuidRefCommentRel.postMapper, UuidRefCommentRel.postSetter)
+            UuidRefCommentRel.postMapper, UuidRefCommentRel.postSetter,
+            { e: Any => (e as UuidRefComment).getOrThrow().post_id })
         let q = UuidRefComment.query().include(rel, [Col<Any>("id"), Col<Any>("title")]).using(tx)
         let entities = q.all()
         @Expect(entities.size, 1)
@@ -3495,26 +3527,33 @@ public class C2IncludePreloadTest {
         @Expect(post.id, "p1")
         @Expect(post.title, "First")
         @Expect(post.content, "")
+        // 批量查询按字段子集 SELECT（只含 id/title）
+        @Expect(conn.stmt.capturedSqlHistory[1].contains("SELECT \"id\", \"title\" FROM \"uuidPost\""), true)
     }
 
     @TestCase
     public func testRefToIncludeNullTargetKeepsRow(): Unit {
-        // 仅 mock 固定即将删除的 JOIN 装配路径（wrapMapper），Task 3 随装配代码一并重写。
+        // Task 3 批量协议：fk 指向已删除目标 → 批量查询空结果，主实体保留、目标不挂载
         let conn = CaptureConnection()
         let tx = Tx(conn)
-        // 模拟 LEFT JOIN 无匹配：目标列缺失（target id 不在结果集中）
-        let cols: Array<ColumnInfo> = [
+        let mainCols: Array<ColumnInfo> = [
             MapperMockColumnInfo("id", false),
             MapperMockColumnInfo("body", false),
             MapperMockColumnInfo("post_id", false),
         ]
-        let row = Array<Any>(3, {i =>
+        let mainRow = Array<Any>(3, {i =>
             if (i == 0) { 5 } else if (i == 1) { "orphan" } else { "nope" }
         })
-        conn.stmt.queryResult = MapperMockQueryResult(cols, [row])
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(mainCols, [mainRow]))
+        let postCols: Array<ColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("title", false),
+        ]
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(postCols, []))
         let rel = RefTo<UuidPost>("post", Col<Any>("post_id"),
             [Col<Any>("id"), Col<Any>("title")], "uuidPost",
-            UuidRefCommentRel.postMapper, UuidRefCommentRel.postSetter)
+            UuidRefCommentRel.postMapper, UuidRefCommentRel.postSetter,
+            { e: Any => (e as UuidRefComment).getOrThrow().post_id })
         let q = UuidRefComment.query().include(rel, [Col<Any>("id"), Col<Any>("title")]).using(tx)
         let entities = q.all()
         @Expect(entities.size, 1)

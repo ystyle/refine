@@ -2,7 +2,7 @@ package refine
 
 import std.unittest.*
 import std.unittest.testmacro.*
-import std.collection.HashMap
+import std.collection.{ArrayList, HashMap}
 import std.database.sql.{QueryResult, ColumnInfo as SqlColumnInfo, Connection, Datasource, ConnectionState, Transaction}
 import std.database.sql.Statement as SqlStatement
 
@@ -39,12 +39,6 @@ private func checkStr(v: Any, expected: String): Bool {
         case s: String => s == expected
         case _ => false
     }
-}
-
-// 模拟驱动 SQL NULL 单元格：值是 Option<Int64>.None，任何 get<T> 类型匹配都失败
-// （get<T> 抛类型不匹配，getOrNull<T> 返回 None），与真实驱动对 NULL 列的行为一致。
-private func sqlNull(): Any {
-    Option<Int64>.None
 }
 
 @Test
@@ -163,7 +157,7 @@ public class QueryTest {
     public func testInclude(): Unit {
         let fk = Col<Any>("user_id")
         let fields = [Col<Any>("id"), Col<Any>("name")]
-        let rel: IRelation = RefTo<RelUser>("author", fk, fields, "reluser", dummyMapper, dummySetter)
+        let rel: IRelation = RefTo<RelUser>("author", fk, fields, "reluser", dummyMapper, dummySetter, dummyFkExtractor)
         let q = Query<Int64>()
         q.include(rel)
         @Expect(q.included.size, 1)
@@ -227,7 +221,7 @@ public class QueryTest {
         @Expect(q.included.size, 0)
         // Add RefTo - not a collection
         let fk = Col<Any>("user_id")
-        let refTo: IRelation = RefTo<Int64>("author", fk, [Col<Any>("id")], "users", dummyMapper, dummySetter)
+        let refTo: IRelation = RefTo<Int64>("author", fk, [Col<Any>("id")], "users", dummyMapper, dummySetter, dummyFkExtractor)
         q.include(refTo)
         @Expect(q.included.size, 1)
     }
@@ -656,45 +650,39 @@ public class QueryTest {
         @Expect(ds.conn.closedCount, 1)
     }
 
-    // batch include 重构中，Task 3 恢复：processIncluded 已改为 no-op，
-    // 不再生成 LEFT JOIN/别名 SELECT/限定；批量装配在 Task 3-6 接入后重写。
+    // batch include Task 3：ref_to 装配改为主查询 + 批量 IN 查询协议。
+    // processIncluded 是 no-op（主查询不生成 JOIN），批量装配在 all() 主查询后触发：
+    // 断言两次查询（主查询 + `SELECT ... FROM "user" WHERE "id" IN (?)`）与装配结果。
     @TestCase
-    @Skip
-    public func testProcessIncludedAddsJoins(): Unit {
-        let q = Query<Int64>()
-        q.select([Expr.Column("id"), Expr.Column("name")])
-        q.from("users")
-        let fk = Col<Any>("user_id")
-        let rel: IRelation = RefTo<Int64>("author", fk, [Col<Any>("id"), Col<Any>("name")], "users", dummyMapper, dummySetter)
-        q.include(rel)
-        let dialect = SQLiteDialect()
-        q.processIncluded(dialect)
-        var hasJoin = false
-        for (c in q.stmt.clauses) {
-            match (c) {
-                case Clause.JoinClause(_, _, _) => hasJoin = true
-                case _ => ()
-            }
-        }
-        @Expect(hasJoin, true)
-    }
-
-    // batch include 重构中，Task 3 恢复：批量模式主查询无 JOIN、无列歧义，
-    // 不再对 WHERE 做表名限定，该用例断言已不成立。
-    @TestCase
-    @Skip
-    public func testProcessIncludedQualifiesWhere(): Unit {
-        let q = Query<Int64>()
-        q.select([Expr.Column("id")])
-        q.from("users")
-        q.filter(Expr.Binary(Expr.Column("id"), BinOp.Eq, Expr.Value(1)))
-        let fk = Col<Any>("user_id")
-        let rel: IRelation = HasMany<Int64>("posts", "user_id", [Col<Any>("id")], "posts", dummyMapper, dummySetter)
-        q.include(rel)
-        let dialect = SQLiteDialect()
-        q.processIncluded(dialect)
-        let (sql, _) = dialect.render(q.stmt)
-        @Expect(sql.contains("\"users\".\"id\""), true)
+    public func testRefToIncludeIssuesBatchQuery(): Unit {
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        // 主查询：postWithRel 自身列（user_id=99）
+        let mainCols: Array<SqlColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("title", false),
+            MapperMockColumnInfo("user_id", false),
+            MapperMockColumnInfo("post_id", false),
+        ]
+        let mainRow = Array<Any>(4, {i => if (i == 0) { 1 } else if (i == 1) { "p1" } else if (i == 2) { 99 } else { 0 }})
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(mainCols, [mainRow]))
+        // 批量查询：user 表 id IN (99)
+        let userCols: Array<SqlColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("name", false),
+            MapperMockColumnInfo("email", false),
+        ]
+        let userRow = Array<Any>(3, {i => if (i == 0) { 99 } else if (i == 1) { "Alice" } else { "a@x.com" }})
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(userCols, [userRow]))
+        let q = PostWithRel.query().include(PostWithRelRel.author).using(tx)
+        let entities = q.all()
+        @Expect(conn.stmt.capturedSqlHistory.size, 2)
+        @Expect(conn.stmt.capturedSqlHistory[0].contains("LEFT JOIN"), false)
+        @Expect(conn.stmt.capturedSqlHistory[1].contains("FROM \"user\""), true)
+        @Expect(conn.stmt.capturedSqlHistory[1].contains("IN (?)"), true)
+        @Expect(entities.size, 1)
+        @Expect(entities[0].author.isSome(), true)
+        @Expect(entities[0].author.getOrThrow().id, 99)
     }
 
     // batch include 重构中，Task 4 恢复：has_many 改为批量按 fk IN 查询装配，主查询无 JOIN。
@@ -735,7 +723,7 @@ public class QueryTest {
         let q = Query<Int64>()
         q.select([Expr.Column("id")])
         let fk = Col<Any>("user_id")
-        let rel: IRelation = RefTo<Int64>("author", fk, [Col<Any>("id")], "users", dummyMapper, dummySetter)
+        let rel: IRelation = RefTo<Int64>("author", fk, [Col<Any>("id")], "users", dummyMapper, dummySetter, dummyFkExtractor)
         q.include(rel)
         let dialect = SQLiteDialect()
         q.processIncluded(dialect)
@@ -767,51 +755,6 @@ public class QueryTest {
         let dialect = SQLiteDialect()
         q.processIncluded(dialect)
         @Expect(q.stmt.clauses.size, countBefore)
-    }
-
-    // batch include 重构中，Task 3 恢复：批量模式主查询无 JOIN、无列歧义，
-    // 不再对 SELECT 追加别名列，该用例断言已不成立。
-    @TestCase
-    @Skip
-    public func testProcessIncludedQualifiesSelect(): Unit {
-        let q = Query<Int64>()
-        q.select([Expr.Column("id")])
-        q.from("users")
-        let fk = Col<Any>("user_id")
-        let rel: IRelation = RefTo<Int64>("author", fk, [Col<Any>("id")], "users", dummyMapper, dummySetter)
-        q.include(rel)
-        let dialect = SQLiteDialect()
-        q.processIncluded(dialect)
-        let (sql, _) = dialect.render(q.stmt)
-        @Expect(sql.contains("\"users\".\"id\""), true)
-    }
-
-    // batch include 重构中，Task 3 恢复：批量模式主查询无 JOIN、无列歧义，
-    // ORDER BY/GROUP BY/HAVING 不再做表名限定，该用例断言已不成立。
-    @TestCase
-    @Skip
-    public func testProcessIncludedQualifiesOrderByGroupByHaving(): Unit {
-        // I1: include 产生的 JOIN 后，ORDER BY / GROUP BY / HAVING 必须同样限定表名，
-        // 否则两侧表都有 "id" 时所有方言都会报 ambiguous column。
-        let q = Query<Int64>()
-        q.select([Expr.Column("id"), Expr.Column("dept")])
-        q.from("users")
-        q.filter(Expr.Binary(Expr.Column("status"), BinOp.Eq, Expr.Value("active")))
-        q.order([Expr.Ordered(Expr.Column("id"), "ASC")])
-        q.groupBy([Expr.Column("dept")])
-        q.having([Expr.Binary(Expr.Column("cnt"), BinOp.Gt, Expr.Value(5))])
-        let fk = Col<Any>("user_id")
-        let rel: IRelation = HasMany<Int64>("posts", "user_id", [Col<Any>("id")], "posts", dummyMapper, dummySetter)
-        q.include(rel)
-        let dialect = SQLiteDialect()
-        q.processIncluded(dialect)
-        let (sql, _) = dialect.render(q.stmt)
-        @Expect(sql.contains("ORDER BY \"users\".\"id\" ASC"), true)
-        @Expect(sql.contains("GROUP BY \"users\".\"dept\""), true)
-        @Expect(sql.contains("HAVING \"users\".\"cnt\" > ?"), true)
-        @Expect(sql.contains("ORDER BY \"id\""), false)
-        @Expect(sql.contains("GROUP BY \"dept\""), false)
-        @Expect(sql.contains("HAVING \"cnt\""), false)
     }
 
     // ─── updateWhere / deleteWhere / forUpdate 渲染 ───
@@ -1047,27 +990,31 @@ public class C4PageCollectionTest {
         @Expect(pg.items[0].body, "hooked")
     }
 
-    // batch include 重构中，Task 3 恢复：主查询不再生成 RefTo 的 LEFT JOIN，
-    // 分页 SQL 断言（含 LEFT JOIN）已不成立，装配改为批量 IN 查询后重写。
+    // batch include Task 3：page() 装配协议 = count 查询 + 主查询 + 批量 IN 查询三次。
+    // 主查询无 LEFT JOIN，批量查询按 fk 回填目标。
     @TestCase
-    @Skip
-    public func testPageWithRefToIncludeJoins(): Unit {
+    public func testPageWithRefToIncludeBatch(): Unit {
         let conn = CaptureConnection()
         let tx = Tx(conn)
         conn.stmt.queryResultQueue.add(RowQueryResult(1))
-        let cols: Array<SqlColumnInfo> = [
+        let mainCols: Array<SqlColumnInfo> = [
             MapperMockColumnInfo("id", false),
             MapperMockColumnInfo("body", false),
             MapperMockColumnInfo("post_id", false),
-            MapperMockColumnInfo("post.id", false),
-            MapperMockColumnInfo("post.title", false),
-            MapperMockColumnInfo("post.content", false),
         ]
-        let row = Array<Any>(6, {i =>
-            if (i == 0) { 5 } else if (i == 1) { "nice" } else if (i == 2) { "p1" }
-            else if (i == 3) { "p1" } else if (i == 4) { "First" } else { "Hello" }
+        let mainRow = Array<Any>(3, {i =>
+            if (i == 0) { 5 } else if (i == 1) { "nice" } else { "p1" }
         })
-        conn.stmt.queryResultQueue.add(MapperMockQueryResult(cols, [row]))
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(mainCols, [mainRow]))
+        let postCols: Array<SqlColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("title", false),
+            MapperMockColumnInfo("content", false),
+        ]
+        let postRow = Array<Any>(3, {i =>
+            if (i == 0) { "p1" } else if (i == 1) { "First" } else { "Hello" }
+        })
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(postCols, [postRow]))
         let q = UuidRefComment.query().include(UuidRefCommentRel.post).using(tx)
         let pg = q.page(1, 10)
         @Expect(pg.total, 1)
@@ -1075,44 +1022,35 @@ public class C4PageCollectionTest {
         @Expect(pg.items[0].post.isSome(), true)
         @Expect(pg.items[0].post.getOrThrow().id, "p1")
         @Expect(pg.items[0].post.getOrThrow().title, "First")
-        // page() 必须先 processIncluded：分页 SQL 必须带 RefTo 的 LEFT JOIN
-        @Expect(conn.stmt.capturedSqlHistory[1].contains("LEFT JOIN"), true)
+        // 三次查询：count + 主查询 + 批量查询；主查询无 JOIN，批量查询含 IN
+        @Expect(conn.stmt.capturedSqlHistory.size, 3)
+        @Expect(conn.stmt.capturedSqlHistory[1].contains("LEFT JOIN"), false)
+        @Expect(conn.stmt.capturedSqlHistory[2].contains("IN (?)"), true)
     }
 
-    // I7: RefTo 目标 id 列存在但为 NULL（LEFT JOIN 无匹配）时，isNullId 必须判真，
-    // 主实体保留、目标不挂载、不抛异常。修复前依赖驱动对 get<String> 的异常行为，跨驱动脆弱。
-    // 用自定义 base mapper（不读 RefTo 字段），使 wrapMapper.isNullId 成为目标 id 的首个读取点。
+    // Task 3 批量协议：String-pk ref_to 的 fk（post_id）指向已删除目标，
+    // 批量查询空结果 → 主实体保留、目标不挂载、不抛异常。
     @TestCase
-    public func testRefToIncludeSkipsNullTargetId(): Unit {
-        // 仅 mock 固定即将删除的 JOIN 装配路径（wrapMapper），Task 3 随装配代码一并重写。
+    public func testRefToIncludeSkipsMissingTarget(): Unit {
         let conn = CaptureConnection()
         let tx = Tx(conn)
-        let cols: Array<SqlColumnInfo> = [
+        let mainCols: Array<SqlColumnInfo> = [
             MapperMockColumnInfo("id", false),
             MapperMockColumnInfo("body", false),
             MapperMockColumnInfo("post_id", false),
-            MapperMockColumnInfo("post.id", false),
         ]
-        // post.id 为 NULL（非 String 模拟驱动 NULL，getOrNull<String> → None）
-        let row = Array<Any>(4, {i =>
-            if (i == 0) { 5 } else if (i == 1) { "orphan" } else if (i == 2) { "nope" }
-            else { 0 }
+        let mainRow = Array<Any>(3, {i =>
+            if (i == 0) { 5 } else if (i == 1) { "orphan" } else { "nope" }
         })
-        conn.stmt.queryResult = MapperMockQueryResult(cols, [row])
-        let q = UuidRefComment.query()
-        q.setMapper({ result: QueryResult, cm: HashMap<String, Int64> =>
-            let e = UuidRefComment()
-            e.id = result.get<Int64>(cm.get("id").getOrThrow())
-            e.body = result.get<String>(cm.get("body").getOrThrow())
-            e.post_id = result.get<String>(cm.get("post_id").getOrThrow())
-            e
-        })
-        q.include(UuidRefCommentRel.post)
-        q.using(tx)
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(mainCols, [mainRow]))
+        let postCols: Array<SqlColumnInfo> = [MapperMockColumnInfo("id", false)]
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(postCols, []))
+        let q = UuidRefComment.query().include(UuidRefCommentRel.post).using(tx)
         let entities = q.all()
         @Expect(entities.size, 1)
         @Expect(entities[0].id, 5)
         @Expect(entities[0].post.isNone(), true)
+        @Expect(conn.stmt.capturedSqlHistory.size, 2)
     }
 
     // I7: 集合 include 子行 id 为 NULL（LEFT JOIN 无匹配）时，isNullId 必须判真，
@@ -1141,31 +1079,24 @@ public class C4PageCollectionTest {
         @Expect(entities[0].comments.size, 0)
     }
 
-    // I7 follow-up: 真实 LEFT JOIN 无匹配时，目标 id 列「存在但为 NULL」。
-    // 之前的 I7/C2 用例只覆盖「列缺失」或「自定义 base mapper」，未覆盖生成 base mapper
-    // 先于 wrapMapper.isNullId 读取 NULL 列的真实路径（生成代码 result.get<Int64> 会抛异常）。
-    // 此处走默认 auto mapper（生成 RowMapper + wrapMapper 链），author.id 用 None 模拟驱动 NULL：
-    // get<Int64> 抛类型不匹配（旧代码崩溃），getOrNull<Int64> 返回 None（新代码不挂载）。
+    // Task 3 批量协议：Int64 fk（user_id=99）指向不存在用户，默认 RowMapper 路径
+    // （PostWithRel.query() + all()）下批量查询空结果 → 不崩溃、author 保持 None。
     @TestCase
-    public func testRefToIncludeNullTargetIdDefaultMapperNoCrash(): Unit {
-        // 仅 mock 固定即将删除的 JOIN 装配路径（wrapMapper），Task 3 随装配代码一并重写。
+    public func testRefToIncludeMissingTargetDefaultMapperNoCrash(): Unit {
         let conn = CaptureConnection()
         let tx = Tx(conn)
-        let cols: Array<SqlColumnInfo> = [
+        let mainCols: Array<SqlColumnInfo> = [
             MapperMockColumnInfo("id", false),
             MapperMockColumnInfo("title", false),
             MapperMockColumnInfo("user_id", false),
             MapperMockColumnInfo("post_id", false),
-            MapperMockColumnInfo("author.id", false),
-            MapperMockColumnInfo("author.name", false),
-            MapperMockColumnInfo("author.email", false),
         ]
-        // author.* 全为 NULL（sqlNull 模拟驱动 NULL，非 Int64 → get<Int64> 抛、getOrNull<Int64> → None）
-        let row = Array<Any>(7, {i =>
-            if (i == 0) { 5 } else if (i == 1) { "orphan" } else if (i == 2) { 99 } else if (i == 3) { 0 }
-            else { sqlNull() }
+        let mainRow = Array<Any>(4, {i =>
+            if (i == 0) { 5 } else if (i == 1) { "orphan" } else if (i == 2) { 99 } else { 0 }
         })
-        conn.stmt.queryResult = MapperMockQueryResult(cols, [row])
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(mainCols, [mainRow]))
+        let userCols: Array<SqlColumnInfo> = [MapperMockColumnInfo("id", false)]
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(userCols, []))
         let q = PostWithRel.query().include(PostWithRelRel.author).using(tx)
         let entities = q.all()
         @Expect(entities.size, 1)
@@ -1173,55 +1104,131 @@ public class C4PageCollectionTest {
         @Expect(entities[0].author.isNone(), true)
     }
 
+    // Task 3 批量协议：多主实体引用多个目标 → 单个批量查询（IN 多值），逐个回填。
     @TestCase
-    public func testHasOneIncludeNullTargetIdDefaultMapperNoCrash(): Unit {
-        // 仅 mock 固定即将删除的 JOIN 装配路径（wrapMapper），Task 3 随装配代码一并重写。
+    public func testRefToIncludeMultipleEntitiesBatch(): Unit {
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        let mainCols: Array<SqlColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("title", false),
+            MapperMockColumnInfo("user_id", false),
+            MapperMockColumnInfo("post_id", false),
+        ]
+        let mainRows = [
+            Array<Any>(4, {i => if (i == 0) { 1 } else if (i == 1) { "p1" } else if (i == 2) { 10 } else { 0 }}),
+            Array<Any>(4, {i => if (i == 0) { 2 } else if (i == 1) { "p2" } else if (i == 2) { 20 } else { 0 }}),
+        ]
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(mainCols, mainRows))
+        let userCols: Array<SqlColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("name", false),
+            MapperMockColumnInfo("email", false),
+        ]
+        let userRows = [
+            Array<Any>(3, {i => if (i == 0) { 10 } else if (i == 1) { "Alice" } else { "a@x.com" }}),
+            Array<Any>(3, {i => if (i == 0) { 20 } else if (i == 1) { "Bob" } else { "b@x.com" }}),
+        ]
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(userCols, userRows))
+        let q = PostWithRel.query().include(PostWithRelRel.author).using(tx)
+        let entities = q.all()
+        @Expect(conn.stmt.capturedSqlHistory.size, 2)
+        @Expect(conn.stmt.capturedSqlHistory[1].contains("IN (?, ?)"), true)
+        @Expect(entities.size, 2)
+        @Expect(entities[0].author.getOrThrow().name, "Alice")
+        @Expect(entities[1].author.getOrThrow().name, "Bob")
+    }
+
+    // Task 3 批量协议：所有 fk 均为 0（未设置）→ 批量查询整体跳过，只发主查询。
+    @TestCase
+    public func testRefToIncludeEmptyFkSetSkipsBatch(): Unit {
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        let mainCols: Array<SqlColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("title", false),
+            MapperMockColumnInfo("user_id", false),
+            MapperMockColumnInfo("post_id", false),
+        ]
+        let mainRows = [
+            Array<Any>(4, {i => if (i == 0) { 1 } else if (i == 1) { "p1" } else if (i == 2) { 0 } else { 0 }}),
+        ]
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(mainCols, mainRows))
+        let q = PostWithRel.query().include(PostWithRelRel.author).using(tx)
+        let entities = q.all()
+        @Expect(entities.size, 1)
+        @Expect(entities[0].author.isNone(), true)
+        @Expect(conn.stmt.capturedSqlHistory.size, 1)
+    }
+
+    // Task 3 批量协议：两个 ref_to 指向同一目标表 "user"（author 用 user_id、editor 用 post_id）
+    // → 合并为单条批量查询 `WHERE "id" IN (?, ?)`，两关系共享同一 id→实体 映射分别回填。
+    @TestCase
+    public func testRefToIncludeMergesSameTargetTable(): Unit {
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        let mainCols: Array<SqlColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("title", false),
+            MapperMockColumnInfo("user_id", false),
+            MapperMockColumnInfo("post_id", false),
+        ]
+        let mainRows = [
+            Array<Any>(4, {i => if (i == 0) { 1 } else if (i == 1) { "p1" } else if (i == 2) { 10 } else { 20 }}),
+        ]
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(mainCols, mainRows))
+        let userCols: Array<SqlColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("name", false),
+            MapperMockColumnInfo("email", false),
+        ]
+        let userRows = [
+            Array<Any>(3, {i => if (i == 0) { 10 } else if (i == 1) { "Alice" } else { "a@x.com" }}),
+            Array<Any>(3, {i => if (i == 0) { 20 } else if (i == 1) { "Eve" } else { "e@x.com" }}),
+        ]
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(userCols, userRows))
+        // editor 是手工构造的第二个指向 "user" 表的 ref_to，fk 读 post_id
+        let captured = ArrayList<String>()
+        let editorSetter: (Any, Any) -> Unit = { e: Any, t: Any =>
+            let u = (t as User).getOrThrow()
+            captured.add(u.id.toString())
+        }
+        let editor = RefTo<User>("editor", Col<Any>("post_id"),
+            [Col<Any>("id"), Col<Any>("name")], "user",
+            dummyMapper, editorSetter, { e: Any => (e as PostWithRel).getOrThrow().post_id })
+        let q = PostWithRel.query()
+            .include(PostWithRelRel.author)
+            .include(editor)
+            .using(tx)
+        let entities = q.all()
+        // 主查询 + 1 条合并批量查询（未合并会有 2 条批量查询）
+        @Expect(conn.stmt.capturedSqlHistory.size, 2)
+        @Expect(conn.stmt.capturedSqlHistory[1].contains("IN (?, ?)"), true)
+        @Expect(entities.size, 1)
+        @Expect(entities[0].author.getOrThrow().id, 10)
+        @Expect(captured.size, 1)
+        @Expect(captured[0], "20")
+    }
+
+    // Task 4 前保持惰性中间态：has_one 目标侧 fk 批量装配未实现，主查询无 JOIN 列
+    // → profile 保持 None、不崩溃。批量模式主查询不产生 profile.* 列。
+    @TestCase
+    public func testHasOneIncludeStaysUnset(): Unit {
         let conn = CaptureConnection()
         let tx = Tx(conn)
         let cols: Array<SqlColumnInfo> = [
             MapperMockColumnInfo("id", false),
             MapperMockColumnInfo("name", false),
-            MapperMockColumnInfo("profile.id", false),
-            MapperMockColumnInfo("profile.bio", false),
-            MapperMockColumnInfo("profile.user_id", false),
         ]
-        // profile.* 全为 NULL（has_one 无匹配：LEFT JOIN 目标侧全 NULL）
-        let row = Array<Any>(5, {i =>
-            if (i == 0) { 7 } else if (i == 1) { "nobody" }
-            else { sqlNull() }
-        })
-        conn.stmt.queryResult = MapperMockQueryResult(cols, [row])
+        let row = Array<Any>(2, {i => if (i == 0) { 7 } else { "nobody" }})
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(cols, [row]))
         let q = UserWithRel.query().include(UserWithRelRel.profile).using(tx)
         let entities = q.all()
         @Expect(entities.size, 1)
         @Expect(entities[0].id, 7)
         @Expect(entities[0].profile.isNone(), true)
-    }
-
-    @TestCase
-    public func testRefToStringPkIncludeNullTargetIdDefaultMapperNoCrash(): Unit {
-        // 仅 mock 固定即将删除的 JOIN 装配路径（wrapMapper），Task 3 随装配代码一并重写。
-        let conn = CaptureConnection()
-        let tx = Tx(conn)
-        let cols: Array<SqlColumnInfo> = [
-            MapperMockColumnInfo("id", false),
-            MapperMockColumnInfo("body", false),
-            MapperMockColumnInfo("post_id", false),
-            MapperMockColumnInfo("post.id", false),
-            MapperMockColumnInfo("post.title", false),
-            MapperMockColumnInfo("post.content", false),
-        ]
-        // String-pk 目标（UuidPost）：post.id 为 NULL，getOrNull<String> → None
-        let row = Array<Any>(6, {i =>
-            if (i == 0) { 5 } else if (i == 1) { "orphan" } else if (i == 2) { "nope" }
-            else { sqlNull() }
-        })
-        conn.stmt.queryResult = MapperMockQueryResult(cols, [row])
-        let q = UuidRefComment.query().include(UuidRefCommentRel.post).using(tx)
-        let entities = q.all()
-        @Expect(entities.size, 1)
-        @Expect(entities[0].id, 5)
-        @Expect(entities[0].post.isNone(), true)
+        // has_one 不触发批量查询，只发主查询
+        @Expect(conn.stmt.capturedSqlHistory.size, 1)
     }
 }
 

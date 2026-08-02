@@ -77,8 +77,21 @@ func buildRelClass(className: String, rels: ArrayList<RelInfo>): Tokens {
         }
         if (r.kind == "ref_to") {
             let fkLit = Token(TokenKind.STRING_LITERAL, r.by)
+            let extractorIdent = Token(TokenKind.IDENTIFIER, r.fieldName + "FkExtractor")
+            let fkField = Token(TokenKind.IDENTIFIER, r.by)
+            // Task 3: ref_to 批量装配需要从主实体读取外键值。ref_to 的 fk 是主实体的普通字段
+            // （如 Post.user_id），宏层已知类名与字段名，直接生成读取闭包。
+            // 显式标注返回类型 (Any) -> Any：字段原生类型（Int64/String）自动上转 Any。
+            body = body + Token(TokenKind.NL)
             body = body + quote(
-                public static let $(fieldIdent) = RefTo<$(targetType)>($(nameLit), Col<Any>($(fkLit)), $(fieldsTok), $(targetTableExpr), $(mapperIdent), $(setterIdent))
+                public static let $(extractorIdent): (Any) -> Any = { entity: Any =>
+                    let e = (entity as $(cnIdent)).getOrThrow()
+                    e.$(fkField)
+                }
+            )
+            body = body + Token(TokenKind.NL)
+            body = body + quote(
+                public static let $(fieldIdent) = RefTo<$(targetType)>($(nameLit), Col<Any>($(fkLit)), $(fieldsTok), $(targetTableExpr), $(mapperIdent), $(setterIdent), $(extractorIdent))
             )
         } else if (r.kind == "has_one") {
             let fkLit = Token(TokenKind.STRING_LITERAL, r.by)
