@@ -33,7 +33,8 @@ public class MySQLMigrator <: Migrator {
     public func hasTable(name: String): Bool {
         let s = db.session()
         let r = s.query("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = ?", [name])
-        let exists = r.next() && r.get<Int64>(0 + s.getParamOffset()) > 0
+        let off = s.getParamOffset()
+        let exists = r.next() && r.get<Int64>(0 + off) > 0
         s.close()
         exists
     }
@@ -116,8 +117,9 @@ public class MySQLMigrator <: Migrator {
     private func getExistingIndexNames(tableName: String): ArrayList<String> {
         let s = db.session()
         let r = s.query("SELECT INDEX_NAME FROM information_schema.STATISTICS WHERE table_schema = DATABASE() AND table_name = ?", [tableName])
+        let off = s.getParamOffset()
         var names = ArrayList<String>()
-        while (r.next()) { names.add(r.get<String>(0 + s.getParamOffset())) }
+        while (r.next()) { names.add(r.get<String>(0 + off)) }
         s.close()
         names
     }

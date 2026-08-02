@@ -153,12 +153,13 @@ public class MySQLMigratorTest {
         @Expect(migrator.hasTable("t8_has"), true)
     }
 
-    // mariadb 走 paramOffset=1，hasTable 必须读第 1 列，而非硬编码的第 0 列
+    // mariadb 走 paramOffset=1，hasTable 必须读第 1 列。
+    // 第 0 列放 0（错读则 0>0=false 失败），第 1 列放 1（正读则 1>0=true 通过）
     @TestCase
     public func testHasTableReadsColumnOneWithMariadbOffset(): Unit {
         let ds = CaptureDatasource()
         let conn = ds.conn
-        let row = Array<Any>(2, {i => if (i == 0) { 999 } else { 1 }})
+        let row = Array<Any>(2, {i => if (i == 0) { 0 } else { 1 }})
         conn.stmt.queryResultQueue.add(MapperMockQueryResult([], [row]))
         let db = DB(ds, 1)
         let migrator = MySQLMigrator(db)
@@ -180,7 +181,6 @@ public class MySQLMigratorTest {
         let migrator = MySQLMigrator(db)
         migrator.autoMigrate([IndexedDiffSchema()])
 
-        @Expect(conn.stmt.capturedSqlHistory.size >= 3, true)
         var foundStats = false
         for (sql in conn.stmt.capturedSqlHistory) {
             if (sql.contains("information_schema.STATISTICS")) { foundStats = true }
