@@ -111,6 +111,52 @@ class RMockTxFailDS <: Datasource {
     public func setOption(_key: String, _value: String): Unit {}
 }
 
+// I9: 统计底层连接 close() 调用次数，用于验证"成功路径恰好关闭一次"（closeExecutor + finally 不重复）。
+class RMockCountConn <: Connection {
+    public var closeCount = 0
+    public func close(): Unit { closeCount++ }
+    public func isClosed(): Bool { closeCount > 0 }
+    public prop state: ConnectionState { get() { ConnectionState.Connected } }
+    public func createTransaction(): Transaction { MockTransaction() }
+    public func getMetaData(): HashMap<String, String> { HashMap() }
+    public func prepareStatement(sql: String): SqlStatement { MockStatement() }
+}
+
+class RMockCountDS <: Datasource {
+    public var created = ArrayList<RMockCountConn>()
+    public func connect(): Connection {
+        let c = RMockCountConn()
+        created.add(c)
+        c
+    }
+    public func close(): Unit {}
+    public func isClosed(): Bool { false }
+    public func setOption(_key: String, _value: String): Unit {}
+}
+
+// I9: prepareStatement 必抛异常，用于验证 all()/one() 异常路径 session 仍被 finally 关闭。
+class RMockThrowingConn <: Connection {
+    public var closeCount = 0
+    public func close(): Unit { closeCount++ }
+    public func isClosed(): Bool { closeCount > 0 }
+    public prop state: ConnectionState { get() { ConnectionState.Connected } }
+    public func createTransaction(): Transaction { MockTransaction() }
+    public func getMetaData(): HashMap<String, String> { HashMap() }
+    public func prepareStatement(sql: String): SqlStatement { throw Exception("mock query failure") }
+}
+
+class RMockThrowingDS <: Datasource {
+    public var created = ArrayList<RMockThrowingConn>()
+    public func connect(): Connection {
+        let c = RMockThrowingConn()
+        created.add(c)
+        c
+    }
+    public func close(): Unit {}
+    public func isClosed(): Bool { false }
+    public func setOption(_key: String, _value: String): Unit {}
+}
+
 // ─── Tests ──────────────────────────────────────────────
 
 class RFlag { var v: Bool = false; init() {} }
@@ -357,5 +403,138 @@ public class RefineTest {
         @Expect(detectDialect("postgres").name(), "postgresql")
         @Expect(detectDialect("postgresql").name(), "postgresql")
         @Expect(detectDialect("unknown").name(), "sqlite")
+    }
+
+    // I9: Refine.all 不得修改调用方 Query 的状态（queryDialect/columnOffset/executor）。
+    @TestCase
+    public func testAllDoesNotMutateQuery(): Unit {
+        let r = Refine(RMockDS(), SQLiteDialect(), 0)
+        let q = Query<Int64>()
+        q.select([Expr.Column("id")])
+        q.from("t")
+        q.setMapper({ result: QueryResult, cm: HashMap<String, Int64> => 0 })
+        let result = r.all(q)
+        @Expect(result.size, 0)
+        @Expect(q.queryDialect.isNone(), true)
+        @Expect(q.columnOffset, 0)
+        @Expect(q.executor.isNone(), true)
+        r.close()
+    }
+
+    // I9: Refine.one 不得修改调用方 Query 的状态。
+    @TestCase
+    public func testOneDoesNotMutateQuery(): Unit {
+        let r = Refine(RMockDS(), SQLiteDialect(), 0)
+        let q = Query<Int64>()
+        q.select([Expr.Column("id")])
+        q.from("t")
+        q.setMapper({ result: QueryResult, cm: HashMap<String, Int64> => 0 })
+        let result = r.one(q)
+        @Expect(result.isNone(), true)
+        @Expect(q.queryDialect.isNone(), true)
+        @Expect(q.columnOffset, 0)
+        @Expect(q.executor.isNone(), true)
+        r.close()
+    }
+
+    // I9: 同一个 Query 对象先后复用多次，调用后仍保持原始状态（无并发/复用竞态污染）。
+    @TestCase
+    public func testQueryReusableAcrossAllCalls(): Unit {
+        let r = Refine(RMockDS(), SQLiteDialect(), 0)
+        let q = Query<Int64>()
+        q.select([Expr.Column("id")])
+        q.from("t")
+        q.setMapper({ result: QueryResult, cm: HashMap<String, Int64> => 0 })
+        let r1 = r.all(q)
+        let r2 = r.all(q)
+        @Expect(r1.size, 0)
+        @Expect(r2.size, 0)
+        @Expect(q.executor.isNone(), true)
+        @Expect(q.queryDialect.isNone(), true)
+        r.close()
+    }
+
+    // I9: all() 成功路径，底层连接恰好关闭一次（closeExecutor 与 finally 不重复 close）。
+    @TestCase
+    public func testAllClosesSessionOnce(): Unit {
+        let ds = RMockCountDS()
+        let r = Refine(ds, SQLiteDialect(), 0)
+        let q = Query<Int64>()
+        q.select([Expr.Column("id")])
+        q.from("t")
+        q.setMapper({ result: QueryResult, cm: HashMap<String, Int64> => 0 })
+        let result = r.all(q)
+        @Expect(result.size, 0)
+        @Expect(ds.created.size, 1)
+        if (ds.created.size > 0) {
+            let c = ds.created.get(0).getOrThrow()
+            @Expect(c.closeCount, 1)
+        }
+        r.close()
+    }
+
+    // I9: one() 成功路径，底层连接恰好关闭一次。
+    @TestCase
+    public func testOneClosesSessionOnce(): Unit {
+        let ds = RMockCountDS()
+        let r = Refine(ds, SQLiteDialect(), 0)
+        let q = Query<Int64>()
+        q.select([Expr.Column("id")])
+        q.from("t")
+        q.setMapper({ result: QueryResult, cm: HashMap<String, Int64> => 0 })
+        let result = r.one(q)
+        @Expect(result.isNone(), true)
+        @Expect(ds.created.size, 1)
+        if (ds.created.size > 0) {
+            let c = ds.created.get(0).getOrThrow()
+            @Expect(c.closeCount, 1)
+        }
+        r.close()
+    }
+
+    // I9: all() 异常路径，session 仍被 finally 关闭，且只关闭一次。
+    @TestCase
+    public func testAllClosesSessionOnException(): Unit {
+        let ds = RMockThrowingDS()
+        let r = Refine(ds, SQLiteDialect(), 0)
+        let q = Query<Int64>()
+        q.select([Expr.Column("id")])
+        q.from("t")
+        q.setMapper({ result: QueryResult, cm: HashMap<String, Int64> => 0 })
+        try {
+            r.all(q)
+            @Fail("expected exception")
+        } catch (_: Exception) {
+            @Expect(true, true)
+        }
+        @Expect(ds.created.size, 1)
+        if (ds.created.size > 0) {
+            let c = ds.created.get(0).getOrThrow()
+            @Expect(c.closeCount, 1)
+        }
+        r.close()
+    }
+
+    // I9: one() 异常路径，session 仍被 finally 关闭，且只关闭一次。
+    @TestCase
+    public func testOneClosesSessionOnException(): Unit {
+        let ds = RMockThrowingDS()
+        let r = Refine(ds, SQLiteDialect(), 0)
+        let q = Query<Int64>()
+        q.select([Expr.Column("id")])
+        q.from("t")
+        q.setMapper({ result: QueryResult, cm: HashMap<String, Int64> => 0 })
+        try {
+            r.one(q)
+            @Fail("expected exception")
+        } catch (_: Exception) {
+            @Expect(true, true)
+        }
+        @Expect(ds.created.size, 1)
+        if (ds.created.size > 0) {
+            let c = ds.created.get(0).getOrThrow()
+            @Expect(c.closeCount, 1)
+        }
+        r.close()
     }
 }

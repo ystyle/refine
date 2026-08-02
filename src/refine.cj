@@ -110,22 +110,26 @@ public class Refine {
         None
     }
 
+    // I9: 在 Query 副本上执行，绝不修改调用方持有的 Query（queryDialect/columnOffset/executor
+    // 都被 using() 写进副本）；session 生命周期全部收敛在 try/finally：
+    // 成功路径由 Query.closeExecutor 关闭（Session.close 幂等，finally 的 close 是 no-op），
+    // 异常路径由 finally 兜底关闭，任何情况下底层连接恰好关闭一次。
     public func all<T>(query: Query<T>): Array<T> {
         let s = session()
-        query.queryDialect = dialect
-        query.columnOffset = paramOffset
-        let r = query.using(s).all()
-        s.close()
-        r
+        try {
+            return query.copy().using(s).all()
+        } finally {
+            s.close()
+        }
     }
 
     public func one<T>(query: Query<T>): Option<T> {
         let s = session()
-        query.queryDialect = dialect
-        query.columnOffset = paramOffset
-        let r = query.using(s).one()
-        s.close()
-        r
+        try {
+            return query.copy().using(s).one()
+        } finally {
+            s.close()
+        }
     }
 
     public func migrator(): Migrator {

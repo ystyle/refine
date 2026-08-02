@@ -48,6 +48,31 @@ public class Query<T> {
         this.alias = ""
     }
 
+    // I9: 拷贝当前 Query 的全部状态，供 Refine.all/one 在副本上执行 using()，
+    // 保证调用方持有的 Query 不被执行上下文（queryDialect/columnOffset/executor）污染。
+    // clauses/included 逐项拷贝：Statement 的 clauses 是可变 ArrayList，
+    // 执行路径（processIncluded 等）会替换/追加 clause，必须独立成副本；
+    // clause 内部（Expr 数组）在现有代码中不会被原地修改，直接共享即可。
+    public func copy(): Query<T> {
+        let q = Query<T>()
+        for (clause in stmt.clauses) {
+            q.stmt.addClause(clause)
+        }
+        for (inc in included) {
+            q.included.add(inc)
+        }
+        q.alias = alias
+        q.executor = executor
+        q.queryDialect = queryDialect
+        q.mapper = mapper
+        q.db = db
+        q.columnOffset = columnOffset
+        q.typeName = typeName
+        q.ref = ref
+        q.keyExtractor = keyExtractor
+        q
+    }
+
     public func dialect(d: Dialect): Query<T> {
         this.queryDialect = Some(d)
         this
