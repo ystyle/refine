@@ -24,6 +24,32 @@ public class DialectTest {
         @Expect(dialect.quoteIdentifier("users"), "\"users\"")
         @Expect(dialect.quoteIdentifier("u.id"), "\"u.id\"")
         @Expect(dialect.quoteIdentifier("count"), "\"count\"")
+        // 回归（C9）：标识符内嵌引号必须转义（" → ""），否则可逃逸标识符边界构造任意 SQL
+        @Expect(dialect.quoteIdentifier("foo\"bar"), "\"foo\"\"bar\"")
+        @Expect(dialect.quoteIdentifier("foo\"\"bar"), "\"foo\"\"\"\"bar\"")
+    }
+
+    // 回归（C9）：from(table) 表名来自 API 参数，内嵌引号不得逃逸出标识符边界（封闭 SQL 注入通道）
+    @TestCase
+    public func testRenderEscapesInjectedTable(): Unit {
+        let dialect = SQLiteDialect()
+        let stmt = Statement()
+        stmt.addClause(SelectClause([Column("id")]))
+        stmt.addClause(FromClause("users\"; DROP TABLE users; --"))
+        let (sql, params) = dialect.render(stmt)
+        @Expect(sql, "SELECT \"id\" FROM \"users\"\"; DROP TABLE users; --\"")
+        @Expect(params.size, 0)
+    }
+
+    // 回归（C9）：updateWhere(setCols) 列名来自 API 参数，内嵌引号不得逃逸（封闭 SQL 注入通道）
+    @TestCase
+    public func testRenderEscapesInjectedSetCol(): Unit {
+        let dialect = SQLiteDialect()
+        let stmt = Statement()
+        stmt.addClause(UpdateClause("users", ["name\" = 'admin' OR 1=1; --"], ["bob"]))
+        let (sql, params) = dialect.render(stmt)
+        @Expect(sql, "UPDATE \"users\" SET \"name\"\" = 'admin' OR 1=1; --\" = ?")
+        @Expect(params.size, 1)
     }
 
     @TestCase

@@ -9,7 +9,7 @@ public class PostgreSQLDialect <: Dialect {
     public func name(): String { "postgresql" }
 
     public func quoteIdentifier(name: String): String {
-        "\"" + name.toAsciiLower() + "\""
+        "\"" + name.toAsciiLower().replace("\"", "\"\"") + "\""
     }
 
     public func render(stmt: Statement): (String, Array<Any>) {

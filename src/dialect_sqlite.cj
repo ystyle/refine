@@ -8,7 +8,7 @@ public class SQLiteDialect <: Dialect {
     public func name(): String { "sqlite" }
 
     public func quoteIdentifier(name: String): String {
-        "\"" + name + "\""
+        "\"" + name.replace("\"", "\"\"") + "\""
     }
 
     public func render(stmt: Statement): (String, Array<Any>) {

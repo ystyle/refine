@@ -8,7 +8,7 @@ public class MySQLDialect <: Dialect {
     public func name(): String { "mysql" }
 
     public func quoteIdentifier(name: String): String {
-        "`" + name + "`"
+        "`" + name.replace("`", "``") + "`"
     }
 
     public func render(stmt: Statement): (String, Array<Any>) {
