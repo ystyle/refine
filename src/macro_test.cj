@@ -964,22 +964,22 @@ public class MacroExistingTest {
     }
 
     @TestCase
-    public func testCRUDMethods(): Unit {
-        let post = Post()
-        Post.save(post)
-        Post.update(post)
-        Post.delete(post)
-    }
-
-    @TestCase
     public func testHookIntegration(): Unit {
         clearHooks()
+        let conn = CaptureConnection()
+        let rf = Refine(RMockDS(), SQLiteDialect(), 0)
+        let tx = Tx(conn, rf, 0)
+
         let flag = HookFlag()
-        registerHook("Post", HookKind.BeforeCreate) { scope: Scope<Post> =>
+        rf.hook<Post>("Post", HookKind.TxBeforeCreate) { scope: Scope<Post> =>
             flag.called = true
         }
+
         let p2 = Post()
-        Post.save(p2)
+        p2.title = "Hook Integration"
+        p2.content = "Triggered via real persistence path"
+        tx.save(p2)
+
         @Expect(flag.called, true)
     }
 

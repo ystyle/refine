@@ -123,13 +123,6 @@ public macro Refine(input: Tokens): Tokens {
     )
     classDecl.body.decls.add(FuncDecl(colTokens))
 
-    let saveTokens = buildSaveMethod(className)
-    classDecl.body.decls.add(FuncDecl(saveTokens))
-    let updateTokens = buildUpdateMethod(className)
-    classDecl.body.decls.add(FuncDecl(updateTokens))
-    let deleteTokens = buildDeleteMethod(className)
-    classDecl.body.decls.add(FuncDecl(deleteTokens))
-
     let findAllTokens = buildFindAllMethod(className)
     classDecl.body.decls.add(FuncDecl(findAllTokens))
     let findOneTokens = buildFindOneMethod(className)

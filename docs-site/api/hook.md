@@ -14,7 +14,7 @@ enum HookKind {
     | TxBeforeDelete   // Tx.delete() 前
     | TxAfterDelete    // Tx.delete() 后
 
-    // 事务外钩子 —— Entity.save/update/delete 中触发，scope.db = None
+    // 事务外钩子 —— 原由已移除的静态 Entity.save/update/delete 触发，现已不再触发（C3 修复）
     | BeforeCreate
     | AfterCreate
     | BeforeUpdate
@@ -63,13 +63,11 @@ rf.hook<User>("User", HookKind.TxBeforeCreate) { scope: Scope<User> =>
 }
 ```
 
-全局级别：
+全局级别（`AfterFind` 等查询后钩子可用；写钩子请使用实例级 `rf.hook`）：
 
 ```cangjie
-registerHook<User>("User", HookKind.BeforeCreate) { scope =>
-    if (scope.entity.name == "") {
-        scope.abort(Exception("name required"))
-    }
+registerHook<User>("User", HookKind.AfterFind) { scope =>
+    scope.entity.password = ""
 }
 ```
 

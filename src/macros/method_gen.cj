@@ -101,48 +101,6 @@ func buildRelClass(className: String, rels: ArrayList<RelInfo>): Tokens {
     quote(public class $(relClassName) { $(body) })
 }
 
-func buildSaveMethod(className: String): Tokens {
-    let cn = Token(TokenKind.IDENTIFIER, className)
-    let nameLit = Token(TokenKind.STRING_LITERAL, className)
-    quote(
-        public static func save(entity: $(cn)): Unit {
-            let scope = Scope<$(cn)>(entity)
-            executeHooks($(nameLit), HookKind.BeforeCreate, scope)
-            if (scope.aborted) { throw scope.error.getOrThrow() }
-            let afterScope = Scope<$(cn)>(entity)
-            executeHooks($(nameLit), HookKind.AfterCreate, afterScope)
-        }
-    )
-}
-
-func buildUpdateMethod(className: String): Tokens {
-    let cn = Token(TokenKind.IDENTIFIER, className)
-    let nameLit = Token(TokenKind.STRING_LITERAL, className)
-    quote(
-        public static func update(entity: $(cn)): Unit {
-            let scope = Scope<$(cn)>(entity)
-            executeHooks($(nameLit), HookKind.BeforeUpdate, scope)
-            if (scope.aborted) { throw scope.error.getOrThrow() }
-            let afterScope = Scope<$(cn)>(entity)
-            executeHooks($(nameLit), HookKind.AfterUpdate, afterScope)
-        }
-    )
-}
-
-func buildDeleteMethod(className: String): Tokens {
-    let cn = Token(TokenKind.IDENTIFIER, className)
-    let nameLit = Token(TokenKind.STRING_LITERAL, className)
-    quote(
-        public static func delete(entity: $(cn)): Unit {
-            let scope = Scope<$(cn)>(entity)
-            executeHooks($(nameLit), HookKind.BeforeDelete, scope)
-            if (scope.aborted) { throw scope.error.getOrThrow() }
-            let afterScope = Scope<$(cn)>(entity)
-            executeHooks($(nameLit), HookKind.AfterDelete, afterScope)
-        }
-    )
-}
-
 func buildRowMapper(className: String, cd: ClassDecl, rels: ArrayList<RelInfo>, internalNames: ArrayList<String>): Tokens {
     let cn = Token(TokenKind.IDENTIFIER, className)
     let funcName = Token(TokenKind.IDENTIFIER, className + "RowMapper")

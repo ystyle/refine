@@ -11,7 +11,7 @@ enum HookKind {
     | TxBeforeUpdate | TxAfterUpdate
     | TxBeforeDelete | TxAfterDelete
 
-    // 事务外钩子 —— Entity.save/update/delete 中触发，scope.db = None
+    // 事务外钩子 —— 原由已移除的静态 Entity.save/update/delete 触发，现已不再触发（C3 修复）
     | BeforeCreate | AfterCreate
     | BeforeUpdate | AfterUpdate
     | BeforeDelete | AfterDelete
@@ -24,14 +24,16 @@ enum HookKind {
 }
 ```
 
-## 分类对比
+> **C3 变更**：静态 `Entity.save/update/delete` 因不落库已移除，**请统一使用 `Tx.save/update/delete`**。事务内钩子是唯一会被真实持久化操作触发的写钩子。
 
-| | 事务内钩子 | 事务外钩子 |
-|---|---|---|
-| 触发方法 | `Tx.save/update/delete` | `Entity.save/update/delete` |
-| `scope.db` | `Some(tx)` — 可访问当前事务 | `None` |
-| abort 影响 | 回滚整个事务 | 仅阻止本次操作 |
-| 典型用途 | 关联创建、唯一性校验、审计日志 | 格式校验、缓存清理、事件通知 |
+## 事务内钩子
+
+| | 事务内钩子 |
+|---|---|
+| 触发方法 | `Tx.save/update/delete` |
+| `scope.db` | `Some(tx)` — 可访问当前事务 |
+| abort 影响 | 回滚整个事务 |
+| 典型用途 | 关联创建、唯一性校验、审计日志 |
 
 ## Scope\<T\>
 
@@ -61,8 +63,8 @@ rf.hook<Order>("Order", HookKind.TxBeforeCreate) { scope: Scope<Order> =>
         ["Order", "create"])
 }
 
-// 事务外钩子：格式校验
-rf.hook<Order>("Order", HookKind.BeforeCreate) { scope: Scope<Order> =>
+// 格式校验（事务内钩子同样适用）
+rf.hook<Order>("Order", HookKind.TxBeforeCreate) { scope: Scope<Order> =>
     if (scope.entity.total < 0) {
         scope.abort(Exception("negative total"))
     }
