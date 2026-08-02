@@ -184,6 +184,7 @@ public class Query<T> {
                 }
                 entities = list.toArray()
             }
+            // 批量装配在 AfterFind hook 之后执行（同 all()：hook 读关联字段为未装配状态）。
             assembleRefTo(exec, dialect, entities)
             Page(entities, total, page, size)
         } finally {
@@ -340,7 +341,7 @@ public class Query<T> {
     // 批量 SQL 采用手写占位符（与 relation_gen.cj 一致）：IN 列表不是 Expr 模型的一部分
     // （Expr.Value 数组渲染为单个参数，无法展开为 ?,?,...），且在 scope 内不允许改动
     // 三方言 renderExpr 为 IN 列表新增变体，故 SELECT/FROM 走 Statement 机器，
-    // WHERE 的 IN 部分以 Raw + 末尾追加参数完成。
+    // WHERE 的 IN 部分由 buildInClause 手写占位符生成。
     private func assembleRefTo(exec: ExecutionContext, dialect: Dialect, entities: Array<T>): Unit {
         if (included.size == 0 || entities.size == 0) { return }
 
@@ -384,7 +385,9 @@ public class Query<T> {
             }
             if (ids.size == 0) { continue }
 
-            // 2. 字段并集：同表多关系合并时取所有选中列
+            // 2. 字段并集：同表多关系合并时取所有选中列。取舍：合并查询按「并集」SELECT，
+            //    共享 identity-map 实体携带所有选中关系列的值——某关系只声明了子集列，
+            //    但其目标实体仍带并集中其它关系选中的列（非该关系声明的子集），属预期行为。
             var fieldNames = ArrayList<String>()
             var seenField = HashMap<String, Bool>()
             for (rel in rels) {
@@ -402,18 +405,16 @@ public class Query<T> {
                 if (name != "id") { cols.add(Expr.Column(name)) }
             }
 
-            // 3. 批量 SQL：SELECT <cols> FROM <table> WHERE "id" IN (?, ...)
+            // 3. 批量 SQL：SELECT <cols> FROM <table> WHERE <col> IN (?, ...)
             let bs = Statement()
             bs.addClause(Clause.SelectClause(cols.toArray()))
             bs.addClause(Clause.FromClause(targetTable))
-            var placeholders = ArrayList<String>()
-            for (_ in 0..ids.size) { placeholders.add("?") }
-            let inSQL = dialect.quoteIdentifier("id") + " IN (" + String.join(placeholders.toArray(), delimiter: ", ") + ")"
+            let (inSQL, inParams) = buildInClause(dialect, "id", ids.toArray())
             bs.addClause(Clause.WhereClause([Expr.Raw(inSQL)]))
             let (sql, baseParams) = dialect.render(bs)
             var params = ArrayList<Any>()
             for (p in baseParams) { params.add(p) }
-            for (v in ids) { params.add(v) }
+            for (v in inParams) { params.add(v) }
             Logger.logSQL(sql, params.toArray())
             let result = exec.query(sql, params.toArray())
 
@@ -447,6 +448,16 @@ public class Query<T> {
                 }
             }
         }
+    }
+
+    // 构建 `col IN (?, ?...)` 子句。契约：返回的 (fragment, params) 必须一体追加——
+    // 本 WHERE 子句内不能再有其它 Value 占位符（否则 render 收集的参数顺序会与占位符错位）。
+    // 批量装配目前只有 IN 列表一个参数源，此契约在 Task 4/5 复用批量装配时同样成立。
+    private func buildInClause(dialect: Dialect, col: String, ids: Array<Any>): (String, Array<Any>) {
+        var placeholders = ArrayList<String>()
+        for (_ in 0..ids.size) { placeholders.add("?") }
+        let sql = dialect.quoteIdentifier(col) + " IN (" + String.join(placeholders.toArray(), delimiter: ", ") + ")"
+        (sql, ids)
     }
 
     private func isEmptyFk(v: Any): Bool {
@@ -511,6 +522,9 @@ public class Query<T> {
                 }
                 entities = list.toArray()
             }
+            // 批量装配在 AfterFind hook 之后执行：主映射循环内先跑 runAfterFindHooks，
+            // hook 内读取关联字段（如 entity.author）为未装配状态（None）——批量架构的固有取舍，
+            // 旧 LEFT JOIN 方案在 hook 前已完成 ref_to 装配。
             assembleRefTo(exec, dialect, entities)
             entities
         } finally {
@@ -556,6 +570,7 @@ public class Query<T> {
                     res = Some(entity)
                 }
             }
+            // 批量装配在 AfterFind hook 之后执行（同 all()：hook 读关联字段为未装配状态）。
             match (res) {
                 case Some(e) => assembleRefTo(exec, dialect, [e])
                 case None => ()

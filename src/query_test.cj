@@ -342,14 +342,6 @@ public class QueryTest {
     }
 
     @TestCase
-    public func testIsNullId(): Unit {
-        // I7: isNullId 语义——目标 id 列为 NULL 时不下挂载（getOrNull<String> → None）。
-        // isNullId 是 Query<T> 私有方法，通过 include 装配路径做真实行为测试：
-        // 见 testCollectionIncludeSkipsNullChildId / testRefToIncludeSkipsNullTargetId。
-        @Expect(true, true)
-    }
-
-    @TestCase
     public func testChainAllMethods(): Unit {
         let q = Query<Int64>()
         q.select([Expr.Column("id")])
@@ -1161,6 +1153,25 @@ public class C4PageCollectionTest {
         @Expect(conn.stmt.capturedSqlHistory.size, 1)
     }
 
+    // Task 3 批量协议：主查询返回空（无实体）→ assembleRefTo 的 entities.size==0
+    // 早退分支生效，不触发批量查询，只发主查询。
+    @TestCase
+    public func testRefToIncludeEmptyEntitiesSkipsBatch(): Unit {
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        let mainCols: Array<SqlColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("title", false),
+            MapperMockColumnInfo("user_id", false),
+            MapperMockColumnInfo("post_id", false),
+        ]
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(mainCols, []))
+        let q = PostWithRel.query().include(PostWithRelRel.author).using(tx)
+        let entities = q.all()
+        @Expect(entities.size, 0)
+        @Expect(conn.stmt.capturedSqlHistory.size, 1)
+    }
+
     // Task 3 批量协议：两个 ref_to 指向同一目标表 "user"（author 用 user_id、editor 用 post_id）
     // → 合并为单条批量查询 `WHERE "id" IN (?, ?)`，两关系共享同一 id→实体 映射分别回填。
     @TestCase
@@ -1208,6 +1219,60 @@ public class C4PageCollectionTest {
         @Expect(entities[0].author.getOrThrow().id, 10)
         @Expect(captured.size, 1)
         @Expect(captured[0], "20")
+    }
+
+    // Task 3 批量协议：同表两个 ref_to 字段子集不同 → 合并查询按「并集」SELECT，
+    // 共享 identity-map 实体携带并集列值（editor 只声明 id/email，其目标仍带 name）。
+    @TestCase
+    public func testRefToIncludeMergedFieldUnion(): Unit {
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        let mainCols: Array<SqlColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("title", false),
+            MapperMockColumnInfo("user_id", false),
+            MapperMockColumnInfo("post_id", false),
+        ]
+        let mainRows = [
+            Array<Any>(4, {i => if (i == 0) { 1 } else if (i == 1) { "p1" } else if (i == 2) { 10 } else { 20 }}),
+        ]
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(mainCols, mainRows))
+        let userCols: Array<SqlColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("name", false),
+            MapperMockColumnInfo("email", false),
+        ]
+        let userRows = [
+            Array<Any>(3, {i => if (i == 0) { 10 } else if (i == 1) { "Alice" } else { "a@x.com" }}),
+            Array<Any>(3, {i => if (i == 0) { 20 } else if (i == 1) { "Eve" } else { "e@x.com" }}),
+        ]
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(userCols, userRows))
+        let captured = ArrayList<String>()
+        // author 子集 [id, name]，editor 子集 [id, email]
+        let authorSetter: (Any, Any) -> Unit = { e: Any, t: Any =>
+            let u = (t as User).getOrThrow()
+            captured.add("author:" + u.name)
+        }
+        let editorSetter: (Any, Any) -> Unit = { e: Any, t: Any =>
+            let u = (t as User).getOrThrow()
+            captured.add("editor:" + u.email)
+        }
+        let author = RefTo<User>("author", Col<Any>("user_id"),
+            [Col<Any>("id"), Col<Any>("name")], "user",
+            UserRowMapper, authorSetter, { e: Any => (e as PostWithRel).getOrThrow().user_id })
+        let editor = RefTo<User>("editor", Col<Any>("post_id"),
+            [Col<Any>("id"), Col<Any>("email")], "user",
+            UserRowMapper, editorSetter, { e: Any => (e as PostWithRel).getOrThrow().post_id })
+        let q = PostWithRel.query().include(author).include(editor).using(tx)
+        let entities = q.all()
+        @Expect(conn.stmt.capturedSqlHistory.size, 2)
+        // 合并查询 SELECT 字段并集：强制 id + author 的 name + editor 的 email
+        @Expect(conn.stmt.capturedSqlHistory[1].contains("SELECT \"id\", \"name\", \"email\" FROM \"user\""), true)
+        @Expect(entities.size, 1)
+        // 回填顺序 = included 顺序：author 先、editor 后
+        @Expect(captured.size, 2)
+        @Expect(captured[0], "author:Alice")
+        @Expect(captured[1], "editor:e@x.com")
     }
 
     // Task 4 前保持惰性中间态：has_one 目标侧 fk 批量装配未实现，主查询无 JOIN 列
