@@ -49,7 +49,7 @@ public open class Relation<TTarget> <: IRelation {
     var condition: Option<Expr>
     var targetMapper: (QueryResult, HashMap<String, Int64>) -> Any
     var fieldSetter: (Any, Any) -> Unit
-    var nested = ArrayList<IRelation>()
+    private var nested = ArrayList<IRelation>()
 
     public init(name: String, targetTable: String, kind: RelationKind,
                 foreignKey: String, via: Option<String>, fields: Array<Col<Any>>,
