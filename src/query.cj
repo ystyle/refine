@@ -760,14 +760,15 @@ public class Query<T> {
 
     // 批量装配调度：统一递归引擎入口（Task 6 起 ref_to / has_one / has_many / ref_many
     // 与嵌套 include 共用同一条递归路径，见 assembleRecursive）。顶层 rels = included，
-    // depth = 0；rawIds 与 entities 按索引对齐，仅在 needsCollectionAssembly() 时有意义。
+    // depth = 0，sourceTable = 顶层主查询 FROM 表（getSourceTable）；rawIds 与 entities
+    // 按索引对齐，仅在 needsCollectionAssembly() 时有意义。
     private func assembleIncludes(
         exec: ExecutionContext,
         dialect: Dialect,
         entities: Array<T>,
         rawIds: Array<Any>
     ): Unit {
-        assembleRecursive(exec, dialect, entities, included.toArray(), rawIds, 0)
+        assembleRecursive(exec, dialect, entities, included.toArray(), rawIds, getSourceTable(), 0)
     }
 
     // Task 6: 嵌套 include 统一装配引擎（递归）。对 entities（E 泛型：顶层为 Array<T>
@@ -776,9 +777,12 @@ public class Query<T> {
     //   ref_to 组 → 读实体 fk（getForeignKeyExtractor）→ `WHERE 目标."id" IN (fk 集合)`
     //   has_one/has_many 组 → 读实体原始主键（mainIds，与 entities 按索引对齐）
     //     → `WHERE 目标."fk" IN (主键集合)`
-    //   ref_many 组 → junction 中间表批量查询
+    //   ref_many 组 → junction 中间表批量查询（源列 = <sourceTable>_id）
     // 三条协议各返回 (relation, 该关系装配到的目标实体数组)；对每条声明了嵌套的关系，
     // 用父关系 getTargetIdExtractor 读目标实体主键作为下一层 mainIds，递归下一层。
+    // sourceTable = 当前层级 entities 所在的表：顶层为主查询 FROM 表（getSourceTable），
+    // 嵌套层为父关系的 targetTable（ref_many 的 junction 源列必须跟随当前层级，否则嵌套
+    // ref_many 会错误使用顶层表名生成 `<顶层表>_id`，PG 上报 column does not exist）。
     // 深度超过 MaxNestedDepth 抛 QueryException（含 include 环时终止递归）。
     private func assembleRecursive<E>(
         exec: ExecutionContext,
@@ -786,6 +790,7 @@ public class Query<T> {
         entities: Array<E>,
         rels: Array<IRelation>,
         mainIds: Array<Any>,
+        sourceTable: String,
         depth: Int64
     ): Unit {
         if (depth > MaxNestedDepth) {
@@ -814,16 +819,19 @@ public class Query<T> {
         if (collRels.size > 0 || refManyRels.size > 0) {
             let collPairs = assembleCollections(exec, dialect, entities, mainIds, collRels.toArray())
             for (p in collPairs) { pairs.add(p) }
-            let refManyPairs = assembleRefMany(exec, dialect, entities, mainIds, refManyRels.toArray())
+            let refManyPairs = assembleRefMany(exec, dialect, entities, mainIds, refManyRels.toArray(), sourceTable)
             for (p in refManyPairs) { pairs.add(p) }
         }
 
-        // 3. 递归装配各关系的嵌套 include（目标实体为空时下一层早退，不产生额外查询）
+        // 3. 递归装配各关系的嵌套 include（目标实体为空时下一层早退，不产生额外查询）。
+        //    下一层 sourceTable = 父关系的 targetTable（当前层实体的表），供嵌套 ref_many
+        //    推导 junction 源列 `<当前层表>_id`。
         for ((rel, targets) in pairs) {
             let nested = rel.getNested()
             if (nested.size == 0) { continue }
             let targetIds = collectTargetIds(rel, targets)
-            assembleRecursive(exec, dialect, targets, nested, targetIds, depth + 1)
+            let (_, _, nextSourceTable, _, _, _) = rel.resolve()
+            assembleRecursive(exec, dialect, targets, nested, targetIds, nextSourceTable, depth + 1)
         }
     }
 
@@ -1018,7 +1026,8 @@ public class Query<T> {
     // Task 6 扩展：返回各关系实际装配到的目标实体数组（逐目标 add 时收集），
     // 供嵌套 include 递归装配下一层关联。
     // 中间表列名与 buildJunctionSchema / relation_gen.cj 一致：
-    //   源列 = <源表名>_id（源表名取主查询 FROM，getSourceTable），
+    //   源列 = <源表名>_id（sourceTable 由 assembleRecursive 传入：顶层为主查询 FROM 表，
+    //     嵌套层为当前层级实体所在表 = 父关系 targetTable，见 assembleRecursive 注释），
     //   目标列 = lowerTableName(目标类) + "_id"（由宏层随 RefMany 构造传入，
     //            @Table 覆盖目标表名时目标列名仍基于类名，见 getJunctionTargetCol）。
     // SQL 手写（quoteIdentifier + 占位符，对齐 relation_gen.cj 的 ref_many 单行查询风格）：
@@ -1029,14 +1038,14 @@ public class Query<T> {
         dialect: Dialect,
         entities: Array<E>,
         rawIds: Array<Any>,
-        rels: Array<IRelation>
+        rels: Array<IRelation>,
+        sourceTable: String
     ): ArrayList<(IRelation, Array<Any>)> {
         let result = ArrayList<(IRelation, Array<Any>)>()
         if (rels.size == 0 || entities.size == 0) { return result }
         if (rawIds.size != entities.size) {
             throw QueryException("internal error: rawId collection size mismatch in assembleRefMany")
         }
-        let sourceTable = getSourceTable()
         // 手写 Query 未设 FROM 却 include 了 ref_many 是用户错误：junction 源列
         // `<源表>_id` 无从推导，静默跳过会留下未装配的空关联列表，故 fail-fast
         // （风格同 requireCollectionIdSupport）。

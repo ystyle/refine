@@ -268,6 +268,17 @@ public class NestedUser {
 
     @Rel[has_many, NestedComment, user_id]
     var comments: ArrayList<NestedComment> = ArrayList<NestedComment>()
+
+    // Task 6 嵌套 ref_many 回归：author（ref_to NestedUser）装配出的 User 实体上声明
+    // ref_many tags。junction 源列必须是当前层级表（nestedUser_id）而非顶层表（nestedPost_id）。
+    @Ref[NestedTag, via: nestedUser_tags]
+    var tags: ArrayList<NestedTag> = ArrayList<NestedTag>()
+}
+
+@Refine
+public class NestedTag {
+    var id: Int64 = 0
+    var name: String = ""
 }
 
 @Refine

@@ -2344,6 +2344,49 @@ public class NestedIncludeTest {
         @Expect(entities[0].author.getOrThrow().team.getOrThrow().name, "eng")
     }
 
+    // 嵌套 ref_many：Post.author 装配后递归装配 author 的 tags（ref_many）。junction 源列
+    // 必须是「当前层级」表（author 实体的表 nestedUser_id），而不是顶层主查询表（nestedPost_id）。
+    // 回归：assembleRefMany 曾用 getSourceTable()（恒为顶层 FROM）推导源列，嵌套层会生成
+    // "nestedUser_tags"."nestedPost_id"（PG 上 column does not exist）。
+    // mock 同时提供 nestedUser_id 与 nestedPost_id 两列：修复前装配走错误源列也能返回行，
+    // 由 SQL 断言精确暴露源列错误（避免直接抛错掩盖问题）。
+    @TestCase
+    public func testNestedRefToThenRefMany(): Unit {
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        let mainCols: Array<SqlColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("title", false),
+            MapperMockColumnInfo("user_id", false),
+        ]
+        let mainRow = Array<Any>(3, {i => if (i == 0) { 1 } else if (i == 1) { "p1" } else { 99 }})
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(mainCols, [mainRow]))
+        let userCols: Array<SqlColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("name", false),
+        ]
+        let userRow = Array<Any>(2, {i => if (i == 0) { 99 } else { "Alice" }})
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(userCols, [userRow]))
+        let tagCols: Array<SqlColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("name", false),
+            MapperMockColumnInfo("nestedUser_id", false),
+            MapperMockColumnInfo("nestedPost_id", false),
+        ]
+        let tagRow = Array<Any>(4, {i => if (i == 0) { 10 } else if (i == 1) { "t1" } else { 99 }})
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(tagCols, [tagRow]))
+        let q = NestedPost.query()
+            .include(NestedPostRel.author.withInclude(NestedUserRel.tags))
+            .using(tx)
+        let entities = q.all()
+        @Expect(conn.stmt.capturedSqlHistory.size, 3)
+        @Expect(conn.stmt.capturedSqlHistory[2].contains("FROM \"nestedUser_tags\""), true)
+        @Expect(conn.stmt.capturedSqlHistory[2].contains("\"nestedUser_tags\".\"nestedUser_id\" IN (?)"), true)
+        @Expect(entities.size, 1)
+        @Expect(entities[0].author.getOrThrow().tags.size, 1)
+        @Expect(entities[0].author.getOrThrow().tags[0].id, 10)
+    }
+
     // 嵌套 include 环（自定义 IRelation getNested 返回自身）：深度守卫必须终止递归并抛错。
     @TestCase
     public func testNestedCycleDepthGuard(): Unit {

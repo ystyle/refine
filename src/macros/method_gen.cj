@@ -54,8 +54,9 @@ func buildRelClass(className: String, rels: ArrayList<RelInfo>): Tokens {
         // （Array<Any>，如 Post.author 装配出的 User）作为下一层的「主实体」，其 id 是
         // 下一层 has_many/ref_many 批量查询的 IN 主键集合。宏层已知目标类名（r.target），
         // 生成 `{ target: Any => (target as 目标类).getOrThrow().id }` 闭包读目标实体主键。
-        // 限制：目标类必须有名为 `id` 的字段（@Id 自定义主键目标类暂不支持，同 rawIdExtractor
-        // 范围）；复合主键目标类无 `id` 字段会编译失败，属已知限制。
+        // 限制：目标类必须有名为 `id` 的字段（@Id 自定义主键名目标类不支持——rawIdExtractor
+        // 按 pkFields 的真实列名生成，而此处宏层无目标类内省信息，只能硬编码读 `id`）；
+        // 复合主键目标类无 `id` 字段会编译失败，属已知限制。
         // id 字段用 $(targetIdFieldIdent) 拼接而非裸写 `t.id`：与 fkExtractor 的字段访问
         // 风格一致（裸写 `t.id` 在 quote 渲染下会丢失成员访问语义，运行时 cast 返回 None）。
         body = body + quote(

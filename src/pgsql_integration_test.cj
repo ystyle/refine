@@ -571,4 +571,55 @@ public class PostgreSQLIntegrationTest {
             case None => @Expect(true, true)
         }
     }
+
+    // ─── batch include Task 6：嵌套 ref_many junction 源列修正（真实 PG） ───────────
+    // Post.author（ref_to NestedUser）withInclude NestedUser.tags（ref_many）。junction 源列
+    // 必须是当前层级表 nestedUser_id（而非顶层 nestedPost_id）——修复前生成 "<顶层表>_id"
+    // 在 PG 报 column does not exist，此处用真实 PG 验证嵌套 ref_many 端到端装配成功。
+    @TestCase
+    public func testNestedIncludeRefToThenRefMany(): Unit {
+        match (tryPostgres()) {
+            case Some(rf) =>
+                rf.transaction { tx: Tx =>
+                    tx.execute("DROP TABLE IF EXISTS \"nestedUser_tags\"", [])
+                    tx.execute("DROP TABLE IF EXISTS \"nestedTag\"", [])
+                    tx.execute("DROP TABLE IF EXISTS \"nestedPost\"", [])
+                    tx.execute("DROP TABLE IF EXISTS \"nestedUser\"", [])
+                }
+                let m = rf.migrator()
+                m.autoMigrate([NestedPostSchema(), NestedUserSchema(), NestedTagSchema(), NestedUser_TagsJunctionSchema()])
+                rf.transaction { tx: Tx => tx.execute("INSERT INTO \"nestedUser\" (\"name\") VALUES (?)", ["Alice"]) }
+                let u = NestedUser.query().using(rf).filter(NestedUser.col().name == "Alice").one()
+                @Expect(u.isSome(), true)
+                let uid = u.getOrThrow().id
+                rf.transaction { tx: Tx =>
+                    tx.execute("INSERT INTO \"nestedTag\" (\"name\") VALUES (?)", ["t1"])
+                    tx.execute("INSERT INTO \"nestedPost\" (\"title\", \"user_id\") VALUES (?, ?)", ["p1", uid])
+                }
+                let tag = NestedTag.query().using(rf).filter(NestedTag.col().name == "t1").one()
+                @Expect(tag.isSome(), true)
+                let tid = tag.getOrThrow().id
+                rf.transaction { tx: Tx =>
+                    tx.execute("INSERT INTO \"nestedUser_tags\" (\"nestedUser_id\", \"nestedTag_id\") VALUES (?, ?)", [uid, tid])
+                }
+                let found = NestedPost.query()
+                    .include(NestedPostRel.author.withInclude(NestedUserRel.tags))
+                    .using(rf)
+                    .filter(NestedPost.col().title == "p1")
+                    .one()
+                @Expect(found.isSome(), true)
+                let post = found.getOrThrow()
+                match (post.author) {
+                    case Some(a) =>
+                        @Expect(a.id, uid)
+                        @Expect(a.name, "Alice")
+                        @Expect(a.tags.size, 1)
+                        @Expect(a.tags[0].id, tid)
+                        @Expect(a.tags[0].name, "t1")
+                    case None => @Expect(true, false)
+                }
+                rf.close()
+            case None => @Expect(true, true)
+        }
+    }
 }
