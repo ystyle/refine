@@ -321,13 +321,25 @@ public class Query<T> {
                     case _ => ()
                 }
             }
-            // qualify WHERE column refs with sourceTable to avoid ambiguity after JOIN
+            // qualify WHERE/ORDER BY/GROUP BY/HAVING column refs with sourceTable to avoid ambiguity after JOIN
             for (i in 0..stmt.clauses.size) {
                 match (stmt.clauses[i]) {
                     case Clause.WhereClause(predicates) =>
                         var qualified = ArrayList<Expr>()
                         for (p in predicates) { qualified.add(qualifyExpr(p, sourceTable, dialect)) }
                         stmt.clauses[i] = WhereClause(qualified.toArray())
+                    case Clause.OrderByClause(fields) =>
+                        var qualified = ArrayList<Expr>()
+                        for (f in fields) { qualified.add(qualifyExpr(f, sourceTable, dialect)) }
+                        stmt.clauses[i] = OrderByClause(qualified.toArray())
+                    case Clause.GroupByClause(fields) =>
+                        var qualified = ArrayList<Expr>()
+                        for (f in fields) { qualified.add(qualifyExpr(f, sourceTable, dialect)) }
+                        stmt.clauses[i] = GroupByClause(qualified.toArray())
+                    case Clause.HavingClause(predicates) =>
+                        var qualified = ArrayList<Expr>()
+                        for (p in predicates) { qualified.add(qualifyExpr(p, sourceTable, dialect)) }
+                        stmt.clauses[i] = HavingClause(qualified.toArray())
                     case _ => ()
                 }
             }
@@ -483,7 +495,25 @@ public class Query<T> {
     }
 
     public func exists(): Bool {
-        count() > 0
+        let exec = requireExecutor()
+        let dialect = getDialect()
+        let existsStmt = Statement()
+        existsStmt.addClause(SelectClause([Raw("1")]))
+        for (clause in stmt.clauses) {
+            match (clause) {
+                case FromClause(_) => existsStmt.addClause(clause)
+                case WhereClause(_) => existsStmt.addClause(clause)
+                case JoinClause(_, _, _) => existsStmt.addClause(clause)
+                case _ => ()
+            }
+        }
+        existsStmt.addClause(LimitClause(1))
+        let (sql, params) = dialect.render(existsStmt)
+        Logger.logSQL(sql, params)
+        let result = exec.query(sql, params)
+        let found = result.next()
+        closeExecutor(exec)
+        found
     }
 
     public func sum(col: Col<Int64>): Int64 { aggregateInt("SUM", col) }
@@ -588,6 +618,9 @@ public class Query<T> {
         mapper: (QueryResult, HashMap<String, Int64>) -> T
     ): Array<T> {
         var map = HashMap<String, T>()
+        // 单独维护插入序（首次出现该 id 时记录），保证返回顺序与 SQL 行序一致，
+        // 不依赖 HashMap 迭代序（文档不保证顺序稳定）。
+        var order = ArrayList<String>()
         var seen = HashMap<String, Bool>()
         let extractKey = this.keyExtractor.getOrThrow()
         while (result.next()) {
@@ -596,6 +629,7 @@ public class Query<T> {
                 let entity = mapper(result, columnMap)
                 runAfterFindHooks(entity)
                 map[id] = entity
+                order.add(id)
             }
             let entity = map.get(id).getOrThrow()
             for (inc in included) {
@@ -622,8 +656,8 @@ public class Query<T> {
             }
         }
         var entities = ArrayList<T>()
-        for ((_, entity) in map.toArray()) {
-            entities.add(entity)
+        for (id in order) {
+            entities.add(map.get(id).getOrThrow())
         }
         entities.toArray()
     }

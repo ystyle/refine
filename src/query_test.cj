@@ -309,6 +309,41 @@ public class QueryTest {
     }
 
     @TestCase
+    public func testExistsUsesSelectOneLimitOne(): Unit {
+        clearHooks()
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        conn.stmt.queryResult = RowQueryResult(1)
+        let q = Query<Int64>()
+            .select([Expr.Column("id")])
+            .from("t")
+            .filter(Expr.Binary(Expr.Column("a"), BinOp.Eq, Expr.Value(1)))
+            .using(tx)
+        let exists = q.exists()
+        @Expect(exists, true)
+        @Expect(conn.stmt.capturedSqlHistory.size >= 1, true)
+        let sql = conn.stmt.capturedSqlHistory[0]
+        // I13: exists() 必须用 SELECT 1 ... LIMIT 1，而不是全表 COUNT(*)
+        @Expect(sql.contains("SELECT 1"), true)
+        @Expect(sql.contains("LIMIT 1"), true)
+        @Expect(sql.contains("COUNT"), false)
+    }
+
+    @TestCase
+    public func testExistsFalseWhenNoRows(): Unit {
+        clearHooks()
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        conn.stmt.queryResult = MapperMockQueryResult([], [])
+        let q = Query<Int64>()
+            .select([Expr.Column("id")])
+            .from("t")
+            .using(tx)
+        let exists = q.exists()
+        @Expect(exists, false)
+    }
+
+    @TestCase
     public func testFrom(): Unit {
         let q = Query<Int64>()
         q.from("mytable")
@@ -634,6 +669,31 @@ public class QueryTest {
         @Expect(sql.contains("\"users\".\"id\""), true)
     }
 
+    @TestCase
+    public func testProcessIncludedQualifiesOrderByGroupByHaving(): Unit {
+        // I1: include 产生的 JOIN 后，ORDER BY / GROUP BY / HAVING 必须同样限定表名，
+        // 否则两侧表都有 "id" 时所有方言都会报 ambiguous column。
+        let q = Query<Int64>()
+        q.select([Expr.Column("id"), Expr.Column("dept")])
+        q.from("users")
+        q.filter(Expr.Binary(Expr.Column("status"), BinOp.Eq, Expr.Value("active")))
+        q.order([Expr.Ordered(Expr.Column("id"), "ASC")])
+        q.groupBy([Expr.Column("dept")])
+        q.having([Expr.Binary(Expr.Column("cnt"), BinOp.Gt, Expr.Value(5))])
+        let fk = Col<Any>("user_id")
+        let rel: IRelation = HasMany<Int64>("posts", "user_id", [Col<Any>("id")], "posts", dummyMapper, dummySetter)
+        q.include(rel)
+        let dialect = SQLiteDialect()
+        q.processIncluded(dialect)
+        let (sql, _) = dialect.render(q.stmt)
+        @Expect(sql.contains("ORDER BY \"users\".\"id\" ASC"), true)
+        @Expect(sql.contains("GROUP BY \"users\".\"dept\""), true)
+        @Expect(sql.contains("HAVING \"users\".\"cnt\" > ?"), true)
+        @Expect(sql.contains("ORDER BY \"id\""), false)
+        @Expect(sql.contains("GROUP BY \"dept\""), false)
+        @Expect(sql.contains("HAVING \"cnt\""), false)
+    }
+
     // ─── updateWhere / deleteWhere / forUpdate 渲染 ───
 
     @TestCase
@@ -832,5 +892,51 @@ public class C4PageCollectionTest {
         @Expect(pg.items[0].post.getOrThrow().title, "First")
         // page() 必须先 processIncluded：分页 SQL 必须带 RefTo 的 LEFT JOIN
         @Expect(conn.stmt.capturedSqlHistory[1].contains("LEFT JOIN"), true)
+    }
+}
+
+// ─── I12: aggregateWithCollections 必须保持行序（SQL 行序反映 ORDER BY） ──
+
+@Test
+public class C4CollectionIncludeOrderTest {
+
+    private func commentsRel(): IRelation {
+        HasMany<UuidComment>("comments", "post_id",
+            [Col<Any>("id"), Col<Any>("body")], "uuidComment",
+            UuidCommentRowMapper, UuidPostWithRelRel.commentsSetter)
+    }
+
+    @TestCase
+    public func testAllWithCollectionIncludePreservesRowOrder(): Unit {
+        clearHooks()
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        let cols: Array<SqlColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("title", false),
+            MapperMockColumnInfo("comments.id", false),
+            MapperMockColumnInfo("comments.body", false),
+        ]
+        // 行序刻意打乱 id 数值序：去重后返回顺序必须与行序一致（9, 3, 7, 11, 5），
+        // 即 SQL 行序（反映 ORDER BY），而不是依赖 HashMap 内部迭代序。
+        let rows = [
+            Array<Any>(4, {i => if (i == 0) { 9 } else if (i == 1) { "post9" } else if (i == 2) { "c1" } else { "first" }}),
+            Array<Any>(4, {i => if (i == 0) { 3 } else if (i == 1) { "post3" } else if (i == 2) { "c2" } else { "second" }}),
+            Array<Any>(4, {i => if (i == 0) { 7 } else if (i == 1) { "post7" } else if (i == 2) { "c3" } else { "third" }}),
+            Array<Any>(4, {i => if (i == 0) { 11 } else if (i == 1) { "post11" } else if (i == 2) { "c4" } else { "fourth" }}),
+            Array<Any>(4, {i => if (i == 0) { 5 } else if (i == 1) { "post5" } else if (i == 2) { "c5" } else { "fifth" }}),
+            Array<Any>(4, {i => if (i == 0) { 9 } else if (i == 1) { "post9" } else if (i == 2) { "c6" } else { "sixth" }}),
+        ]
+        conn.stmt.queryResult = MapperMockQueryResult(cols, rows)
+        let q = UuidPostWithRel.query().include(commentsRel(), [Col<Any>("id"), Col<Any>("body")]).using(tx)
+        let entities = q.all()
+        @Expect(entities.size, 5)
+        @Expect(entities[0].id, 9)
+        @Expect(entities[1].id, 3)
+        @Expect(entities[2].id, 7)
+        @Expect(entities[3].id, 11)
+        @Expect(entities[4].id, 5)
+        @Expect(entities[0].comments.size, 2)
+        @Expect(entities[1].comments.size, 1)
     }
 }
