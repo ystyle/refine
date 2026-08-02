@@ -906,8 +906,11 @@ public class Query<T> {
     //   3. 空集合跳过（不产生额外查询）；
     //   4. `SELECT 目标表."id", 目标表.<字段...>, 中间表."<源表>_id" FROM 中间表 JOIN 目标表
     //      ON 中间表."<目标类>_id" = 目标表."id" WHERE 中间表."<源表>_id" IN (?, ...)` 批量取
-    //      关联目标，目标列不带表限定（targetMapper 按列名读，中间表无同名列可裸读），
-    //      中间表源 id 列强制选中（分组键）；
+    //      关联目标，目标列不带表限定（targetMapper 按列名读，中间表 schema 只有两列无同名列可裸读），
+    //      中间表源 id 列强制选中（分组键）。反向同名情形：若目标实体恰好有名为
+    //      `<源表>_id` 的字段，SELECT 中该目标列先于中间表源 id 列出现，buildColumnMap 对同名
+    //      键「后写覆盖」（std HashMap.add 语义），分组键 srcCol 取到最后写入的中间表列索引、
+    //      仍正确，但该假设的目标字段会错读到中间表源 id 值（target 表出现 `<源表>_id` 字段极罕见）；
     //   5. 按中间表源 id 值分组建 HashMap<srcId, Array<TargetEntity>>；
     //   6. 回填：主实体按各自主键命中分组，逐个 add。孤儿行（中间表行指向已删目标）
     //      由 INNER JOIN 天然排除，不装配、不抛错。
@@ -929,9 +932,17 @@ public class Query<T> {
             throw QueryException("internal error: rawId collection size mismatch in assembleRefMany")
         }
         let sourceTable = getSourceTable()
-        if (sourceTable == "") { return }
+        // 手写 Query 未设 FROM 却 include 了 ref_many 是用户错误：junction 源列
+        // `<源表>_id` 无从推导，静默跳过会留下未装配的空关联列表，故 fail-fast
+        // （风格同 requireCollectionIdSupport）。
+        if (sourceTable == "") {
+            throw QueryException(
+                "ref_many include requires a source table. Call from() before executing the query."
+            )
+        }
 
-        // 1. 按 (via 中间表, 目标表) 分组
+        // 1. 按 (via 中间表, 目标表) 分组。分组键不含关系名/源表：若两个不同类 @Table
+        //    映射到同一表且声明同一 via（极罕见），会误合并为一条批量查询——视为已知限制。
         var groups = ArrayList<(String, String, ArrayList<IRelation>)>()
         for (inc in included) {
             let (kind, _, targetTable, _, via, _) = inc.resolve()

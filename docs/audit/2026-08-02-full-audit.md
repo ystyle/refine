@@ -231,8 +231,9 @@
 
 ### F1. String-pk ref_many 的 junction schema 硬编码 `StorageType.Integer`
 - **位置**：`schema_gen.cj:76-77`
-- **问题**：`buildJunctionSchema` 硬编码 `StorageType.Integer`。当 ref_many 目标主键为 String 时，DDL 类型不匹配（VARCHAR 列建表成 INTEGER）。
-- **修法**：需宏层获取目标主键类型（跨类内省），或退化为运行时约束 + 文档说明。
+- **问题**：`buildJunctionSchema` 把中间表**两列都**硬编码 `StorageType.Integer`，未跟随源/目标主键类型。当 ref_many 目标主键为 String 时 DDL 类型不匹配（VARCHAR 列建表成 INTEGER）。**由 Task 5 批量 include 暴露（2026-08-02）：源主键为 String 同样受影响**——`UuidKeyTagPost`（String-pk 源）fixture 的中间表源列 `uuidKeyTagPost_id` 也会建成 BIGINT。junction 的源列与目标列都应跟随各自主键类型，任一方向为 String-pk 即建表失败。
+- **修法**：需宏层获取源/目标主键类型（跨类内省），或退化为运行时约束 + 文档说明。
+- **备注**：Task 5 的 String-pk ref_many 读路径（`assembleRefMany` 的 isStringPk 分支）仅在 mock 上验证通过，**真实 DB 上未验证**——junction 列建成 BIGINT 后 String id 的 INSERT/读取会失败，须等本项修复后补真实 DB 验证。
 
 ### F2. cascadeDelete 无 pk 死代码分支 + 复合 pk 键测试 + visited O(n) 优化
 - **位置**：`relation_gen.cj:214`（`if (pkFields.size == 0)` 分支）

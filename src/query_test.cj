@@ -914,6 +914,105 @@ public class QueryTest {
         @Expect(entities[0].tags[1].name, "two")
     }
 
+    // 手工构造 RefMany 漏传 junctionTargetCol（空串）→ 装配在发 junction 批量查询前
+    // 抛带说明的 QueryException，而不是生成 `"via".""_id` 的坏 SQL。
+    @TestCase
+    public func testRefManyIncludeMissingJunctionTargetColThrows(): Unit {
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        let mainCols: Array<SqlColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("title", false),
+        ]
+        let mainRows = [Array<Any>(2, {i => if (i == 0) { 1 } else { "p" }})]
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(mainCols, mainRows))
+        let rel: IRelation = RefMany<Int64>("tags", "post_tags",
+            [Col<Any>("id")], "tag", dummyMapper, dummySetter, "")
+        let q = PostWithRel.query().include(rel).using(tx)
+        try {
+            let _ = q.all()
+            @Fail("expected QueryException for empty junction target column")
+        } catch (e: QueryException) {
+            @Expect(e.message.contains("junction target column"), true)
+        }
+        // 主查询已发出，junction 批量查询被前置校验拦截
+        @Expect(conn.stmt.capturedSqlHistory.size, 1)
+    }
+
+    // 手写 Query 未设 FROM 却 include ref_many（junction 源列 `<源表>_id` 无从推导）→
+    // 装配 fail-fast 抛带说明的 QueryException，而不是静默留下空关联列表。
+    @TestCase
+    public func testRefManyIncludeWithoutSourceTableThrows(): Unit {
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        let mainCols: Array<SqlColumnInfo> = [MapperMockColumnInfo("id", false)]
+        let mainRows = [Array<Any>(1, {i => 1})]
+        conn.stmt.queryResult = MapperMockQueryResult(mainCols, mainRows)
+        let rel: IRelation = RefMany<Int64>("tags", "post_tags",
+            [Col<Any>("id")], "tag", dummyMapper, dummySetter, "tag_id")
+        let q = Query<Int64>()
+        q.select([Expr.Column("id")])
+        q.setMapper({ r: QueryResult, cm: HashMap<String, Int64> => 0 })
+        q.setRawIdExtractor({ r: QueryResult, cm: HashMap<String, Int64> => 1 })
+        q.include(rel)
+        q.using(tx)
+        try {
+            let _ = q.all()
+            @Fail("expected QueryException for missing source table")
+        } catch (e: QueryException) {
+            @Expect(e.message.contains("source table"), true)
+        }
+    }
+
+    // 同一查询同时 include has_many 与 ref_many：两个集合装配协议各自独立跑一条批量查询，
+    // 互不干扰（顺序：主查询 → has_many fk IN → ref_many junction）。
+    @TestCase
+    public func testHasManyAndRefManyMixedInclude(): Unit {
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        let mainCols: Array<SqlColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("title", false),
+        ]
+        let mainRows = [Array<Any>(2, {i => if (i == 0) { 1 } else { "p1" }})]
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(mainCols, mainRows))
+        // has_many comments：SELECT "id", "post_id", "body" FROM "comment" WHERE "post_id" IN (?)
+        let commentsCols: Array<SqlColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("post_id", false),
+            MapperMockColumnInfo("body", false),
+        ]
+        let commentsRows = [
+            Array<Any>(3, {i => if (i == 0) { 10 } else if (i == 1) { 1 } else { "first" }}),
+            Array<Any>(3, {i => if (i == 0) { 11 } else if (i == 1) { 1 } else { "second" }}),
+        ]
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(commentsCols, commentsRows))
+        // ref_many tags：SELECT "tag"."id", "tag"."name", "post_tags"."postWithRel_id"
+        // FROM "post_tags" JOIN "tag" ON ... WHERE "post_tags"."postWithRel_id" IN (?)
+        let tagsCols: Array<SqlColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("name", false),
+            MapperMockColumnInfo("postWithRel_id", false),
+        ]
+        let tagsRows = [
+            Array<Any>(3, {i => if (i == 0) { 20 } else if (i == 1) { "t1" } else { 1 }}),
+            Array<Any>(3, {i => if (i == 0) { 21 } else if (i == 1) { "t2" } else { 1 }}),
+        ]
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(tagsCols, tagsRows))
+        let q = PostWithRel.query().include(PostWithRelRel.comments).include(PostWithRelRel.tags).using(tx)
+        let entities = q.all()
+        @Expect(conn.stmt.capturedSqlHistory.size, 3)
+        @Expect(conn.stmt.capturedSqlHistory[1].contains("FROM \"comment\""), true)
+        @Expect(conn.stmt.capturedSqlHistory[2].contains("FROM \"post_tags\" JOIN \"tag\""), true)
+        @Expect(entities.size, 1)
+        @Expect(entities[0].comments.size, 2)
+        @Expect(entities[0].comments[0].id, 10)
+        @Expect(entities[0].comments[0].body, "first")
+        @Expect(entities[0].tags.size, 2)
+        @Expect(entities[0].tags[0].id, 20)
+        @Expect(entities[0].tags[0].name, "t1")
+    }
+
     @TestCase
     public func testProcessIncludedEmptySourceTable(): Unit {
         // Task 2: processIncluded 已是 no-op，无 FROM 或任何查询都不产生 include JOIN
