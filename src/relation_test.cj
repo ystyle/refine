@@ -125,4 +125,63 @@ public class RelationTest {
         let fs = wrapper.getFieldSetter()
         @Expect(true, true)
     }
+
+    @TestCase
+    public func testWithIncludeAppendsNested(): Unit {
+        let fk = Col<Any>("user_id")
+        let fields = [Col<Any>("id"), Col<Any>("name")]
+        let author = RefTo<RelUser>("author", fk, fields, "reluser", dummyMapper, dummySetter)
+        let profile = HasOne<RelUser>("profile", "user_id", [Col<Any>("id")], "relprofile", dummyMapper, dummySetter)
+        let returned = author.withInclude(profile)
+        @Expect(author.getNested().size, 1)
+        @Expect(author.isBatchSupported(), true)
+        @Expect(returned.getNested().size, 1)
+    }
+
+    @TestCase
+    public func testWithIncludeChaining(): Unit {
+        let fk = Col<Any>("user_id")
+        let fields = [Col<Any>("id"), Col<Any>("name")]
+        let author = RefTo<RelUser>("author", fk, fields, "reluser", dummyMapper, dummySetter)
+        let profile = HasOne<RelUser>("profile", "user_id", [Col<Any>("id")], "relprofile", dummyMapper, dummySetter)
+        let tags = HasMany<RelTag>("tags", "post_id", [Col<Any>("id")], "reltag", dummyMapper, dummySetter)
+        let chained: IRelation = author.withInclude(profile).withInclude(tags)
+        @Expect(author.getNested().size, 2)
+        @Expect(chained.getNested().size, 2)
+    }
+
+    @TestCase
+    public func testNestedEmptyByDefault(): Unit {
+        let fk = Col<Any>("user_id")
+        let fields = [Col<Any>("id"), Col<Any>("name")]
+        let author = RefTo<RelUser>("author", fk, fields, "reluser", dummyMapper, dummySetter)
+        @Expect(author.getNested().size, 0)
+        @Expect(author.isBatchSupported(), true)
+    }
+
+    @TestCase
+    public func testHasManyInheritsNesting(): Unit {
+        let mapper: (QueryResult, HashMap<String, Int64>) -> Any = { r, cm => 1 }
+        let setter: (Any, Any) -> Unit = { e, t => () }
+        let posts = HasMany<String>("posts", "user_id", [Col<Any>("id")], "posts", mapper, setter)
+        let author = RefTo<RelUser>("author", Col<Any>("user_id"), [Col<Any>("id")], "reluser", dummyMapper, dummySetter)
+        let returned = posts.withInclude(author)
+        @Expect(posts.getNested().size, 1)
+        @Expect(posts.isBatchSupported(), true)
+        @Expect(returned.getNested().size, 1)
+    }
+
+    @TestCase
+    public func testFieldOverrideRelationDelegatesNesting(): Unit {
+        let mapper: (QueryResult, HashMap<String, Int64>) -> Any = { r, cm => 1 }
+        let setter: (Any, Any) -> Unit = { e, t => () }
+        let inner = HasMany<String>("tags", "post_id", [Col<Any>("id")], "tags", mapper, setter)
+        let wrapper = FieldOverrideRelation(inner, [Col<Any>("name")])
+        @Expect(wrapper.isBatchSupported(), true)
+        @Expect(wrapper.getNested().size, 0)
+        let rel = RefTo<RelUser>("author", Col<Any>("user_id"), [Col<Any>("id")], "reluser", dummyMapper, dummySetter)
+        wrapper.withInclude(rel)
+        @Expect(wrapper.getNested().size, 1)
+        @Expect(inner.getNested().size, 1)
+    }
 }

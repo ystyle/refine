@@ -1,5 +1,6 @@
 package refine
 
+import std.collection.ArrayList
 import std.collection.HashMap
 import std.database.sql.QueryResult
 
@@ -30,9 +31,15 @@ public interface IRelation {
     func resolve(): (RelationKind, String, String, String, Option<String>, Array<Col<Any>>)
     func getTargetMapper(): (QueryResult, HashMap<String, Int64>) -> Any
     func getFieldSetter(): (Any, Any) -> Unit
+    // 新增：嵌套 include（默认 no-op）
+    func withInclude(rel: IRelation): IRelation { this }
+    // 新增：该关系支持的嵌套列表
+    func getNested(): Array<IRelation> { [] }
+    // 新增：批量查询支持标记（默认 true，预留）
+    func isBatchSupported(): Bool { true }
 }
 
-public open class Relation<TTarget> {
+public open class Relation<TTarget> <: IRelation {
     var name: String
     var targetTable: String
     var kind: RelationKind
@@ -42,6 +49,7 @@ public open class Relation<TTarget> {
     var condition: Option<Expr>
     var targetMapper: (QueryResult, HashMap<String, Int64>) -> Any
     var fieldSetter: (Any, Any) -> Unit
+    var nested = ArrayList<IRelation>()
 
     public init(name: String, targetTable: String, kind: RelationKind,
                 foreignKey: String, via: Option<String>, fields: Array<Col<Any>>,
@@ -62,14 +70,6 @@ public open class Relation<TTarget> {
         this.fields = fs
         this
     }
-}
-
-public class RefTo<TTarget> <: Relation<TTarget> & IRelation {
-    public init(name: String, fk: Col<Any>, fields: Array<Col<Any>>, targetTable: String,
-                mapper: (QueryResult, HashMap<String, Int64>) -> Any,
-                setter: (Any, Any) -> Unit) {
-        super(name, targetTable, RelationKind.RefToRel, fk.name, None, fields, mapper, setter)
-    }
 
     public func resolve(): (RelationKind, String, String, String, Option<String>, Array<Col<Any>>) {
         (kind, name, targetTable, foreignKey, via, fields)
@@ -81,6 +81,27 @@ public class RefTo<TTarget> <: Relation<TTarget> & IRelation {
 
     public func getFieldSetter(): (Any, Any) -> Unit {
         this.fieldSetter
+    }
+
+    public func withInclude(rel: IRelation): IRelation {
+        this.nested.add(rel)
+        this
+    }
+
+    public func getNested(): Array<IRelation> {
+        this.nested.toArray()
+    }
+
+    public func isBatchSupported(): Bool {
+        true
+    }
+}
+
+public class RefTo<TTarget> <: Relation<TTarget> & IRelation {
+    public init(name: String, fk: Col<Any>, fields: Array<Col<Any>>, targetTable: String,
+                mapper: (QueryResult, HashMap<String, Int64>) -> Any,
+                setter: (Any, Any) -> Unit) {
+        super(name, targetTable, RelationKind.RefToRel, fk.name, None, fields, mapper, setter)
     }
 }
 
@@ -90,18 +111,6 @@ public class RefMany<TTarget> <: Relation<TTarget> & IRelation {
                 setter: (Any, Any) -> Unit) {
         super(name, targetTable, RelationKind.RefManyRel, "", Some(via), fields, mapper, setter)
     }
-
-    public func resolve(): (RelationKind, String, String, String, Option<String>, Array<Col<Any>>) {
-        (kind, name, targetTable, foreignKey, via, fields)
-    }
-
-    public func getTargetMapper(): (QueryResult, HashMap<String, Int64>) -> Any {
-        this.targetMapper
-    }
-
-    public func getFieldSetter(): (Any, Any) -> Unit {
-        this.fieldSetter
-    }
 }
 
 public class HasOne<TTarget> <: Relation<TTarget> & IRelation {
@@ -110,18 +119,6 @@ public class HasOne<TTarget> <: Relation<TTarget> & IRelation {
                 setter: (Any, Any) -> Unit) {
         super(name, targetTable, RelationKind.HasOneRel, fk, None, fields, mapper, setter)
     }
-
-    public func resolve(): (RelationKind, String, String, String, Option<String>, Array<Col<Any>>) {
-        (kind, name, targetTable, foreignKey, via, fields)
-    }
-
-    public func getTargetMapper(): (QueryResult, HashMap<String, Int64>) -> Any {
-        this.targetMapper
-    }
-
-    public func getFieldSetter(): (Any, Any) -> Unit {
-        this.fieldSetter
-    }
 }
 
 public class HasMany<TTarget> <: Relation<TTarget> & IRelation {
@@ -129,18 +126,6 @@ public class HasMany<TTarget> <: Relation<TTarget> & IRelation {
                 mapper: (QueryResult, HashMap<String, Int64>) -> Any,
                 setter: (Any, Any) -> Unit) {
         super(name, targetTable, RelationKind.HasManyRel, fk, None, fields, mapper, setter)
-    }
-
-    public func resolve(): (RelationKind, String, String, String, Option<String>, Array<Col<Any>>) {
-        (kind, name, targetTable, foreignKey, via, fields)
-    }
-
-    public func getTargetMapper(): (QueryResult, HashMap<String, Int64>) -> Any {
-        this.targetMapper
-    }
-
-    public func getFieldSetter(): (Any, Any) -> Unit {
-        this.fieldSetter
     }
 }
 

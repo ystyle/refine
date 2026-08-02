@@ -27,6 +27,19 @@ class FieldOverrideRelation <: IRelation {
     public func getFieldSetter(): (Any, Any) -> Unit {
         inner.getFieldSetter()
     }
+
+    public func withInclude(rel: IRelation): IRelation {
+        inner.withInclude(rel)
+        this
+    }
+
+    public func getNested(): Array<IRelation> {
+        inner.getNested()
+    }
+
+    public func isBatchSupported(): Bool {
+        inner.isBatchSupported()
+    }
 }
 
 public class Query<T> {
