@@ -388,6 +388,7 @@ public class MySQLDialectTest {
     public func testInitializeAndDefaultValue(): Unit {
         let dialect = MySQLDialect()
         dialect.initialize(DB(MockDatasource()))
-        @Expect(dialect.defaultValueOf(StorageType.Integer), "")
+        // I5: defaultValueOf 按存储类型返回默认值字面量（不再是空串死方法）
+        @Expect(dialect.defaultValueOf(StorageType.Integer), "0")
     }
 }

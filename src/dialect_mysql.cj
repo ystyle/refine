@@ -217,5 +217,18 @@ public class MySQLDialect <: Dialect {
 
     public func initialize(db: DB): Unit {}
 
-    public func defaultValueOf(st: StorageType): String { "" }
+    // I5: 返回类型合适的 DEFAULT 值字面量（当前仅 SQLite 迁移器消费，三方言统一实现保持一致）。
+    public func defaultValueOf(st: StorageType): String {
+        match (st) {
+            case Integer => "0"
+            case Float => "0.0"
+            case Decimal => "0"
+            case `Bool` => "0"
+            case String => "''"
+            case Text => "''"
+            case Json => "'{}'"
+            case Bytes => "''"
+            case Timestamp => "0"
+        }
+    }
 }

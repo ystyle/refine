@@ -395,7 +395,52 @@ public class DialectTest {
     public func testInitializeAndDefaultValue(): Unit {
         let dialect = SQLiteDialect()
         dialect.initialize(DB(MockDatasource()))
-        @Expect(dialect.defaultValueOf(StorageType.Integer), "")
+        // I5: defaultValueOf 不再是死方法，按存储类型返回类型合适的默认值字面量
+        @Expect(dialect.defaultValueOf(StorageType.Integer), "0")
+    }
+
+    // I5: 三方言 defaultValueOf 按存储类型返回类型合适的默认值字面量
+    // SQLite 侧被 SQLiteMigrator.addColumn 使用（非空表加 NOT NULL 列必须带 DEFAULT）
+    @TestCase
+    public func testSQLiteDefaultValueOf(): Unit {
+        let d = SQLiteDialect()
+        @Expect(d.defaultValueOf(StorageType.Integer), "0")
+        @Expect(d.defaultValueOf(StorageType.Float), "0.0")
+        @Expect(d.defaultValueOf(StorageType.Decimal), "0")
+        @Expect(d.defaultValueOf(StorageType.`Bool`), "0")
+        @Expect(d.defaultValueOf(StorageType.String), "''")
+        @Expect(d.defaultValueOf(StorageType.Text), "''")
+        @Expect(d.defaultValueOf(StorageType.Json), "'{}'")
+        @Expect(d.defaultValueOf(StorageType.Bytes), "X''")
+        @Expect(d.defaultValueOf(StorageType.Timestamp), "0")
+    }
+
+    @TestCase
+    public func testMySQLDefaultValueOf(): Unit {
+        let d = MySQLDialect()
+        @Expect(d.defaultValueOf(StorageType.Integer), "0")
+        @Expect(d.defaultValueOf(StorageType.Float), "0.0")
+        @Expect(d.defaultValueOf(StorageType.Decimal), "0")
+        @Expect(d.defaultValueOf(StorageType.`Bool`), "0")
+        @Expect(d.defaultValueOf(StorageType.String), "''")
+        @Expect(d.defaultValueOf(StorageType.Text), "''")
+        @Expect(d.defaultValueOf(StorageType.Json), "'{}'")
+        @Expect(d.defaultValueOf(StorageType.Bytes), "''")
+        @Expect(d.defaultValueOf(StorageType.Timestamp), "0")
+    }
+
+    @TestCase
+    public func testPostgreSQLDefaultValueOf(): Unit {
+        let d = PostgreSQLDialect()
+        @Expect(d.defaultValueOf(StorageType.Integer), "0")
+        @Expect(d.defaultValueOf(StorageType.Float), "0.0")
+        @Expect(d.defaultValueOf(StorageType.Decimal), "0")
+        @Expect(d.defaultValueOf(StorageType.`Bool`), "false")
+        @Expect(d.defaultValueOf(StorageType.String), "''")
+        @Expect(d.defaultValueOf(StorageType.Text), "''")
+        @Expect(d.defaultValueOf(StorageType.Json), "'{}'::jsonb")
+        @Expect(d.defaultValueOf(StorageType.Bytes), "''::bytea")
+        @Expect(d.defaultValueOf(StorageType.Timestamp), "'1970-01-01 00:00:00'")
     }
 
     @TestCase

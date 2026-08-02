@@ -222,9 +222,10 @@ public class MigratorTest {
 
     @TestCase
     public func testAddColumnSQLNotNull(): Unit {
+        // I5: SQLite 对非空表加 NOT NULL 列必须带 DEFAULT，否则 ADD COLUMN 失败
         let col = ColumnDef("age", StorageType.Integer, false, false, false)
         let sql = SQLiteMigrator.addColumnSQL("user", col)
-        @Expect(sql, "ALTER TABLE \"user\" ADD COLUMN \"age\" INTEGER NOT NULL")
+        @Expect(sql, "ALTER TABLE \"user\" ADD COLUMN \"age\" INTEGER NOT NULL DEFAULT 0")
     }
 
     @TestCase

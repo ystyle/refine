@@ -218,5 +218,19 @@ public class SQLiteDialect <: Dialect {
 
     public func initialize(db: DB): Unit {}
 
-    public func defaultValueOf(st: StorageType): String { "" }
+    // I5: 返回类型合适的 DEFAULT 值字面量（SQLite 非空表 ADD COLUMN NOT NULL 列必须带 DEFAULT）。
+    // 按 SQLite 亲和性选择：数字列用数值字面量，文本列用字符串字面量，BLOB 用 X'' 字面量。
+    public func defaultValueOf(st: StorageType): String {
+        match (st) {
+            case Integer => "0"
+            case Float => "0.0"
+            case Decimal => "0"
+            case `Bool` => "0"
+            case String => "''"
+            case Text => "''"
+            case Json => "'{}'"
+            case Bytes => "X''"
+            case Timestamp => "0"
+        }
+    }
 }

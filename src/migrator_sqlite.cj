@@ -34,8 +34,14 @@ public class SQLiteMigrator <: Migrator {
         String.join(parts.toArray(), delimiter: "")
     }
 
+    // I5: SQLite 对非空表 ADD COLUMN NOT NULL 列必须带 DEFAULT，否则 ALTER 失败（设计 §11.3
+    // "已有行使用 DEFAULT 或 NULL"）。主键/自增列排除（主键列不允许普通默认值）。
     public static func addColumnSQL(table: String, col: ColumnDef): String {
-        "ALTER TABLE \"" + table + "\" ADD COLUMN " + columnDefSQL(col)
+        var sql = "ALTER TABLE \"" + table + "\" ADD COLUMN " + columnDefSQL(col)
+        if (!col.nullable && !col.primaryKey && !col.autoIncrement) {
+            sql += " DEFAULT " + SQLiteDialect().defaultValueOf(col.storageType)
+        }
+        sql
     }
 
     public static func addIndexSQL(table: String, idx: IndexDef): String {
