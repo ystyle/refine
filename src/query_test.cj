@@ -407,8 +407,9 @@ public class QueryTest {
 
     @TestCase
     public func testIsNullId(): Unit {
-        // isNullId tries get<Int64> and catches exception for NULL
-        // We can test the method with a mock result
+        // I7: isNullId 语义——目标 id 列为 NULL 时不下挂载（getOrNull<String> → None）。
+        // isNullId 是 Query<T> 私有方法，通过 include 装配路径做真实行为测试：
+        // 见 testCollectionIncludeSkipsNullChildId / testRefToIncludeSkipsNullTargetId。
         @Expect(true, true)
     }
 
@@ -971,6 +972,68 @@ public class C4PageCollectionTest {
         @Expect(pg.items[0].post.getOrThrow().title, "First")
         // page() 必须先 processIncluded：分页 SQL 必须带 RefTo 的 LEFT JOIN
         @Expect(conn.stmt.capturedSqlHistory[1].contains("LEFT JOIN"), true)
+    }
+
+    // I7: RefTo 目标 id 列存在但为 NULL（LEFT JOIN 无匹配）时，isNullId 必须判真，
+    // 主实体保留、目标不挂载、不抛异常。修复前依赖驱动对 get<String> 的异常行为，跨驱动脆弱。
+    // 用自定义 base mapper（不读 RefTo 字段），使 wrapMapper.isNullId 成为目标 id 的首个读取点。
+    @TestCase
+    public func testRefToIncludeSkipsNullTargetId(): Unit {
+        clearHooks()
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        let cols: Array<SqlColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("body", false),
+            MapperMockColumnInfo("post_id", false),
+            MapperMockColumnInfo("post.id", false),
+        ]
+        // post.id 为 NULL（非 String 模拟驱动 NULL，getOrNull<String> → None）
+        let row = Array<Any>(4, {i =>
+            if (i == 0) { 5 } else if (i == 1) { "orphan" } else if (i == 2) { "nope" }
+            else { 0 }
+        })
+        conn.stmt.queryResult = MapperMockQueryResult(cols, [row])
+        let q = UuidRefComment.query()
+        q.setMapper({ result: QueryResult, cm: HashMap<String, Int64> =>
+            let e = UuidRefComment()
+            e.id = result.get<Int64>(cm.get("id").getOrThrow())
+            e.body = result.get<String>(cm.get("body").getOrThrow())
+            e.post_id = result.get<String>(cm.get("post_id").getOrThrow())
+            e
+        })
+        q.include(UuidRefCommentRel.post)
+        q.using(tx)
+        let entities = q.all()
+        @Expect(entities.size, 1)
+        @Expect(entities[0].id, 5)
+        @Expect(entities[0].post.isNone(), true)
+    }
+
+    // I7: 集合 include 子行 id 为 NULL（LEFT JOIN 无匹配）时，isNullId 必须判真，
+    // 不挂载子对象且不抛异常（修复前 get<String> 的类型不匹配异常被 try/catch 吞掉，
+    // 但依赖驱动边界行为；现用文档化 getOrNull 判空）。
+    @TestCase
+    public func testCollectionIncludeSkipsNullChildId(): Unit {
+        clearHooks()
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        let cols: Array<SqlColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("title", false),
+            MapperMockColumnInfo("comments.id", false),
+            MapperMockColumnInfo("comments.body", false),
+        ]
+        // comments.id 为 NULL（非 String 模拟驱动 NULL）
+        let rows = [
+            Array<Any>(4, {i => if (i == 0) { 5 } else if (i == 1) { "post" } else if (i == 2) { 0 } else { "orphan" }}),
+        ]
+        conn.stmt.queryResult = MapperMockQueryResult(cols, rows)
+        let q = UuidPostWithRel.query().include(commentsRel(), [Col<Any>("id"), Col<Any>("body")]).using(tx)
+        let entities = q.all()
+        @Expect(entities.size, 1)
+        @Expect(entities[0].id, 5)
+        @Expect(entities[0].comments.size, 0)
     }
 }
 

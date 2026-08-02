@@ -608,12 +608,13 @@ public class Query<T> {
         false
     }
 
+    // I7: 用文档化 API getOrNull<T> 判空（SQL NULL → None），不再依赖驱动对 get<T>
+    // 的异常边界行为（跨驱动未验证）。读作 String 对齐字符串主键目标；数字主键列驱动
+    // 按字符串读出（现有 PG 集成测试已验证），此处只关心目标 id 是否为 NULL。
     private func isNullId(result: QueryResult, idx: Int64): Bool {
-        try {
-            let _ = result.get<String>(idx)
-            false
-        } catch (_: Exception) {
-            true
+        match (result.getOrNull<String>(idx)) {
+            case Some(_) => false
+            case None => true
         }
     }
 

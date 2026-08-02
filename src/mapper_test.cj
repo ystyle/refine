@@ -55,7 +55,14 @@ class MapperMockQueryResult <: QueryResult {
             case _ => throw Exception("type mismatch")
         }
     }
-    public func getOrNull<T>(index: Int): ?T { None }
+    // 模拟真实驱动语义：列值为 T 类型返回 Some(v)；NULL/类型不匹配返回 None。
+    // 修复前恒返回 None，导致基于 getOrNull 的 isNullId 判空无法区分有值与 NULL。
+    public func getOrNull<T>(index: Int): ?T {
+        match (rows[currentRow][index]) {
+            case v: T => Some(v)
+            case _ => None
+        }
+    }
 }
 
 @Test
