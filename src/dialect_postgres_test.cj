@@ -280,6 +280,58 @@ public class PostgreSQLDialectTest {
         @Expect(sql.contains("IN (SELECT"), true)
     }
 
+    // 回归：子查询内部参数必须延续外层 $n 编号，外层参数不得丢失、不得重复
+    @TestCase
+    public func testRenderSubQueryWithParams(): Unit {
+        let dialect = PostgreSQLDialect()
+        let inner = Statement()
+        inner.addClause(SelectClause([Column("id")]))
+        inner.addClause(FromClause("t"))
+        inner.addClause(WhereClause([Binary(Column("c"), Eq, Value(10))]))
+        let outer = Statement()
+        outer.addClause(SelectClause([Column("x")]))
+        outer.addClause(FromClause("parent"))
+        outer.addClause(WhereClause([
+            Binary(Column("x"), Eq, Value(5)),
+            Binary(Column("x"), In, SubQuery(inner))
+        ]))
+        let (sql, params) = dialect.render(outer)
+        @Expect(sql, "SELECT \"x\" FROM \"parent\" WHERE \"x\" = $1 AND \"x\" IN (SELECT \"id\" FROM \"t\" WHERE \"c\" = $2)")
+        @Expect(params.size, 2)
+        @Expect(checkInt(params[0], 5))
+        @Expect(checkInt(params[1], 10))
+    }
+
+    // 回归：嵌套子查询参数编号必须逐层延续（外层 $1，一层 $2，二层 $3）
+    @TestCase
+    public func testRenderNestedSubQueryParams(): Unit {
+        let dialect = PostgreSQLDialect()
+        let inner2 = Statement()
+        inner2.addClause(SelectClause([Column("id")]))
+        inner2.addClause(FromClause("u"))
+        inner2.addClause(WhereClause([Binary(Column("age"), Gt, Value(30))]))
+        let inner = Statement()
+        inner.addClause(SelectClause([Column("id")]))
+        inner.addClause(FromClause("t"))
+        inner.addClause(WhereClause([
+            Binary(Column("c"), Eq, Value(10)),
+            Binary(Column("d"), In, SubQuery(inner2))
+        ]))
+        let outer = Statement()
+        outer.addClause(SelectClause([Column("x")]))
+        outer.addClause(FromClause("parent"))
+        outer.addClause(WhereClause([
+            Binary(Column("x"), Eq, Value(5)),
+            Binary(Column("x"), In, SubQuery(inner))
+        ]))
+        let (sql, params) = dialect.render(outer)
+        @Expect(sql, "SELECT \"x\" FROM \"parent\" WHERE \"x\" = $1 AND \"x\" IN (SELECT \"id\" FROM \"t\" WHERE \"c\" = $2 AND \"d\" IN (SELECT \"id\" FROM \"u\" WHERE \"age\" > $3))")
+        @Expect(params.size, 3)
+        @Expect(checkInt(params[0], 5))
+        @Expect(checkInt(params[1], 10))
+        @Expect(checkInt(params[2], 30))
+    }
+
     @TestCase
     public func testUpsertSQL(): Unit {
         let dialect = PostgreSQLDialect()

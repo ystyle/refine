@@ -3,6 +3,13 @@ package refine
 import std.unittest.*
 import std.unittest.testmacro.*
 
+private func checkInt(v: Any, expected: Int64): Bool {
+    match (v) {
+        case i: Int64 => i == expected
+        case _ => false
+    }
+}
+
 @Test
 public class MySQLDialectTest {
     @TestCase
@@ -250,6 +257,28 @@ public class MySQLDialectTest {
         @Expect(sql.contains("SELECT"), true)
         @Expect(sql.contains("parent"), true)
         @Expect(sql.contains("IN (SELECT"), true)
+    }
+
+    // 回归：子查询渲染不得重置 params，外层参数不得丢失、不得重复
+    @TestCase
+    public func testRenderSubQueryWithParams(): Unit {
+        let dialect = MySQLDialect()
+        let inner = Statement()
+        inner.addClause(SelectClause([Column("id")]))
+        inner.addClause(FromClause("t"))
+        inner.addClause(WhereClause([Binary(Column("c"), Eq, Value(10))]))
+        let outer = Statement()
+        outer.addClause(SelectClause([Column("x")]))
+        outer.addClause(FromClause("parent"))
+        outer.addClause(WhereClause([
+            Binary(Column("x"), Eq, Value(5)),
+            Binary(Column("x"), In, SubQuery(inner))
+        ]))
+        let (sql, params) = dialect.render(outer)
+        @Expect(sql, "SELECT `x` FROM `parent` WHERE `x` = ? AND `x` IN (SELECT `id` FROM `t` WHERE `c` = ?)")
+        @Expect(params.size, 2)
+        @Expect(checkInt(params[0], 5))
+        @Expect(checkInt(params[1], 10))
     }
 
     @TestCase

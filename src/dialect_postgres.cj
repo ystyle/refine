@@ -15,6 +15,10 @@ public class PostgreSQLDialect <: Dialect {
     public func render(stmt: Statement): (String, Array<Any>) {
         params = ArrayList<Any>()
         paramIdx = 1
+        renderBody(stmt)
+    }
+
+    private func renderBody(stmt: Statement): (String, Array<Any>) {
         var select = ArrayList<String>()
         var from = ArrayList<String>()
         var joins = ArrayList<String>()
@@ -110,8 +114,7 @@ public class PostgreSQLDialect <: Dialect {
             case Aliased(expr, alias) =>
                 renderExpr(expr) + " AS " + quoteIdentifier(alias)
             case SubQuery(s) =>
-                let (subSql, subParams) = render(s)
-                for (p in subParams) { params.add(p) }
+                let (subSql, _) = renderBody(s)
                 "(" + subSql + ")"
         }
     }
