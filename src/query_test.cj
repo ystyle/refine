@@ -497,6 +497,29 @@ public class QueryTest {
     }
 
     @TestCase
+    public func testAllPropagatesAfterFindHookException(): Unit {
+        clearHooks()
+        registerHook<Int64>("C1AfterFindBoom", HookKind.AfterFind) { scope: Scope<Int64> =>
+            throw QueryException("hook boom")
+        }
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        let cols: Array<SqlColumnInfo> = [MapperMockColumnInfo("id", false)]
+        conn.stmt.queryResult = MapperMockQueryResult(cols, [Array<Any>(1, {i => 1})])
+        let q = Query<Int64>()
+            .select([Expr.Column("id")])
+            .from("t")
+            .using(tx)
+        q.typeName = "C1AfterFindBoom"
+        try {
+            q.all({ r: QueryResult, cm: HashMap<String, Int64> => 0 })
+            @Fail("expected QueryException from AfterFind hook")
+        } catch (e: QueryException) {
+            @Expect(e.message, "hook boom")
+        }
+    }
+
+    @TestCase
     public func testProcessIncludedAddsJoins(): Unit {
         let q = Query<Int64>()
         q.select([Expr.Column("id"), Expr.Column("name")])
