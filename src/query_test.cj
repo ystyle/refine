@@ -5,6 +5,20 @@ import std.unittest.testmacro.*
 import std.collection.HashMap
 import std.database.sql.{QueryResult, ColumnInfo as SqlColumnInfo}
 
+private func checkInt(v: Any, expected: Int64): Bool {
+    match (v) {
+        case i: Int64 => i == expected
+        case _ => false
+    }
+}
+
+private func checkStr(v: Any, expected: String): Bool {
+    match (v) {
+        case s: String => s == expected
+        case _ => false
+    }
+}
+
 @Test
 public class QueryTest {
     @TestCase
@@ -746,6 +760,43 @@ public class QueryTest {
         } catch (e: QueryException) {
             @Expect(e.message.contains("does not support JOIN"), true)
         }
+    }
+
+    // 回归（I4）：无 JOIN 时 updateWhere 正常走通（rejectJoin 不得误伤合法查询）
+    @TestCase
+    public func testUpdateWhereWithoutJoinStillWorks(): Unit {
+        clearHooks()
+        let conn = CaptureConnection()
+        conn.stmt.mockRowCount = 3
+        let tx = Tx(conn, 0, MySQLDialect())
+        let q = Query<Int64>()
+        q.from("users")
+        q.filter(Col<Int64>("age") > 18)
+        q.using(tx)
+        let count = q.updateWhere(["name"], ["bob"])
+        @Expect(count, 3)
+        @Expect(conn.stmt.capturedSql, "UPDATE `users` SET `name` = ? WHERE `age` > ?")
+        @Expect(conn.stmt.capturedSetValues.size, 2)
+        @Expect(checkStr(conn.stmt.capturedSetValues[0], "bob"), true)
+        @Expect(checkInt(conn.stmt.capturedSetValues[1], 18), true)
+    }
+
+    // 回归（I4）：无 JOIN 时 deleteWhere 正常走通（rejectJoin 不得误伤合法查询）
+    @TestCase
+    public func testDeleteWhereWithoutJoinStillWorks(): Unit {
+        clearHooks()
+        let conn = CaptureConnection()
+        conn.stmt.mockRowCount = 2
+        let tx = Tx(conn, 0, MySQLDialect())
+        let q = Query<Int64>()
+        q.from("users")
+        q.filter(Col<Int64>("age") > 18)
+        q.using(tx)
+        let count = q.deleteWhere()
+        @Expect(count, 2)
+        @Expect(conn.stmt.capturedSql, "DELETE FROM `users` WHERE `age` > ?")
+        @Expect(conn.stmt.capturedSetValues.size, 1)
+        @Expect(checkInt(conn.stmt.capturedSetValues[0], 18), true)
     }
 
     @TestCase

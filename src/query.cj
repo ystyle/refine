@@ -153,9 +153,10 @@ public class Query<T> {
         let table = requireTable()
         let updater = Statement()
         updater.addClause(UpdateClause(table, setCols, setVals))
+        // JOIN 已由 rejectJoin 在上游拒绝
         for (clause in stmt.clauses) {
             match (clause) {
-                case WhereClause(_) | JoinClause(_, _, _) => updater.addClause(clause)
+                case WhereClause(_) => updater.addClause(clause)
                 case _ => ()
             }
         }
@@ -173,9 +174,10 @@ public class Query<T> {
         let table = requireTable()
         let deleter = Statement()
         deleter.addClause(DeleteClause(table))
+        // JOIN 已由 rejectJoin 在上游拒绝
         for (clause in stmt.clauses) {
             match (clause) {
-                case WhereClause(_) | JoinClause(_, _, _) => deleter.addClause(clause)
+                case WhereClause(_) => deleter.addClause(clause)
                 case _ => ()
             }
         }
