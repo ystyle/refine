@@ -78,6 +78,19 @@ public macro Refine(input: Tokens): Tokens {
     let keyExtractorFunc = buildKeyExtractor(className, pkFields)
     let keyExtractorFuncName = Token(TokenKind.IDENTIFIER, className + "KeyFromResult")
 
+    // Task 4: has_many/has_one 批量装配的主实体主键原始值提取器。
+    // 仅单列主键生成并挂到 Query（复合主键返回空 Tokens、不 setRawIdExtractor，
+    // 装配入口会抛带说明的 QueryException，见 buildRawIdExtractor 注释）。
+    let rawIdExtractorFunc = buildRawIdExtractor(className, pkFields)
+    let rawIdExtractorFuncName = Token(TokenKind.IDENTIFIER, className + "RawIdFromResult")
+    // 复合主键（pkFields.size > 1）不 setRawIdExtractor：has_many/has_one 批量装配
+    // 需要单列主键原值（目标 fk 是单列），装配入口检测 rawIdExtractor 为 None 时抛 QueryException。
+    let rawIdSetterTokens = if (pkFields.size > 1) {
+        Tokens()
+    } else {
+        quote(q.setRawIdExtractor($(rawIdExtractorFuncName));)
+    }
+
     // Detect soft delete: has deleted_at field AND no @HardDelete annotation
     var hasDeletedAt = false
     for (f in mergedFields) {
@@ -99,6 +112,7 @@ public macro Refine(input: Tokens): Tokens {
                 q.filter(Expr.Binary(Expr.Column("deleted_at"), BinOp.Eq, Expr.Value(0)))
                 q.setMapper($(mapperFuncName))
                 q.setKeyExtractor($(keyExtractorFuncName))
+                $(rawIdSetterTokens)
                 q
             }
         )
@@ -111,6 +125,7 @@ public macro Refine(input: Tokens): Tokens {
                 q.from($(Token(TokenKind.STRING_LITERAL, tableName)))
                 q.setMapper($(mapperFuncName))
                 q.setKeyExtractor($(keyExtractorFuncName))
+                $(rawIdSetterTokens)
                 q
             }
         )
@@ -181,6 +196,7 @@ public macro Refine(input: Tokens): Tokens {
             Token(TokenKind.NL) + Token(TokenKind.NL) + txDeleteExtend +
             Token(TokenKind.NL) + Token(TokenKind.NL) + rowMapper +
             Token(TokenKind.NL) + Token(TokenKind.NL) + keyExtractorFunc +
+            Token(TokenKind.NL) + Token(TokenKind.NL) + rawIdExtractorFunc +
             Token(TokenKind.NL) + Token(TokenKind.NL) + columnNamesFunc +
             Token(TokenKind.NL) + Token(TokenKind.NL) + schemaClass +
             junctionTokens
@@ -201,6 +217,7 @@ public macro Refine(input: Tokens): Tokens {
             Token(TokenKind.NL) + Token(TokenKind.NL) + txDeleteExtend +
             Token(TokenKind.NL) + Token(TokenKind.NL) + rowMapper +
             Token(TokenKind.NL) + Token(TokenKind.NL) + keyExtractorFunc +
+            Token(TokenKind.NL) + Token(TokenKind.NL) + rawIdExtractorFunc +
             Token(TokenKind.NL) + Token(TokenKind.NL) + columnNamesFunc +
             Token(TokenKind.NL) + Token(TokenKind.NL) + schemaClass +
             junctionTokens

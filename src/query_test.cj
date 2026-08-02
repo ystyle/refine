@@ -216,7 +216,7 @@ public class QueryTest {
     }
 
     @TestCase
-    public func testHasCollectionInclude(): Unit {
+    public func testIncludeRegistersRefTo(): Unit {
         let q = Query<Int64>()
         @Expect(q.included.size, 0)
         // Add RefTo - not a collection
@@ -227,7 +227,7 @@ public class QueryTest {
     }
 
     @TestCase
-    public func testHasCollectionIncludeWithHasMany(): Unit {
+    public func testIncludeRegistersHasMany(): Unit {
         let q = Query<Int64>()
         let rel: IRelation = HasMany<Int64>("posts", "user_id", [Col<Any>("id")], "posts", dummyMapper, dummySetter)
         q.include(rel)
@@ -390,19 +390,6 @@ public class QueryTest {
             }
         }
         @Expect(found, true)
-    }
-
-    @TestCase
-    public func testStripPrefix(): Unit {
-        let cm = HashMap<String, Int64>()
-        cm.add("id", 1)
-        cm.add("name", 2)
-        cm.add("posts.id", 3)
-        cm.add("posts.title", 4)
-        let stripped = stripPrefix(cm, "posts.")
-        @Expect(stripped.size, 2)
-        @Expect(stripped.contains("id"), true)
-        @Expect(stripped.contains("title"), true)
     }
 
     @TestCase
@@ -677,20 +664,52 @@ public class QueryTest {
         @Expect(entities[0].author.getOrThrow().id, 99)
     }
 
-    // batch include 重构中，Task 4 恢复：has_many 改为批量按 fk IN 查询装配，主查询无 JOIN。
+    // batch include Task 4：has_many 批量装配协议。主查询返回 2 篇 Post，批量查询
+    // `SELECT ... FROM "comment" WHERE "post_id" IN (主实体 id)` 按 fk 分组回填各实体。
     @TestCase
-    @Skip
-    public func testProcessIncludedHasMany(): Unit {
-        let q = Query<Int64>()
-        q.select([Expr.Column("id")])
-        q.from("users")
-        let rel: IRelation = HasMany<Int64>("posts", "user_id", [Col<Any>("id"), Col<Any>("title")], "posts", dummyMapper, dummySetter)
-        q.include(rel)
-        let dialect = SQLiteDialect()
-        q.processIncluded(dialect)
-        let (sql, _) = dialect.render(q.stmt)
-        @Expect(sql.contains("LEFT JOIN"), true)
-        @Expect(sql.contains("posts"), true)
+    public func testHasManyIncludeAssemblesBatch(): Unit {
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        let mainCols: Array<SqlColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("title", false),
+            MapperMockColumnInfo("user_id", false),
+            MapperMockColumnInfo("post_id", false),
+        ]
+        let mainRows = [
+            Array<Any>(4, {i => if (i == 0) { 1 } else if (i == 1) { "p1" } else { 0 }}),
+            Array<Any>(4, {i => if (i == 0) { 2 } else if (i == 1) { "p2" } else { 0 }}),
+        ]
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(mainCols, mainRows))
+        let batchCols: Array<SqlColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("body", false),
+            MapperMockColumnInfo("post_id", false),
+        ]
+        let batchRows = [
+            Array<Any>(3, {i => if (i == 0) { 10 } else if (i == 1) { "first" } else { 1 }}),
+            Array<Any>(3, {i => if (i == 0) { 11 } else if (i == 1) { "second" } else { 1 }}),
+            Array<Any>(3, {i => if (i == 0) { 12 } else if (i == 1) { "third" } else { 2 }}),
+        ]
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(batchCols, batchRows))
+        let q = PostWithRel.query().include(PostWithRelRel.comments).using(tx)
+        let entities = q.all()
+        @Expect(conn.stmt.capturedSqlHistory.size, 2)
+        @Expect(conn.stmt.capturedSqlHistory[0].contains("LEFT JOIN"), false)
+        // 批量 SELECT 强制主键 id + fk 分组键 post_id + 字段并集 body
+        @Expect(conn.stmt.capturedSqlHistory[1].contains("SELECT \"id\", \"post_id\", \"body\" FROM \"comment\""), true)
+        @Expect(conn.stmt.capturedSqlHistory[1].contains("IN (?, ?)"), true)
+        @Expect(entities.size, 2)
+        @Expect(entities[0].id, 1)
+        @Expect(entities[0].comments.size, 2)
+        @Expect(entities[0].comments[0].id, 10)
+        @Expect(entities[0].comments[0].body, "first")
+        @Expect(entities[0].comments[0].post_id, 1)
+        @Expect(entities[0].comments[1].id, 11)
+        @Expect(entities[1].id, 2)
+        @Expect(entities[1].comments.size, 1)
+        @Expect(entities[1].comments[0].id, 12)
+        @Expect(entities[1].comments[0].post_id, 2)
     }
 
     // batch include 重构中，Task 5 恢复：ref_many 改为 junction 批量查询装配，主查询无 JOIN。
@@ -723,19 +742,36 @@ public class QueryTest {
         @Expect(sql.contains("LEFT JOIN"), false)
     }
 
-    // batch include 重构中，Task 4 恢复：has_one 改为批量按 fk IN 查询装配，主查询无 JOIN。
+    // batch include Task 4：has_one 批量装配协议。主查询返回 1 个 User，批量查询
+    // `SELECT ... FROM "profileWithRel" WHERE "user_id" IN (主实体 id)` 挂载唯一 Profile。
     @TestCase
-    @Skip
-    public func testProcessIncludedHasOne(): Unit {
-        let q = Query<Int64>()
-        q.select([Expr.Column("id")])
-        q.from("users")
-        let rel: IRelation = HasOne<Int64>("profile", "user_id", [Col<Any>("id")], "profiles", dummyMapper, dummySetter)
-        q.include(rel)
-        let dialect = SQLiteDialect()
-        q.processIncluded(dialect)
-        let (sql, _) = dialect.render(q.stmt)
-        @Expect(sql.contains("LEFT JOIN"), true)
+    public func testHasOneIncludeAssemblesBatch(): Unit {
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        let mainCols: Array<SqlColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("name", false),
+        ]
+        let mainRows = [Array<Any>(2, {i => if (i == 0) { 7 } else { "nobody" }})]
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(mainCols, mainRows))
+        let batchCols: Array<SqlColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("bio", false),
+            MapperMockColumnInfo("user_id", false),
+        ]
+        let batchRows = [Array<Any>(3, {i => if (i == 0) { 1 } else if (i == 1) { "dev" } else { 7 }})]
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(batchCols, batchRows))
+        let q = UserWithRel.query().include(UserWithRelRel.profile).using(tx)
+        let entities = q.all()
+        @Expect(conn.stmt.capturedSqlHistory.size, 2)
+        @Expect(conn.stmt.capturedSqlHistory[1].contains("FROM \"profileWithRel\""), true)
+        @Expect(conn.stmt.capturedSqlHistory[1].contains("IN (?)"), true)
+        @Expect(entities.size, 1)
+        @Expect(entities[0].id, 7)
+        @Expect(entities[0].profile.isSome(), true)
+        @Expect(entities[0].profile.getOrThrow().id, 1)
+        @Expect(entities[0].profile.getOrThrow().bio, "dev")
+        @Expect(entities[0].profile.getOrThrow().user_id, 7)
     }
 
     @TestCase
@@ -876,7 +912,7 @@ public class QueryTest {
     }
 }
 
-// ─── C4: page() 集合 include 去重 + countWith 含集合 include 用 COUNT(DISTINCT) ──
+// ─── C4: page() 集合 include 批量协议（count + 主查询 + 批量 has_many 查询）──
 
 @Test
 public class C4PageCollectionTest {
@@ -887,24 +923,33 @@ public class C4PageCollectionTest {
             UuidCommentRowMapper, UuidPostWithRelRel.commentsSetter)
     }
 
+    // Task 4 批量协议：page() = count + 主查询（LIMIT/OFFSET）+ 批量 has_many 查询三次。
+    // 主查询无 JOIN（单页恰好 size 个主实体），comments 按 post_id 分组回填。
     @TestCase
-    public func testPageWithHasManyIncludeDedupsParents(): Unit {
-        // 仅 mock 固定即将删除的 JOIN 装配路径（aggregateWithCollections），Task 4 随装配代码一并重写。
+    public func testPageWithHasManyIncludeBatch(): Unit {
         let conn = CaptureConnection()
         let tx = Tx(conn)
         conn.stmt.queryResultQueue.add(RowQueryResult(2))
         let cols: Array<SqlColumnInfo> = [
             MapperMockColumnInfo("id", false),
             MapperMockColumnInfo("title", false),
-            MapperMockColumnInfo("comments.id", false),
-            MapperMockColumnInfo("comments.body", false),
         ]
         let rows = [
-            Array<Any>(4, {i => if (i == 0) { 5 } else if (i == 1) { "post" } else if (i == 2) { "c1" } else { "first" }}),
-            Array<Any>(4, {i => if (i == 0) { 5 } else if (i == 1) { "post" } else if (i == 2) { "c2" } else { "second" }}),
-            Array<Any>(4, {i => if (i == 0) { 6 } else if (i == 1) { "other" } else if (i == 2) { "c3" } else { "third" }}),
+            Array<Any>(2, {i => if (i == 0) { 5 } else { "post" }}),
+            Array<Any>(2, {i => if (i == 0) { 6 } else { "other" }}),
         ]
         conn.stmt.queryResultQueue.add(MapperMockQueryResult(cols, rows))
+        let batchCols: Array<SqlColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("body", false),
+            MapperMockColumnInfo("post_id", false),
+        ]
+        let batchRows = [
+            Array<Any>(3, {i => if (i == 0) { "c1" } else if (i == 1) { "first" } else { 5 }}),
+            Array<Any>(3, {i => if (i == 0) { "c2" } else if (i == 1) { "second" } else { 5 }}),
+            Array<Any>(3, {i => if (i == 0) { "c3" } else if (i == 1) { "third" } else { 6 }}),
+        ]
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(batchCols, batchRows))
         let q = UuidPostWithRel.query().include(commentsRel(), [Col<Any>("id"), Col<Any>("body")]).using(tx)
         let pg = q.page(1, 10)
         @Expect(pg.total, 2)
@@ -914,28 +959,34 @@ public class C4PageCollectionTest {
         @Expect(byId.size, 2)
         @Expect(byId.get(5).getOrThrow().comments.size, 2)
         @Expect(byId.get(6).getOrThrow().comments.size, 1)
+        // 三次查询：count + 主查询 + 批量查询；批量查询 IN 多值
+        @Expect(conn.stmt.capturedSqlHistory.size, 3)
+        @Expect(conn.stmt.capturedSqlHistory[1].contains("LEFT JOIN"), false)
+        @Expect(conn.stmt.capturedSqlHistory[2].contains("IN (?, ?)"), true)
     }
 
+    // Task 4：批量模式主查询无 JOIN，count 恒为 COUNT(*)，不再用 COUNT(DISTINCT id)。
     @TestCase
-    public func testPageWithHasManyIncludeCountUsesDistinct(): Unit {
+    public func testPageWithHasManyIncludeCountUsesStar(): Unit {
         let conn = CaptureConnection()
         let tx = Tx(conn)
         conn.stmt.queryResultQueue.add(RowQueryResult(2))
         let cols: Array<SqlColumnInfo> = [
             MapperMockColumnInfo("id", false),
             MapperMockColumnInfo("title", false),
-            MapperMockColumnInfo("comments.id", false),
-            MapperMockColumnInfo("comments.body", false),
         ]
-        let rows = [
-            Array<Any>(4, {i => if (i == 0) { 5 } else if (i == 1) { "post" } else if (i == 2) { "c1" } else { "first" }}),
-        ]
+        let rows = [Array<Any>(2, {i => if (i == 0) { 5 } else { "post" }})]
         conn.stmt.queryResultQueue.add(MapperMockQueryResult(cols, rows))
+        let batchCols: Array<SqlColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("post_id", false),
+        ]
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(batchCols, []))
         let q = UuidPostWithRel.query().include(commentsRel(), [Col<Any>("id"), Col<Any>("body")]).using(tx)
         let pg = q.page(1, 10)
         @Expect(pg.total, 2)
-        @Expect(conn.stmt.capturedSqlHistory[0].contains("COUNT(DISTINCT"), true)
-        @Expect(conn.stmt.capturedSqlHistory[0].contains("\"uuidPostWithRel\".\"id\""), true)
+        @Expect(conn.stmt.capturedSqlHistory[0].contains("COUNT(*)"), true)
+        @Expect(conn.stmt.capturedSqlHistory[0].contains("COUNT(DISTINCT"), false)
     }
 
     @TestCase
@@ -1045,30 +1096,33 @@ public class C4PageCollectionTest {
         @Expect(conn.stmt.capturedSqlHistory.size, 2)
     }
 
-    // I7: 集合 include 子行 id 为 NULL（LEFT JOIN 无匹配）时，isNullId 必须判真，
-    // 不挂载子对象且不抛异常（修复前 get<String> 的类型不匹配异常被 try/catch 吞掉，
-    // 但依赖驱动边界行为；现用文档化 getOrNull 判空）。
+    // Task 4 批量协议：批量查询命中 0 行（主实体无任何评论）→ comments 保持空列表、
+    // 不挂载任何子对象、不抛异常（旧 JOIN 方案的 NULL 子行判空已被 IN 查询天然排除）。
     @TestCase
-    public func testCollectionIncludeSkipsNullChildId(): Unit {
-        // 仅 mock 固定即将删除的 JOIN 装配路径（aggregateWithCollections），Task 4 随装配代码一并重写。
+    public func testHasManyIncludeNoMatchingChildren(): Unit {
         let conn = CaptureConnection()
         let tx = Tx(conn)
         let cols: Array<SqlColumnInfo> = [
             MapperMockColumnInfo("id", false),
             MapperMockColumnInfo("title", false),
-            MapperMockColumnInfo("comments.id", false),
-            MapperMockColumnInfo("comments.body", false),
         ]
-        // comments.id 为 NULL（非 String 模拟驱动 NULL）
         let rows = [
-            Array<Any>(4, {i => if (i == 0) { 5 } else if (i == 1) { "post" } else if (i == 2) { 0 } else { "orphan" }}),
+            Array<Any>(2, {i => if (i == 0) { 5 } else { "post" }}),
         ]
-        conn.stmt.queryResult = MapperMockQueryResult(cols, rows)
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(cols, rows))
+        let batchCols: Array<SqlColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("body", false),
+            MapperMockColumnInfo("post_id", false),
+        ]
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(batchCols, []))
         let q = UuidPostWithRel.query().include(commentsRel(), [Col<Any>("id"), Col<Any>("body")]).using(tx)
         let entities = q.all()
         @Expect(entities.size, 1)
         @Expect(entities[0].id, 5)
         @Expect(entities[0].comments.size, 0)
+        // 批量查询仍发出（主实体 id 非空），只是无命中行
+        @Expect(conn.stmt.capturedSqlHistory.size, 2)
     }
 
     // Task 3 批量协议：Int64 fk（user_id=99）指向不存在用户，默认 RowMapper 路径
@@ -1275,10 +1329,10 @@ public class C4PageCollectionTest {
         @Expect(captured[1], "editor:e@x.com")
     }
 
-    // Task 4 前保持惰性中间态：has_one 目标侧 fk 批量装配未实现，主查询无 JOIN 列
-    // → profile 保持 None、不崩溃。批量模式主查询不产生 profile.* 列。
+    // Task 4 批量协议：has_one 目标侧 fk 批量装配。主查询无 profile.* JOIN 列，
+    // profile 由批量查询 `WHERE "user_id" IN (主实体 id)` 挂载。
     @TestCase
-    public func testHasOneIncludeStaysUnset(): Unit {
+    public func testHasOneIncludeAssembled(): Unit {
         let conn = CaptureConnection()
         let tx = Tx(conn)
         let cols: Array<SqlColumnInfo> = [
@@ -1287,17 +1341,26 @@ public class C4PageCollectionTest {
         ]
         let row = Array<Any>(2, {i => if (i == 0) { 7 } else { "nobody" }})
         conn.stmt.queryResultQueue.add(MapperMockQueryResult(cols, [row]))
+        let batchCols: Array<SqlColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("bio", false),
+            MapperMockColumnInfo("user_id", false),
+        ]
+        let batchRow = Array<Any>(3, {i => if (i == 0) { 3 } else if (i == 1) { "engineer" } else { 7 }})
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(batchCols, [batchRow]))
         let q = UserWithRel.query().include(UserWithRelRel.profile).using(tx)
         let entities = q.all()
         @Expect(entities.size, 1)
         @Expect(entities[0].id, 7)
-        @Expect(entities[0].profile.isNone(), true)
-        // has_one 不触发批量查询，只发主查询
-        @Expect(conn.stmt.capturedSqlHistory.size, 1)
+        @Expect(entities[0].profile.isSome(), true)
+        @Expect(entities[0].profile.getOrThrow().id, 3)
+        @Expect(entities[0].profile.getOrThrow().bio, "engineer")
+        // has_one 触发主查询 + 批量查询两次
+        @Expect(conn.stmt.capturedSqlHistory.size, 2)
     }
 }
 
-// ─── I12: aggregateWithCollections 必须保持行序（SQL 行序反映 ORDER BY） ──
+// ─── I12: all() 返回顺序必须保持主查询行序（SQL 行序反映 ORDER BY） ──
 
 @Test
 public class C4CollectionIncludeOrderTest {
@@ -1310,26 +1373,38 @@ public class C4CollectionIncludeOrderTest {
 
     @TestCase
     public func testAllWithCollectionIncludePreservesRowOrder(): Unit {
-        // 仅 mock 固定即将删除的 JOIN 装配路径（aggregateWithCollections），Task 4 随装配代码一并重写。
+        // 批量协议：主查询行序即返回顺序（每行一个主实体，无 JOIN 展开/去重），
+        // comments 按 fk 分组回填后仍保持该顺序。
         let conn = CaptureConnection()
         let tx = Tx(conn)
         let cols: Array<SqlColumnInfo> = [
             MapperMockColumnInfo("id", false),
             MapperMockColumnInfo("title", false),
-            MapperMockColumnInfo("comments.id", false),
-            MapperMockColumnInfo("comments.body", false),
         ]
-        // 行序刻意打乱 id 数值序：去重后返回顺序必须与行序一致（9, 3, 7, 11, 5），
-        // 即 SQL 行序（反映 ORDER BY），而不是依赖 HashMap 内部迭代序。
+        // 主查询行序刻意打乱 id 数值序：返回顺序必须与行序一致（9, 3, 7, 11, 5），
+        // 即 SQL 行序（反映 ORDER BY），批量装配不得重排实体列表。
         let rows = [
-            Array<Any>(4, {i => if (i == 0) { 9 } else if (i == 1) { "post9" } else if (i == 2) { "c1" } else { "first" }}),
-            Array<Any>(4, {i => if (i == 0) { 3 } else if (i == 1) { "post3" } else if (i == 2) { "c2" } else { "second" }}),
-            Array<Any>(4, {i => if (i == 0) { 7 } else if (i == 1) { "post7" } else if (i == 2) { "c3" } else { "third" }}),
-            Array<Any>(4, {i => if (i == 0) { 11 } else if (i == 1) { "post11" } else if (i == 2) { "c4" } else { "fourth" }}),
-            Array<Any>(4, {i => if (i == 0) { 5 } else if (i == 1) { "post5" } else if (i == 2) { "c5" } else { "fifth" }}),
-            Array<Any>(4, {i => if (i == 0) { 9 } else if (i == 1) { "post9" } else if (i == 2) { "c6" } else { "sixth" }}),
+            Array<Any>(2, {i => if (i == 0) { 9 } else { "post9" }}),
+            Array<Any>(2, {i => if (i == 0) { 3 } else { "post3" }}),
+            Array<Any>(2, {i => if (i == 0) { 7 } else { "post7" }}),
+            Array<Any>(2, {i => if (i == 0) { 11 } else { "post11" }}),
+            Array<Any>(2, {i => if (i == 0) { 5 } else { "post5" }}),
         ]
-        conn.stmt.queryResult = MapperMockQueryResult(cols, rows)
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(cols, rows))
+        let batchCols: Array<SqlColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("body", false),
+            MapperMockColumnInfo("post_id", false),
+        ]
+        let batchRows = [
+            Array<Any>(3, {i => if (i == 0) { "c1" } else if (i == 1) { "first" } else { 9 }}),
+            Array<Any>(3, {i => if (i == 0) { "c2" } else if (i == 1) { "second" } else { 9 }}),
+            Array<Any>(3, {i => if (i == 0) { "c3" } else if (i == 1) { "third" } else { 3 }}),
+            Array<Any>(3, {i => if (i == 0) { "c4" } else if (i == 1) { "fourth" } else { 7 }}),
+            Array<Any>(3, {i => if (i == 0) { "c5" } else if (i == 1) { "fifth" } else { 11 }}),
+            Array<Any>(3, {i => if (i == 0) { "c6" } else if (i == 1) { "sixth" } else { 5 }}),
+        ]
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(batchCols, batchRows))
         let q = UuidPostWithRel.query().include(commentsRel(), [Col<Any>("id"), Col<Any>("body")]).using(tx)
         let entities = q.all()
         @Expect(entities.size, 5)
@@ -1340,5 +1415,268 @@ public class C4CollectionIncludeOrderTest {
         @Expect(entities[4].id, 5)
         @Expect(entities[0].comments.size, 2)
         @Expect(entities[1].comments.size, 1)
+        @Expect(entities[1].comments[0].id, "c3")
+    }
+}
+
+// ─── Task 4：has_many / has_one 批量装配边界用例 ──
+
+@Test
+public class C4CollectionBatchTest {
+
+    // 批量结果中出现 fk 不匹配任何主实体 id 的行（脏数据/查询边界）→ 该行只进独立分组，
+    // 不装配到任何主实体，主实体列表不受影响。
+    @TestCase
+    public func testHasManyIncludeIgnoresForeignFkRows(): Unit {
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        let mainCols: Array<SqlColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("title", false),
+            MapperMockColumnInfo("user_id", false),
+            MapperMockColumnInfo("post_id", false),
+        ]
+        let mainRows = [Array<Any>(4, {i => if (i == 0) { 1 } else if (i == 1) { "p1" } else { 0 }})]
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(mainCols, mainRows))
+        let batchCols: Array<SqlColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("post_id", false),
+        ]
+        let batchRows = [
+            Array<Any>(2, {i => if (i == 0) { 10 } else { 1 }}),
+            Array<Any>(2, {i => if (i == 0) { 99 } else { 999 }}),
+        ]
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(batchCols, batchRows))
+        let q = PostWithRel.query().include(PostWithRelRel.comments).using(tx)
+        let entities = q.all()
+        @Expect(entities.size, 1)
+        @Expect(entities[0].id, 1)
+        @Expect(entities[0].comments.size, 1)
+        @Expect(entities[0].comments[0].id, 10)
+        @Expect(conn.stmt.capturedSqlHistory.size, 2)
+    }
+
+    // 批量查询命中 0 行（主实体无任何评论）→ comments 保持空列表，不抛异常。
+    @TestCase
+    public func testHasManyIncludeEmptyChildrenStaysEmpty(): Unit {
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        let mainCols: Array<SqlColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("title", false),
+            MapperMockColumnInfo("user_id", false),
+            MapperMockColumnInfo("post_id", false),
+        ]
+        let mainRows = [Array<Any>(4, {i => if (i == 0) { 1 } else if (i == 1) { "p1" } else { 0 }})]
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(mainCols, mainRows))
+        let batchCols: Array<SqlColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("post_id", false),
+        ]
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(batchCols, []))
+        let q = PostWithRel.query().include(PostWithRelRel.comments).using(tx)
+        let entities = q.all()
+        @Expect(entities.size, 1)
+        @Expect(entities[0].comments.size, 0)
+        @Expect(conn.stmt.capturedSqlHistory.size, 2)
+    }
+
+    // 两个 has_many 指向同一目标表 + 同一 fk → 合并为一条批量查询（字段并集，共回填两组）。
+    @TestCase
+    public func testHasManyIncludeMergesSameTargetTable(): Unit {
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        let mainCols: Array<SqlColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("title", false),
+            MapperMockColumnInfo("user_id", false),
+            MapperMockColumnInfo("post_id", false),
+        ]
+        let mainRows = [Array<Any>(4, {i => if (i == 0) { 1 } else if (i == 1) { "p1" } else { 0 }})]
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(mainCols, mainRows))
+        let batchCols: Array<SqlColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("body", false),
+            MapperMockColumnInfo("post_id", false),
+        ]
+        let batchRows = [
+            Array<Any>(3, {i => if (i == 0) { 10 } else if (i == 1) { "first" } else { 1 }}),
+            Array<Any>(3, {i => if (i == 0) { 11 } else if (i == 1) { "second" } else { 1 }}),
+        ]
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(batchCols, batchRows))
+        let captured = ArrayList<Int64>()
+        let secondSetter: (Any, Any) -> Unit = { e: Any, t: Any =>
+            let c = (t as Comment).getOrThrow()
+            captured.add(c.id)
+        }
+        let moderated = HasMany<Comment>("moderated", "post_id",
+            [Col<Any>("id"), Col<Any>("body")], "comment",
+            CommentRowMapper, secondSetter)
+        let q = PostWithRel.query()
+            .include(PostWithRelRel.comments)
+            .include(moderated)
+            .using(tx)
+        let entities = q.all()
+        // 主查询 + 1 条合并批量查询（未合并会有 2 条批量查询）
+        @Expect(conn.stmt.capturedSqlHistory.size, 2)
+        @Expect(conn.stmt.capturedSqlHistory[1].contains("IN (?)"), true)
+        @Expect(entities.size, 1)
+        @Expect(entities[0].comments.size, 2)
+        // moderated 关系与 comments 共享同一分组，回填同一批评论
+        @Expect(captured.size, 2)
+        @Expect(captured[0], 10)
+        @Expect(captured[1], 11)
+    }
+
+    // one() 批量协议：主查询 LIMIT 1，批量查询按 fk IN 回填该单实体。
+    @TestCase
+    public func testHasManyIncludeOne(): Unit {
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        let mainCols: Array<SqlColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("title", false),
+            MapperMockColumnInfo("user_id", false),
+            MapperMockColumnInfo("post_id", false),
+        ]
+        let mainRows = [Array<Any>(4, {i => if (i == 0) { 1 } else if (i == 1) { "p1" } else { 0 }})]
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(mainCols, mainRows))
+        let batchCols: Array<SqlColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("body", false),
+            MapperMockColumnInfo("post_id", false),
+        ]
+        let batchRows = [Array<Any>(3, {i => if (i == 0) { 10 } else if (i == 1) { "first" } else { 1 }})]
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(batchCols, batchRows))
+        let q = PostWithRel.query().include(PostWithRelRel.comments).using(tx)
+        let res = q.one()
+        @Expect(res.isSome(), true)
+        @Expect(res.getOrThrow().id, 1)
+        @Expect(res.getOrThrow().comments.size, 1)
+        @Expect(conn.stmt.capturedSqlHistory.size, 2)
+        @Expect(conn.stmt.capturedSqlHistory[0].contains("LIMIT 1"), true)
+    }
+
+    // has_one 批量查询命中 0 行 → profile 保持 None，不抛异常。
+    @TestCase
+    public func testHasOneIncludeEmptyStaysNone(): Unit {
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        let mainCols: Array<SqlColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("name", false),
+        ]
+        let mainRows = [Array<Any>(2, {i => if (i == 0) { 7 } else { "nobody" }})]
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(mainCols, mainRows))
+        let batchCols: Array<SqlColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("user_id", false),
+        ]
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(batchCols, []))
+        let q = UserWithRel.query().include(UserWithRelRel.profile).using(tx)
+        let entities = q.all()
+        @Expect(entities.size, 1)
+        @Expect(entities[0].profile.isNone(), true)
+        @Expect(conn.stmt.capturedSqlHistory.size, 2)
+    }
+
+    // has_one 目标侧 fk 重复（唯一约束被破坏）→ 取分组第一条，不抛错。
+    @TestCase
+    public func testHasOneIncludeMultipleTargetsTakesFirst(): Unit {
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        let mainCols: Array<SqlColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("name", false),
+        ]
+        let mainRows = [Array<Any>(2, {i => if (i == 0) { 7 } else { "nobody" }})]
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(mainCols, mainRows))
+        let batchCols: Array<SqlColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("bio", false),
+            MapperMockColumnInfo("user_id", false),
+        ]
+        let batchRows = [
+            Array<Any>(3, {i => if (i == 0) { 1 } else if (i == 1) { "first" } else { 7 }}),
+            Array<Any>(3, {i => if (i == 0) { 2 } else if (i == 1) { "second" } else { 7 }}),
+        ]
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(batchCols, batchRows))
+        let q = UserWithRel.query().include(UserWithRelRel.profile).using(tx)
+        let entities = q.all()
+        @Expect(entities.size, 1)
+        @Expect(entities[0].profile.isSome(), true)
+        @Expect(entities[0].profile.getOrThrow().id, 1)
+        @Expect(entities[0].profile.getOrThrow().bio, "first")
+    }
+
+    // 主实体缺单列主键提取器（手动构造 Query 未 setRawIdExtractor；宏层对复合主键
+    // 也不生成 rawIdExtractor，见计划 D6）→ 集合 include 装配入口抛带说明的 QueryException。
+    @TestCase
+    public func testCollectionIncludeWithoutRawIdExtractorThrows(): Unit {
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        let rel: IRelation = HasMany<Int64>("posts", "user_id",
+            [Col<Any>("id")], "posts", dummyMapper, dummySetter)
+        let q = Query<Int64>()
+        q.select([Expr.Column("id")])
+        q.from("users")
+        q.setMapper({ r: QueryResult, cm: HashMap<String, Int64> => 0 })
+        q.include(rel)
+        q.using(tx)
+        try {
+            let _ = q.all()
+            @Fail("expected QueryException for missing raw id extractor")
+        } catch (e: QueryException) {
+            @Expect(e.message.contains("single-column primary key"), true)
+        }
+        // 守卫在查询执行前抛错，主查询不发
+        @Expect(conn.stmt.capturedSqlHistory.size, 0)
+    }
+
+    // String-pk 主实体 + has_many：批量查询 fk 按 String 读取分组（isStringPk 分支）。
+    // 用手工构造 Query 挂 String rawIdExtractor 覆盖该分支（宏层 has_many 级联代码生成
+    // 目前假设主实体有 id 字段，String-pk has_many 主实体无法经 @Rel 声明编译）。
+    @TestCase
+    public func testHasManyIncludeStringPkMainEntity(): Unit {
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        let mainCols: Array<SqlColumnInfo> = [MapperMockColumnInfo("key", false)]
+        let mainRows = [Array<Any>(1, {i => "p-a"})]
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(mainCols, mainRows))
+        let batchCols: Array<SqlColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("body", false),
+            MapperMockColumnInfo("post_key", false),
+        ]
+        let batchRows = [
+            Array<Any>(3, {i => if (i == 0) { "c1" } else if (i == 1) { "hello" } else { "p-a" }}),
+            Array<Any>(3, {i => if (i == 0) { "c2" } else if (i == 1) { "world" } else { "p-a" }}),
+        ]
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(batchCols, batchRows))
+        let captured = ArrayList<UuidKeyComment>()
+        let setter: (Any, Any) -> Unit = { e: Any, t: Any =>
+            captured.add((t as UuidKeyComment).getOrThrow())
+        }
+        let rel = HasMany<UuidKeyComment>("comments", "post_key",
+            [Col<Any>("id"), Col<Any>("body")], "uuidKeyComment",
+            UuidKeyCommentRowMapper, setter)
+        let q = Query<Int64>()
+        q.select([Expr.Column("key")])
+        q.from("uuidKeyPost")
+        q.setMapper({ r: QueryResult, cm: HashMap<String, Int64> => 0 })
+        q.setRawIdExtractor({ r: QueryResult, cm: HashMap<String, Int64> => "p-a" })
+        q.include(rel)
+        q.using(tx)
+        let entities = q.all()
+        @Expect(conn.stmt.capturedSqlHistory.size, 2)
+        @Expect(conn.stmt.capturedSqlHistory[1].contains("WHERE \"post_key\" IN (?)"), true)
+        @Expect(entities.size, 1)
+        @Expect(captured.size, 2)
+        @Expect(captured[0].id, "c1")
+        @Expect(captured[0].body, "hello")
+        @Expect(captured[0].post_key, "p-a")
+        @Expect(captured[1].id, "c2")
+        @Expect(captured[1].body, "world")
+        @Expect(captured[1].post_key, "p-a")
     }
 }

@@ -57,6 +57,11 @@ public class Query<T> {
     public var typeName: String = ""
     var ref: Option<Refine> = None
     var keyExtractor: Option<(QueryResult, HashMap<String, Int64>) -> String> = None
+    // Task 4: has_many/has_one 批量装配需要主实体主键的「原始值」（Int64/String 上转 Any），
+    // 由宏层生成（XxxRawIdFromResult）在 setKeyExtractor 处一并挂载。keyExtractor 输出
+    // String（复合主键 ":" 拼接），无法直接作为批量 IN 的 SQL 参数原值，故单独存 rawId。
+    // 复合主键主实体不挂载（None），集合 include 装配入口会抛带说明的 QueryException。
+    var rawIdExtractor: Option<(QueryResult, HashMap<String, Int64>) -> Any> = None
 
     public init() {
         this.stmt = Statement()
@@ -88,6 +93,7 @@ public class Query<T> {
         q.typeName = typeName
         q.ref = ref
         q.keyExtractor = keyExtractor
+        q.rawIdExtractor = rawIdExtractor
         q
     }
 
@@ -154,6 +160,7 @@ public class Query<T> {
         try {
             let dialect = getDialect()
             processIncluded(dialect)
+            requireCollectionIdSupport()
             let total = countWith(exec, dialect)
             let pager = Statement()
             for (clause in stmt.clauses) {
@@ -167,25 +174,22 @@ public class Query<T> {
             let (sql, params) = dialect.render(pager)
             Logger.logSQL(sql, params)
             let result = exec.query(sql, params)
-            // Task 2 后主查询不再含 include JOIN：LIMIT/OFFSET 作用于源表行，无展开放大，
-            // 单页恰好返回 size 个主实体（旧 LEFT JOIN 方案的父子跨页拆分/页内去重局限已消除）。
-            // ref_to 装配由 Task 3 批量分步查询完成；集合 include（has_many/ref_many）在 Task 4 接入。
+            // 主查询无 include JOIN：LIMIT/OFFSET 作用于源表行，单页恰好返回 size 个主实体。
             let columnMap = buildColumnMap(result.columnInfos, columnOffset)
             let mapper = this.mapper.getOrThrow()
-            let entities: Array<T>
-            if (hasCollectionInclude()) {
-                entities = aggregateWithCollections(result, columnMap, mapper)
-            } else {
-                var list = ArrayList<T>()
-                while (result.next()) {
-                    let entity = mapper(result, columnMap)
-                    runAfterFindHooks(entity)
-                    list.add(entity)
-                }
-                entities = list.toArray()
+            let collectIds = needsCollectionAssembly()
+            var list = ArrayList<T>()
+            var rawIds = ArrayList<Any>()
+            while (result.next()) {
+                let entity = mapper(result, columnMap)
+                runAfterFindHooks(entity)
+                list.add(entity)
+                if (collectIds) { rawIds.add(collectRawId(result, columnMap)) }
             }
+            let entities = list.toArray()
             // 批量装配在 AfterFind hook 之后执行（同 all()：hook 读关联字段为未装配状态）。
             assembleRefTo(exec, dialect, entities)
+            if (collectIds) { assembleCollections(exec, dialect, entities, rawIds.toArray()) }
             Page(entities, total, page, size)
         } finally {
             closeExecutor(exec)
@@ -325,9 +329,8 @@ public class Query<T> {
 
     // Task 2: 主查询分离——include 不再生成 LEFT JOIN/别名 SELECT/限定（qualify）。
     // 主查询只渲染源表自身（无 JOIN），include 预加载改由批量分步查询协议完成
-    // （ref_to 批量装配已在 Task 3 接入 all()/one()/page()，has_one/has_many/ref_many 在 Task 4-6 接入）。
-    // batch 模式下无 JOIN 因此无列歧义，无需 qualify。此方法保留为 no-op，
-    // 供 Task 3-6 在 all()/one()/page() 主查询之后挂接批量装配入口。
+    // （ref_to 批量装配 Task 3、has_one/has_many 批量装配 Task 4 已接入 all()/one()/page()，
+    // ref_many 在 Task 5 接入）。此方法保留为 no-op 挂接入口。
     public func processIncluded(dialect: Dialect): Unit {
         ()
     }
@@ -491,6 +494,11 @@ public class Query<T> {
         this.keyExtractor = Some(k)
     }
 
+    // Task 4: 主实体主键原始值提取器（宏层 XxxRawIdFromResult 生成，随 query() 挂载）。
+    public func setRawIdExtractor(r: (QueryResult, HashMap<String, Int64>) -> Any): Unit {
+        this.rawIdExtractor = Some(r)
+    }
+
     public func all(): Array<T> {
         match (this.mapper) {
             case Some(m) => all(m)
@@ -503,6 +511,7 @@ public class Query<T> {
         try {
             let dialect = getDialect()
             processIncluded(dialect)
+            requireCollectionIdSupport()
             let (sql, params) = dialect.render(stmt)
             Logger.logSQL(sql, params)
             let start = MonoTime.now()
@@ -510,22 +519,21 @@ public class Query<T> {
             let elapsed = MonoTime.now() - start
             Logger.logSlowQuery(sql, elapsed)
             let columnMap = buildColumnMap(result.columnInfos, columnOffset)
-            let entities: Array<T>
-            if (hasCollectionInclude()) {
-                entities = aggregateWithCollections(result, columnMap, mapper)
-            } else {
-                var list = ArrayList<T>()
-                while (result.next()) {
-                    let entity = mapper(result, columnMap)
-                    runAfterFindHooks(entity)
-                    list.add(entity)
-                }
-                entities = list.toArray()
+            let collectIds = needsCollectionAssembly()
+            var list = ArrayList<T>()
+            var rawIds = ArrayList<Any>()
+            while (result.next()) {
+                let entity = mapper(result, columnMap)
+                runAfterFindHooks(entity)
+                list.add(entity)
+                if (collectIds) { rawIds.add(collectRawId(result, columnMap)) }
             }
+            let entities = list.toArray()
             // 批量装配在 AfterFind hook 之后执行：主映射循环内先跑 runAfterFindHooks，
             // hook 内读取关联字段（如 entity.author）为未装配状态（None）——批量架构的固有取舍，
             // 旧 LEFT JOIN 方案在 hook 前已完成 ref_to 装配。
             assembleRefTo(exec, dialect, entities)
+            if (collectIds) { assembleCollections(exec, dialect, entities, rawIds.toArray()) }
             entities
         } finally {
             closeExecutor(exec)
@@ -544,14 +552,12 @@ public class Query<T> {
         try {
             let dialect = getDialect()
             processIncluded(dialect)
-            let hasCollection = hasCollectionInclude()
+            requireCollectionIdSupport()
             let oneStmt = Statement()
             for (clause in stmt.clauses) {
                 oneStmt.addClause(clause)
             }
-            if (!hasCollection) {
-                oneStmt.addClause(LimitClause(1))
-            }
+            oneStmt.addClause(LimitClause(1))
             let (sql, params) = dialect.render(oneStmt)
             Logger.logSQL(sql, params)
             let start = MonoTime.now()
@@ -559,20 +565,20 @@ public class Query<T> {
             let elapsed = MonoTime.now() - start
             Logger.logSlowQuery(sql, elapsed)
             let columnMap = buildColumnMap(result.columnInfos, columnOffset)
+            let collectIds = needsCollectionAssembly()
             var res: Option<T> = None
-            if (hasCollection) {
-                let all = aggregateWithCollections(result, columnMap, mapper)
-                if (all.size > 0) { res = Some(all[0]) }
-            } else {
-                if (result.next()) {
-                    let entity = mapper(result, columnMap)
-                    runAfterFindHooks(entity)
-                    res = Some(entity)
-                }
+            var rawIds = ArrayList<Any>()
+            if (result.next()) {
+                let entity = mapper(result, columnMap)
+                runAfterFindHooks(entity)
+                res = Some(entity)
+                if (collectIds) { rawIds.add(collectRawId(result, columnMap)) }
             }
             // 批量装配在 AfterFind hook 之后执行（同 all()：hook 读关联字段为未装配状态）。
             match (res) {
-                case Some(e) => assembleRefTo(exec, dialect, [e])
+                case Some(e) =>
+                    assembleRefTo(exec, dialect, [e])
+                    if (collectIds) { assembleCollections(exec, dialect, [e], rawIds.toArray()) }
                 case None => ()
             }
             res
@@ -602,20 +608,10 @@ public class Query<T> {
     }
 
     private func countWith(exec: ExecutionContext, dialect: Dialect): Int64 {
+        // 批量模式主查询无 include JOIN：COUNT(*) 天然正确，无需 COUNT(DISTINCT id)
+        // （旧 LEFT JOIN 方案的子行展开放大 total 问题已随 JOIN 移除而消除）。
         let countStmt = Statement()
-        // TODO(batch-include Task 4): 随批量装配实现删除——批量模式主查询无 JOIN，
-        // COUNT(*) 天然正确，无需 COUNT(DISTINCT)。
-        // 集合 include（has_many / ref_many）的 LEFT JOIN 会按子行展开，COUNT(*) 会放大 total。
-        // 改为对源表主键去重计数，但仅支持单列 "id" 主键：复合主键 + 集合 include 时
-        // COUNT(DISTINCT 单列) 结果不正确/未定义（all()/one() 同样受影响）。
-        if (hasCollectionInclude()) {
-            let sourceTable = getSourceTable()
-            countStmt.addClause(SelectClause([Raw(
-                "COUNT(DISTINCT " + dialect.quoteIdentifier(sourceTable) + "." + dialect.quoteIdentifier("id") + ")"
-            )]))
-        } else {
-            countStmt.addClause(SelectClause([Raw("COUNT(*)")]))
-        }
+        countStmt.addClause(SelectClause([Raw("COUNT(*)")]))
         copyDataClauses(stmt, countStmt)
         let (sql, params) = dialect.render(countStmt)
         Logger.logSQL(sql, params)
@@ -727,91 +723,170 @@ public class Query<T> {
         }
     }
 
-    // TODO(batch-include Task 4): 随批量装配实现删除
-    private func hasCollectionInclude(): Bool {
+    // 是否有需要批量装配的集合 include（has_one / has_many）。ref_many 走 junction
+    // 中间表（Task 5 接入），此处不判定 RefManyRel（旧 JOIN 路径的 hasCollectionInclude 已删除）。
+    private func needsCollectionAssembly(): Bool {
         for (inc in included) {
             let (kind, _, _, _, _, _) = inc.resolve()
-            if (kind == RelationKind.HasManyRel || kind == RelationKind.RefManyRel) {
+            if (kind == RelationKind.HasManyRel || kind == RelationKind.HasOneRel) {
                 return true
             }
         }
         false
     }
 
-    // TODO(batch-include Task 4): 随批量装配实现删除
-    // I7: 用文档化 API getOrNull<T> 判空（SQL NULL → None），不再依赖驱动对 get<T>
-    // 的异常边界行为（跨驱动未验证）。读作 String 对齐字符串主键目标；数字主键列驱动
-    // 按字符串读出（现有 PG 集成测试已验证），此处只关心目标 id 是否为 NULL。
-    private func isNullId(result: QueryResult, idx: Int64): Bool {
-        match (result.getOrNull<String>(idx)) {
-            case Some(_) => false
-            case None => true
+    // 集合 include 装配前置守卫：批量 has_many/has_one 需要主实体单列主键的原始值
+    // （rawIdExtractor，宏层随 query() 挂载）。复合主键主实体或手工构造的 Query 未挂载
+    // 时，主查询执行前就抛带说明的 QueryException（计划 D6 限制），避免发无意义的主查询。
+    private func requireCollectionIdSupport(): Unit {
+        if (!needsCollectionAssembly()) { return }
+        match (this.rawIdExtractor) {
+            case Some(_) => ()
+            case None => throw QueryException(
+                "batch has_many/has_one include requires a single-column primary key on the main entity" +
+                " (type=" + typeName + "); composite primary key / missing raw id extractor not supported"
+            )
         }
     }
 
-    // TODO(batch-include Task 4): 随批量装配实现删除
-    private func aggregateWithCollections(
-        result: QueryResult,
-        columnMap: HashMap<String, Int64>,
-        mapper: (QueryResult, HashMap<String, Int64>) -> T
-    ): Array<T> {
-        var map = HashMap<String, T>()
-        // 单独维护插入序（首次出现该 id 时记录），保证返回顺序与 SQL 行序一致，
-        // 不依赖 HashMap 迭代序（文档不保证顺序稳定）。
-        var order = ArrayList<String>()
-        var seen = HashMap<String, Bool>()
-        let extractKey = this.keyExtractor.getOrThrow()
-        while (result.next()) {
-            let id = extractKey(result, columnMap)
-            if (!map.contains(id)) {
-                let entity = mapper(result, columnMap)
-                runAfterFindHooks(entity)
-                map[id] = entity
-                order.add(id)
+    // 主查询映射循环内逐行收集主实体主键原始值（与实体列表按索引对齐）。前置守卫保证
+    // needsCollectionAssembly() 为 true 时 rawIdExtractor 必然已挂载。
+    private func collectRawId(result: QueryResult, columnMap: HashMap<String, Int64>): Any {
+        this.rawIdExtractor.getOrThrow()(result, columnMap)
+    }
+
+    // Task 4: has_one/has_many 批量装配。主查询返回实体后调用：
+    //   1. 按 (目标表, fk) 分组（has_one 与 has_many 共享同一 fk 可合并一条批量查询）；
+    //   2. 收集主实体主键原始值（rawIds，映射循环内已按实体对齐收集），去重并过滤 0/""；
+    //   3. 空集合跳过（不产生额外查询）；
+    //   4. `SELECT <目标主键 + fk + 字段并集> FROM <目标表> WHERE <fk> IN (?, ...)` 批量取目标，
+    //      fk 列不在字段子集里也必须强制选中（分组键）；
+    //   5. 按 fk 值分组建 HashMap<FK, Array<TargetEntity>>；
+    //   6. 回填：主实体按各自主键命中分组，has_many 逐个 add、has_one 取组内第一条。
+    //      fk 不匹配任何主实体（脏数据/查询边界）的组不会被装配，主实体不受影响。
+    private func assembleCollections(
+        exec: ExecutionContext,
+        dialect: Dialect,
+        entities: Array<T>,
+        rawIds: Array<Any>
+    ): Unit {
+        if (included.size == 0 || entities.size == 0) { return }
+        if (rawIds.size != entities.size) {
+            throw QueryException("internal error: rawId collection size mismatch in assembleCollections")
+        }
+
+        // 1. 按 (目标表, fk) 分组 has_one/has_many 关系
+        var groups = ArrayList<(String, String, ArrayList<IRelation>)>()
+        for (inc in included) {
+            let (kind, _, targetTable, fk, _, _) = inc.resolve()
+            if (kind != RelationKind.HasManyRel && kind != RelationKind.HasOneRel) { continue }
+            var found = false
+            for (i in 0..groups.size) {
+                if (groups[i][0] == targetTable && groups[i][1] == fk) {
+                    groups[i][2].add(inc)
+                    found = true
+                    break
+                }
             }
-            let entity = map.get(id).getOrThrow()
-            for (inc in included) {
-                let (kind, name, _, _, _, _) = inc.resolve()
-                if (kind == RelationKind.HasManyRel || kind == RelationKind.RefManyRel) {
-                    let prefix = name + "."
-                    let idKey = prefix + "id"
-                    let hasId = columnMap.contains(idKey)
-                    if (hasId) {
-                        let idx = columnMap.get(prefix + "id").getOrThrow()
-                        if (isNullId(result, idx)) {
-                        } else {
-                            let stripped = stripPrefix(columnMap, prefix)
-                            let targetId = result.get<String>(stripped.get("id").getOrThrow())
-                            let seenKey = id + ":" + name + ":" + targetId
-                            if (!seen.contains(seenKey)) {
-                                seen[seenKey] = true
-                                let target = inc.getTargetMapper()(result, stripped)
-                                inc.getFieldSetter()(entity, target)
+            if (!found) {
+                let rels = ArrayList<IRelation>()
+                rels.add(inc)
+                groups.add((targetTable, fk, rels))
+            }
+        }
+        if (groups.size == 0) { return }
+
+        // 2. 收集主实体 id（去重、过滤 0/"" 未设置值）
+        var ids = ArrayList<Any>()
+        var seen = HashMap<String, Bool>()
+        for (id in rawIds) {
+            if (isEmptyFk(id)) { continue }
+            let key = fkKey(id)
+            if (!seen.contains(key)) {
+                seen[key] = true
+                ids.add(id)
+            }
+        }
+        if (ids.size == 0) { return }
+
+        for (i in 0..groups.size) {
+            let targetTable = groups[i][0]
+            let fk = groups[i][1]
+            let rels = groups[i][2]
+
+            // 3. 字段并集 + 强制目标主键 id + 强制 fk 分组键（fk 不在字段子集里也必须选中）
+            var fieldNames = ArrayList<String>()
+            var seenField = HashMap<String, Bool>()
+            for (rel in rels) {
+                let (_, _, _, _, _, fields) = rel.resolve()
+                for (c in fields) {
+                    if (!seenField.contains(c.name)) {
+                        seenField[c.name] = true
+                        fieldNames.add(c.name)
+                    }
+                }
+            }
+            var cols = ArrayList<Expr>()
+            cols.add(Expr.Column("id"))
+            cols.add(Expr.Column(fk))
+            for (name in fieldNames) {
+                if (name != "id" && name != fk) { cols.add(Expr.Column(name)) }
+            }
+
+            // 4. 批量 SQL：SELECT <cols> FROM <table> WHERE <fk> IN (?, ...)
+            let bs = Statement()
+            bs.addClause(Clause.SelectClause(cols.toArray()))
+            bs.addClause(Clause.FromClause(targetTable))
+            let (inSQL, inParams) = buildInClause(dialect, fk, ids.toArray())
+            bs.addClause(Clause.WhereClause([Expr.Raw(inSQL)]))
+            let (sql, baseParams) = dialect.render(bs)
+            var params = ArrayList<Any>()
+            for (p in baseParams) { params.add(p) }
+            for (v in inParams) { params.add(v) }
+            Logger.logSQL(sql, params.toArray())
+            let result = exec.query(sql, params.toArray())
+
+            // 5. 按 fk 值分组成目标实体列表（fk 类型跟随主实体主键：Int64 或 String）
+            let columnMap = buildColumnMap(result.columnInfos, exec.getParamOffset())
+            let fkIdx = columnMap.get(fk).getOrThrow()
+            let isStringPk = fkIsString(ids[0])
+            let targetMapper = rels[0].getTargetMapper()
+            var groupMap = HashMap<String, ArrayList<Any>>()
+            while (result.next()) {
+                let key = if (isStringPk) {
+                    fkKey(result.get<String>(fkIdx))
+                } else {
+                    fkKey(result.get<Int64>(fkIdx))
+                }
+                var group = match (groupMap.get(key)) {
+                    case Some(g) => g
+                    case None =>
+                        let ng = ArrayList<Any>()
+                        groupMap[key] = ng
+                        ng
+                }
+                group.add(targetMapper(result, columnMap))
+            }
+
+            // 6. 回填：has_many 逐目标 add；has_one 取组内第一条（重复 fk 时取先读到的行）
+            for (rel in rels) {
+                let (kind, _, _, _, _, _) = rel.resolve()
+                let setter = rel.getFieldSetter()
+                for (ei in 0..entities.size) {
+                    let rawId = rawIds[ei]
+                    if (isEmptyFk(rawId)) { continue }
+                    let key = fkKey(rawId)
+                    match (groupMap.get(key)) {
+                        case Some(ts) =>
+                            if (kind == RelationKind.HasManyRel) {
+                                for (t in ts) { setter(entities[ei], t) }
+                            } else {
+                                setter(entities[ei], ts[0])
                             }
-                        }
+                        case None => ()
                     }
                 }
             }
         }
-        var entities = ArrayList<T>()
-        for (id in order) {
-            entities.add(map.get(id).getOrThrow())
-        }
-        entities.toArray()
     }
-}
-
-// TODO(batch-include Task 4): 随批量装配实现删除
-func stripPrefix(
-    cm: HashMap<String, Int64>,
-    prefix: String
-): HashMap<String, Int64> {
-    var result = HashMap<String, Int64>()
-    for ((key, value) in cm.toArray()) {
-        if (key.startsWith(prefix)) {
-            let stripped = key[prefix.size..]
-            result[stripped] = value
-        }
-    }
-    result
 }

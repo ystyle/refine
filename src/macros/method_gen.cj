@@ -240,6 +240,41 @@ func buildKeyExtractor(className: String, pkFields: ArrayList<FieldInfo>): Token
     }
 }
 
+// Task 4: has_many/has_one 批量装配的主实体主键原始值提取器。返回 Any（Int64/String 自动上转），
+// 主查询映射循环内逐行收集，供 `WHERE 目标.fk IN (主实体 id)` 批量查询与按 fk 分组回填。
+// keyExtractor 输出 String（复合主键 ":" 拼接），无法直接作为 SQL 参数原值，故另设 rawId。
+// 复合主键（pkSize > 1）不生成：目标 fk 是单列，无法匹配 ":" 拼接键（计划 D6 限制），
+// 返回空 Tokens，refine_macro.cj 亦不 setRawIdExtractor → 装配入口抛 QueryException。
+func buildRawIdExtractor(className: String, pkFields: ArrayList<FieldInfo>): Tokens {
+    let funcName = Token(TokenKind.IDENTIFIER, className + "RawIdFromResult")
+    let pkSize = pkFields.size
+    if (pkSize == 0) {
+        return quote(
+            func $(funcName)(result: QueryResult, columnMap: HashMap<String, Int64>): Any {
+                result.get<Int64>(columnMap.get("id").getOrThrow())
+            }
+        )
+    } else if (pkSize == 1) {
+        let pk = pkFields.get(0).getOrThrow()
+        let pkNameLit = Token(TokenKind.STRING_LITERAL, pk.name)
+        if (pk.typeName == "String") {
+            return quote(
+                func $(funcName)(result: QueryResult, columnMap: HashMap<String, Int64>): Any {
+                    result.get<String>(columnMap.get($(pkNameLit)).getOrThrow())
+                }
+            )
+        } else {
+            return quote(
+                func $(funcName)(result: QueryResult, columnMap: HashMap<String, Int64>): Any {
+                    result.get<Int64>(columnMap.get($(pkNameLit)).getOrThrow())
+                }
+            )
+        }
+    } else {
+        Tokens()
+    }
+}
+
 func buildRowMapperMethod(className: String): Tokens {
     let cn = Token(TokenKind.IDENTIFIER, className)
     let mapperFunc = Token(TokenKind.IDENTIFIER, className + "RowMapper")
