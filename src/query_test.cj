@@ -449,6 +449,54 @@ public class QueryTest {
     }
 
     @TestCase
+    public func testAllPropagatesMapperException(): Unit {
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        let cols: Array<SqlColumnInfo> = [MapperMockColumnInfo("id", false)]
+        conn.stmt.queryResult = MapperMockQueryResult(cols, [Array<Any>(1, {i => 1})])
+        let q = Query<Int64>()
+            .select([Expr.Column("id")])
+            .from("t")
+            .using(tx)
+        try {
+            q.all({ r: QueryResult, cm: HashMap<String, Int64> =>
+                throw QueryException("mapper boom")
+            })
+            @Fail("expected QueryException from mapper")
+        } catch (e: QueryException) {
+            @Expect(e.message, "mapper boom")
+        }
+    }
+
+    @TestCase
+    public func testAllPropagatesMapperExceptionOnLaterRow(): Unit {
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        let cols: Array<SqlColumnInfo> = [MapperMockColumnInfo("id", false)]
+        let rows = [
+            Array<Any>(1, {i => 1}),
+            Array<Any>(1, {i => 2})
+        ]
+        conn.stmt.queryResult = MapperMockQueryResult(cols, rows)
+        let q = Query<Int64>()
+            .select([Expr.Column("id")])
+            .from("t")
+            .using(tx)
+        try {
+            q.all({ r: QueryResult, cm: HashMap<String, Int64> =>
+                let id = r.get<Int64>(0)
+                if (id == 2) {
+                    throw QueryException("mapper boom on row 2")
+                }
+                0
+            })
+            @Fail("expected QueryException from mapper")
+        } catch (e: QueryException) {
+            @Expect(e.message, "mapper boom on row 2")
+        }
+    }
+
+    @TestCase
     public func testProcessIncludedAddsJoins(): Unit {
         let q = Query<Int64>()
         q.select([Expr.Column("id"), Expr.Column("name")])

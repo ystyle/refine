@@ -368,19 +368,15 @@ public class Query<T> {
         }
         var entities = ArrayList<T>()
         while (result.next()) {
-            try {
-                let entity = mapper(result, columnMap)
-                if (typeName != "") {
-                    let s = Scope<T>(entity)
-                    match (this.ref) {
-                        case Some(rf) => rf.executeHooks(typeName, HookKind.AfterFind, s)
-                        case None => executeHooks(typeName, HookKind.AfterFind, s)
-                    }
+            let entity = mapper(result, columnMap)
+            if (typeName != "") {
+                let s = Scope<T>(entity)
+                match (this.ref) {
+                    case Some(rf) => rf.executeHooks(typeName, HookKind.AfterFind, s)
+                    case None => executeHooks(typeName, HookKind.AfterFind, s)
                 }
-                entities.add(entity)
-            } catch (_: Exception) {
-                ()
             }
+            entities.add(entity)
         }
         closeExecutor(exec)
         entities.toArray()
