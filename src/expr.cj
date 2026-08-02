@@ -49,6 +49,7 @@ public enum Expr {
     | Column(String)
     | Value(Any)
     | Binary(Expr, BinOp, Expr)
+    | Range(Expr, Expr, Expr)  // BETWEEN low AND high（三操作数，Binary 表达不了合法 BETWEEN SQL）
     | Unary(UnaryOp, Expr)
     | FuncCall(String, Array<Expr>)
     | Ordered(Expr, String)    // Column with sort direction: "ASC" / "DESC"

@@ -429,6 +429,65 @@ public class PostgreSQLDialectTest {
         @Expect(sql.contains("<>"), true)
     }
 
+    // I16: Between 用 Expr.Range（三操作数）渲染成 `BETWEEN $1 AND $2`，参数编号按 low/high 顺序延续
+    @TestCase
+    public func testRenderBetween(): Unit {
+        let dialect = PostgreSQLDialect()
+        let stmt = Statement()
+        stmt.addClause(SelectClause([Column("id")]))
+        stmt.addClause(FromClause("t"))
+        stmt.addClause(WhereClause([Expr.Range(Column("age"), Value(18), Value(65))]))
+        let (sql, params) = dialect.render(stmt)
+        @Expect(sql, "SELECT \"id\" FROM \"t\" WHERE \"age\" BETWEEN $1 AND $2")
+        @Expect(params.size, 2)
+        @Expect(checkInt(params[0], 18))
+        @Expect(checkInt(params[1], 65))
+    }
+
+    // I16: Col.between 便捷方法生成 Expr.Range，渲染与 Range 一致
+    @TestCase
+    public func testRenderColBetween(): Unit {
+        let dialect = PostgreSQLDialect()
+        let stmt = Statement()
+        stmt.addClause(SelectClause([Column("id")]))
+        stmt.addClause(FromClause("t"))
+        stmt.addClause(WhereClause([Col<Int64>("age").between(18, 65)]))
+        let (sql, params) = dialect.render(stmt)
+        @Expect(sql, "SELECT \"id\" FROM \"t\" WHERE \"age\" BETWEEN $1 AND $2")
+        @Expect(params.size, 2)
+    }
+
+    // I16: Col.inSubquery 便捷方法生成 IN (SELECT ...)
+    @TestCase
+    public func testRenderInSubqueryCol(): Unit {
+        let dialect = PostgreSQLDialect()
+        let inner = Statement()
+        inner.addClause(SelectClause([Column("id")]))
+        inner.addClause(FromClause("t"))
+        let outer = Statement()
+        outer.addClause(SelectClause([Column("x")]))
+        outer.addClause(FromClause("parent"))
+        outer.addClause(WhereClause([Col<Int64>("x").inSubquery(inner)]))
+        let (sql, _) = dialect.render(outer)
+        @Expect(sql, "SELECT \"x\" FROM \"parent\" WHERE \"x\" IN (SELECT \"id\" FROM \"t\")")
+    }
+
+    // I16: 直接构造 Binary(x, Between, y) 是坏 SQL（缺 AND high），渲染必须拒绝并指引 between()
+    @TestCase
+    public func testRenderBetweenBinaryRejected(): Unit {
+        let dialect = PostgreSQLDialect()
+        let stmt = Statement()
+        stmt.addClause(SelectClause([Column("id")]))
+        stmt.addClause(FromClause("t"))
+        stmt.addClause(WhereClause([Binary(Column("a"), Between, Value(1))]))
+        try {
+            let _ = dialect.render(stmt)
+            @Fail("expected Between binary rejection")
+        } catch (e: Exception) {
+            @Expect(e.message.contains("between"), true)
+        }
+    }
+
     @TestCase
     public func testRenderOrderByBeforeLimit(): Unit {
         let dialect = PostgreSQLDialect()

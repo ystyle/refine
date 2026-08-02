@@ -161,4 +161,31 @@ public class ExprTest {
             case _ => @Fail("expected Binary")
         }
     }
+
+    @TestCase
+    public func testRangeConstruction(): Unit {
+        let expr = Expr.Range(Expr.Column("age"), Expr.Value(18), Expr.Value(65))
+        match (expr) {
+            case Expr.Range(subject, low, high) =>
+                match (subject) {
+                    case Expr.Column(n) => @Expect(n, "age")
+                    case _ => @Fail("expected Column")
+                }
+                match (low) {
+                    case Expr.Value(v) => match (v) {
+                        case i: Int64 => @Expect(i, 18)
+                        case _ => @Fail("expected Int64")
+                    }
+                    case _ => @Fail("expected Value")
+                }
+                match (high) {
+                    case Expr.Value(v) => match (v) {
+                        case i: Int64 => @Expect(i, 65)
+                        case _ => @Fail("expected Int64")
+                    }
+                    case _ => @Fail("expected Value")
+                }
+            case _ => @Fail("expected Range")
+        }
+    }
 }

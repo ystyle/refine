@@ -214,4 +214,52 @@ public class ColTest {
             case _ => @Fail("expected Binary")
         }
     }
+
+    @TestCase
+    public func testColBetween(): Unit {
+        let col = Col<Int64>("age")
+        let expr = col.between(18, 65)
+        match (expr) {
+            case Expr.Range(subject, low, high) =>
+                match (subject) {
+                    case Expr.Column(n) => @Expect(n, "age")
+                    case _ => @Fail("expected Column subject")
+                }
+                match (low) {
+                    case Expr.Value(v) => match (v) {
+                        case i: Int64 => @Expect(i, 18)
+                        case _ => @Fail("expected Int64 low")
+                    }
+                    case _ => @Fail("expected Value low")
+                }
+                match (high) {
+                    case Expr.Value(v) => match (v) {
+                        case i: Int64 => @Expect(i, 65)
+                        case _ => @Fail("expected Int64 high")
+                    }
+                    case _ => @Fail("expected Value high")
+                }
+            case _ => @Fail("expected Range")
+        }
+    }
+
+    @TestCase
+    public func testColInSubquery(): Unit {
+        let inner = Statement()
+        let col = Col<Int64>("id")
+        let expr = col.inSubquery(inner)
+        match (expr) {
+            case Expr.Binary(l, op, r) =>
+                @Expect(op, BinOp.In)
+                match (l) {
+                    case Expr.Column(n) => @Expect(n, "id")
+                    case _ => @Fail("expected Column")
+                }
+                match (r) {
+                    case Expr.SubQuery(s) => @Expect(true, true)
+                    case _ => @Fail("expected SubQuery")
+                }
+            case _ => @Fail("expected Binary")
+        }
+    }
 }

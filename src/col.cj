@@ -36,6 +36,17 @@ public struct Col<T> {
         }
         result
     }
+
+    // I16: BETWEEN low AND high（Expr.Range 三操作数，Binary 无法表达合法 BETWEEN SQL）
+    // 注意必须写 Expr.Range：std.core.Range 会遮蔽裸 Range 标识符
+    public func between(low: T, high: T): Expr {
+        Expr.Range(Column(name), Value(low), Value(high))
+    }
+
+    // I16: `in` 是仓颉关键字，方法名用 inSubquery；生成 `col IN (SELECT ...)`
+    public func inSubquery(sub: Statement): Expr {
+        Binary(Column(name), In, SubQuery(sub))
+    }
 }
 
 extend Col<String> {

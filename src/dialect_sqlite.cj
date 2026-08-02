@@ -97,6 +97,8 @@ public class SQLiteDialect <: Dialect {
                 "?"
             case Binary(l, op, r) =>
                 renderExpr(l) + " " + renderOp(op) + " " + renderExpr(r)
+            case Range(subject, low, high) =>
+                renderExpr(subject) + " BETWEEN " + renderExpr(low) + " AND " + renderExpr(high)
             case Unary(op, e) =>
                 renderUnaryOp(op) + " " + renderExpr(e)
             case FuncCall(n, args) =>
@@ -142,7 +144,7 @@ public class SQLiteDialect <: Dialect {
             case Like => "LIKE"
             case In => "IN"
             case NotIn => "NOT IN"
-            case Between => "BETWEEN"
+            case Between => throw Exception("BinOp.Between 不是二元操作符：Binary(x, Between, y) 缺 AND high，改用 Expr.Range（Col.between(low, high)）")
             case Add => "+"
             case Sub => "-"
             case Mul => "*"
