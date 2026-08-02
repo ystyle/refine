@@ -3836,6 +3836,90 @@ public class RelationMutationTest {
     }
 }
 
+// I10 文档同步验证：文档 3.2.1/3.3/4.3.2 使用的 `@Rel[has_many, target: X, by: "y"]`、
+// `@Ref[ref_to, target: X, by: "y", fields: [...]]` 具名参数语法必须真实可用，
+// 且 has_many/ref_many 字段用 ArrayList（文档曾示例 Option<List<...>>，实现不支持 List）
+@Refine
+public class DocRelComment {
+    var id: Int64 = 0
+    var body: String = ""
+    var post_id: Int64 = 0
+}
+
+@Refine
+public class DocRelUser {
+    var id: Int64 = 0
+    var name: String = ""
+}
+
+@Refine
+public class DocRelPost {
+    var id: Int64 = 0
+    var title: String = ""
+    var authorId: Int64 = 0
+
+    @Rel[has_many, target: DocRelComment, by: "post_id"]
+    var comments: ArrayList<DocRelComment> = ArrayList<DocRelComment>()
+
+    @Ref[ref_to, target: DocRelUser, by: "authorId", fields: ["id", "name"]]
+    var author: Option<DocRelUser> = None
+}
+
+@Refine
+public class DocRelAuthor {
+    var id: Int64 = 0
+    var name: String = ""
+}
+
+@Refine
+public class DocRelBook {
+    var id: Int64 = 0
+    var title: String = ""
+
+    @Ref[ref_many, target: DocRelAuthor, via: "doc_rel_book_authors", fields: ["id", "name"]]
+    var authors: ArrayList<DocRelAuthor> = ArrayList<DocRelAuthor>()
+}
+
+@Test
+public class DocSyncSyntaxTest {
+    @TestCase
+    public func testDocSyntaxRelsResolve(): Unit {
+        @Expect(DocRelPostRel.comments.name, "comments")
+        @Expect(DocRelPostRel.author.name, "author")
+        @Expect(DocRelBookRel.authors.name, "authors")
+    }
+
+    @TestCase
+    public func testDocSyntaxHasManyMethodsWork(): Unit {
+        clearHooks()
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        let post = DocRelPost()
+        post.id = 1
+        let c = DocRelComment()
+        c.body = "doc"
+        post.addComments(tx, c)
+        @Expect(conn.stmt.capturedSql, "INSERT INTO \"docRelComment\" (\"body\", \"post_id\") VALUES (?, ?)")
+        @Expect(c.post_id, 1)
+    }
+
+    // 验证 4.4 文档示例「预加载 + 覆盖字段」的真实可编译写法：
+    // include(rel, fields) 双参重载（setFields 链式返回 Relation 基类，不能直接传给 include(IRelation)）
+    @TestCase
+    public func testDocSyntaxIncludeTwoArg(): Unit {
+        clearHooks()
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        let q = DocRelBook.query()
+            .select([Column("id")])
+            .from("docRelBook")
+            .include(DocRelBookRel.authors, [Col<Any>("name")])
+            .using(tx)
+        let _ = q.all()
+        @Expect(conn.stmt.capturedSql.contains("LEFT JOIN"), true)
+    }
+}
+
 private func profileResult(id: Int64, bio: String, uid: Int64): QueryResult {
     let cols: Array<ColumnInfo> = [
         MapperMockColumnInfo("id", false),

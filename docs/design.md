@@ -68,9 +68,15 @@ class User {
 
 ```cangjie
 // 语法
-@Rel[hasOne,   target: TargetModel, by: "foreignKeyField"]
-@Rel[hasMany,  target: TargetModel, by: "foreignKeyField"]
+@Rel[has_one,  target: TargetModel, by: "foreignKeyField"]
+@Rel[has_many, target: TargetModel, by: "foreignKeyField"]
 ```
+
+关联字段的类型约定：
+
+- 单值关系（`has_one` / `ref_to`）：字段声明为 `Option<T>`，如 `var profile: Option<Profile> = None`。
+- 集合关系（`has_many` / `ref_many`）：字段声明为 `ArrayList<T>`，如 `var posts: ArrayList<Post> = ArrayList<Post>()`。
+- **不支持 `List` / `Option<List<...>>`**：宏只识别 `ArrayList` / `Array` / `Option` 类型前缀，`List` 接口类型不被识别为关联。
 
 #### 3.2.2 `@Ref` —— 引用关系（支持字段选择）
 
@@ -90,10 +96,10 @@ class User {
     var id: Int64 = 0
     var name: String = ""
 
-    @Rel[hasMany, target: Post, by: "authorId"]
-    var posts: Option<List<Post>> = None
+    @Rel[has_many, target: Post, by: "authorId"]
+    var posts: ArrayList<Post> = ArrayList<Post>()
 
-    @Rel[hasOne, target: Profile, by: "userId"]
+    @Rel[has_one, target: Profile, by: "userId"]
     var profile: Option<Profile> = None
 }
 
@@ -108,7 +114,7 @@ class Post {
     var author: Option<User> = None
 
     @Ref[ref_many, target: Tag, via: "post_tags", fields: ["id", "name"]]
-    var tags: Option<List<Tag>> = None
+    var tags: ArrayList<Tag> = ArrayList<Tag>()
 }
 
 @Refine
@@ -117,7 +123,7 @@ class Tag {
     var name: String = ""
 
     @Ref[ref_many, target: Post, via: "post_tags", fields: ["id", "title"]]
-    var posts: Option<List<Post>> = None
+    var posts: ArrayList<Post> = ArrayList<Post>()
 }
 ```
 
@@ -134,6 +140,7 @@ enum Expr {
     | Column(String)              // 列引用
     | Value(Any)                  // 字面值
     | Binary(Expr, BinOp, Expr)   // 二元运算（注：仓颉不允许变体名与类型同名，故用 Binary 而非 BinOp）
+    | Range(Expr, Expr, Expr)     // BETWEEN low AND high（三操作数，见 Col.between）
     | Unary(UnaryOp, Expr)        // 一元运算
     | FuncCall(String, Array<Expr>) // 函数调用
     | SubQuery(Statement)         // 子查询
@@ -151,6 +158,9 @@ enum UnaryOp {
     | Not | IsNull | IsNotNull
 }
 ```
+
+- `BinOp.Between` **不是二元操作符**（`Binary(x, Between, y)` 渲染缺 `AND high`，方言会直接抛错）。
+  BETWEEN 必须用三操作数的 `Expr.Range`，通过 `Col.between(low, high)` 便捷方法构造。
 
 `Expr` 上的便捷方法：
 
@@ -185,41 +195,61 @@ struct Col<T> {
     var name: String
 
     // 关系操作符 → 返回 Expr（仓颉允许操作符返回任意类型）
-    public operator func ==(rhs: T): Expr  { BinOp(Column(name), Eq, Value(rhs)) }
-    public operator func !=(rhs: T): Expr  { BinOp(Column(name), Ne, Value(rhs)) }
-    public operator func >(rhs: T): Expr   { BinOp(Column(name), Gt, Value(rhs)) }
-    public operator func <(rhs: T): Expr   { BinOp(Column(name), Lt, Value(rhs)) }
-    public operator func >=(rhs: T): Expr  { BinOp(Column(name), Ge, Value(rhs)) }
-    public operator func <=(rhs: T): Expr  { BinOp(Column(name), Le, Value(rhs)) }
+    public operator func ==(rhs: T): Expr  { Binary(Column(name), Eq, Value(rhs)) }
+    public operator func !=(rhs: T): Expr  { Binary(Column(name), Ne, Value(rhs)) }
+    public operator func >(rhs: T): Expr   { Binary(Column(name), Gt, Value(rhs)) }
+    public operator func <(rhs: T): Expr   { Binary(Column(name), Lt, Value(rhs)) }
+    public operator func >=(rhs: T): Expr  { Binary(Column(name), Ge, Value(rhs)) }
+    public operator func <=(rhs: T): Expr  { Binary(Column(name), Le, Value(rhs)) }
 
     // 列间比较：Col<T> vs Col<T>
-    public operator func ==(rhs: Col<T>): Expr { BinOp(Column(name), Eq, Column(rhs.name)) }
-    public operator func !=(rhs: Col<T>): Expr { BinOp(Column(name), Ne, Column(rhs.name)) }
+    public operator func ==(rhs: Col<T>): Expr { Binary(Column(name), Eq, Column(rhs.name)) }
+    public operator func !=(rhs: Col<T>): Expr { Binary(Column(name), Ne, Column(rhs.name)) }
 
     // 排序
-    public func asc(): Expr  { FuncCall("ASC", [Column(name)]) }
-    public func desc(): Expr { FuncCall("DESC", [Column(name)]) }
+    public func asc(): Expr  { Ordered(Column(name), "ASC") }
+    public func desc(): Expr { Ordered(Column(name), "DESC") }
 
-    // IN / NOT IN
-    public func `in`(values: Array<T>): Expr {
-        BinOp(Column(name), In, Value(values))
+    // IN / NOT IN（OR 链 / AND 链；空数组返回 Raw 兜底，避免 IN () 语法错误）
+    public func anyOf(values: Array<T>): Expr {
+        if (values.size == 0) { return Raw("1 = 0") }
+        var result = Binary(Column(name), Eq, Value(values[0]))
+        for (i in 1..values.size) {
+            result = Binary(result, Or, Binary(Column(name), Eq, Value(values[i])))
+        }
+        result
     }
-    public func notIn(values: Array<T>): Expr {
-        BinOp(Column(name), NotIn, Value(values))
+    public func notAnyOf(values: Array<T>): Expr {
+        if (values.size == 0) { return Raw("1 = 1") }
+        var result = Binary(Column(name), Ne, Value(values[0]))
+        for (i in 1..values.size) {
+            result = Binary(result, And, Binary(Column(name), Ne, Value(values[i])))
+        }
+        result
+    }
+
+    // BETWEEN low AND high → 三操作数 Expr.Range（`in`/`between` 均不是仓颉关键字）
+    public func between(low: T, high: T): Expr {
+        Expr.Range(Column(name), Value(low), Value(high))
+    }
+
+    // `col IN (SELECT ...)`：`in` 是仓颉关键字，方法名用 inSubquery
+    public func inSubquery(sub: Statement): Expr {
+        Binary(Column(name), In, SubQuery(sub))
     }
 }
 
 // String 专用扩展
 extend Col<String> {
     public func like(pattern: String): Expr {
-        FuncCall("LIKE", [Column(name), Value(pattern)])
+        Binary(Column(name), Like, Value(pattern))
     }
 }
 
 // Bool 专用：列自身作为条件（WHERE published）
 extend Col<Bool> {
-    public func isTrue(): Expr  { UnaryOp(IsNotNull, Column(name)) }
-    public func isFalse(): Expr { BinOp(Column(name), Eq, Value(false)) }
+    public func isTrue(): Expr  { Unary(IsNotNull, Column(name)) }
+    public func isFalse(): Expr { Binary(Column(name), Eq, Value(false)) }
 }
 ```
 
@@ -245,12 +275,14 @@ class Relation<TTarget> {
     var fields: Array<Col<Any>>    // 默认加载的字段
     var condition: Option<Expr>    // 自定义 ON 条件
 
-    public func fields(fs: Array<Col<Any>>): this {
+    public func setFields(fs: Array<Col<Any>>): Relation<TTarget> {
         this.fields = fs
         this
     }
 }
 ```
+
+> 注：仓颉不允许方法与字段同名，字段覆盖方法命名为 `setFields` 而非 `fields`。
 
 类型参数 `TTarget` 确保指向目标实体，但 `include()` 统一接收 `Relation<TTarget>` 的父类型。仓颉中所有 `Relation<TTarget>` 可通过上界通配共享同一接口：
 
@@ -273,7 +305,7 @@ class Post {
     var author: Option<User> = None
 
     @Ref[ref_many, target: Tag, via: "post_tags", fields: ["id", "name"]]
-    var tags: Option<List<Tag>> = None
+    var tags: ArrayList<Tag> = ArrayList<Tag>()
 }
 ```
 
@@ -284,7 +316,7 @@ class Post {
 class PostRel {
     static let author = RefTo<User>(
         name: "author",
-        fk: Post.col.authorId,
+        fk: Col<Any>("authorId"),
         fields: [User.col.id, User.col.name]
     )
     static let tags = RefMany<Tag>(
@@ -293,28 +325,15 @@ class PostRel {
         fields: [Tag.col.id, Tag.col.name]
     )
 }
-
-// RefTo / RefMany 继承 Relation<TTarget>
-class RefTo<TTarget> <: Relation<TTarget> {
-    public init(name: String, fk: Col<Any>, fields: Array<Col<Any>>) {
-        this.kind = RelationKind.RefTo
-        this.foreignKey = fk.name
-        this.fields = fields
-    }
-}
-class RefMany<TTarget> <: Relation<TTarget> {
-    public init(name: String, via: String, fields: Array<Col<Any>>) {
-        this.kind = RelationKind.RefMany
-        this.via = Some(via)
-        this.fields = fields
-    }
-}
 ```
 
-**类型安全体现在**：
-- `Post.rel.author` — 拼错标识符 → 编译报错 ✅
-- `User.col.id` / `Tag.col.name` — 字段不存在 → 编译报错 ✅
-- `"authorId"`、`"post_tags"` 等字符串由宏从 `@Ref` 属性提取，用户不接触 ✅
+**类型安全的边界**：
+
+- `Post.rel.author`、`Tag.col.name` 等**宏生成的标识符**：拼错 → 编译报错 ✅
+  （`Rel` 描述符类与 `Cols` 结构体的成员是编译期实体）
+- 但 `@Ref` / `@Rel` 注解里的 `by` / `via` / `fields` 是**普通字符串**，宏**不做跨类校验**：
+  拼错（如 `by: "authorrId"` 或 `fields: ["id", "namee"]`）能编译通过，
+  **运行时**才会因 SQL 引用不存在的列而报错 ⚠️。
 
 ### 4.4 查询构建器 `Query<T>`
 
@@ -401,9 +420,10 @@ let postsWithAuthor = Post.query()
     .all()
 // postsWithAuthor[0].getAuthor() 直接返回，不触发二次查询
 
-// 预加载 + 覆盖字段
+// 预加载 + 覆盖字段（include 双参重载）
+// 注：setFields 返回 Relation 基类、不能直接链式传给 include(IRelation)，字段覆盖用双参重载
 let postsWithTags = Post.query()
-    .include(Post.rel.tags.fields([Tag.col.name]))
+    .include(Post.rel.tags, [Col<Any>("name")])
     .all()
 
 // 聚合查询：按作者分组统计文章数
@@ -427,7 +447,7 @@ let stats = Post.query()
 | `func addPost(post: Post): User` | 关联新文章 |
 | `func removePost(post: Post): User` | 解除关联 |
 | `func clearPosts(): User` | 清空所有文章 |
-| `func loadPosts(): List<Post>` | 显式加载 |
+| `func loadPosts(): ArrayList<Post>` | 显式加载 |
 | `func setProfile(profile: Profile): User` | 设置/替换资料 |
 | `func removeProfile(): User` | 移除资料 |
 
@@ -439,8 +459,8 @@ let stats = Post.query()
 | :--- | :--- |
 | `func loadAuthor(): User?` | 按 `fields` 配置加载作者 |
 | `func getAuthor(): User?` | 返回已预加载的对象 |
-| `func loadTags(): List<Tag>` | 加载标签集合 |
-| `func getTags(): List<Tag>` | 返回已预加载的集合 |
+| `func loadTags(): ArrayList<Tag>` | 加载标签集合 |
+| `func getTags(): ArrayList<Tag>` | 返回已预加载的集合 |
 
 **关键约束**：`@Ref` **不生成** `setAuthor()`、`addTag()` 等修改方法。
 
