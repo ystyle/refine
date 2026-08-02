@@ -238,6 +238,32 @@ public class MySQLDialectTest {
         @Expect(sql, "SELECT `id` FROM `users` LIMIT 10 OFFSET 20")
     }
 
+    // 回归（I3）：MySQL 裸 OFFSET（无 LIMIT）是语法错误，必须补 `LIMIT 18446744073709551615` 哨兵
+    @TestCase
+    public func testRenderOffsetWithoutLimitAddsSentinel(): Unit {
+        let dialect = MySQLDialect()
+        let stmt = Statement()
+        stmt.addClause(SelectClause([Column("id")]))
+        stmt.addClause(FromClause("users"))
+        stmt.addClause(OffsetClause(20))
+        let (sql, _) = dialect.render(stmt)
+        @Expect(sql, "SELECT `id` FROM `users` LIMIT 18446744073709551615 OFFSET 20")
+    }
+
+    // 回归（I3）：LIMIT + OFFSET 并存时不得插入哨兵
+    @TestCase
+    public func testRenderLimitOffsetNoSentinel(): Unit {
+        let dialect = MySQLDialect()
+        let stmt = Statement()
+        stmt.addClause(SelectClause([Column("id")]))
+        stmt.addClause(FromClause("users"))
+        stmt.addClause(LimitClause(10))
+        stmt.addClause(OffsetClause(20))
+        let (sql, _) = dialect.render(stmt)
+        @Expect(sql.contains("18446744073709551615"), false)
+        @Expect(sql, "SELECT `id` FROM `users` LIMIT 10 OFFSET 20")
+    }
+
     @TestCase
     public func testRenderUnaryOps(): Unit {
         let dialect = MySQLDialect()

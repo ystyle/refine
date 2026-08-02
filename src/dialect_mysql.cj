@@ -26,6 +26,8 @@ public class MySQLDialect <: Dialect {
         var orderBy = ArrayList<String>()
         var limit = ArrayList<String>()
         var hasSelect = false
+        var hasLimit = false
+        var hasOffset = false
         var updateSQL = ""
         var deleteSQL = ""
         var hasLock = false
@@ -50,8 +52,10 @@ public class MySQLDialect <: Dialect {
                 case HavingClause(predicates) =>
                     having.add("HAVING " + renderAndList(predicates))
                 case LimitClause(n) =>
+                    hasLimit = true
                     limit.add("LIMIT " + n.toString())
                 case OffsetClause(n) =>
+                    hasOffset = true
                     limit.add("OFFSET " + n.toString())
                 case JoinClause(table, alias, on) =>
                     joins.add("LEFT JOIN " + quoteIdentifier(table) + " " + quoteIdentifier(alias) + " ON " + renderExpr(on))
@@ -84,6 +88,9 @@ public class MySQLDialect <: Dialect {
             for (s in groupBy) { parts.add(s) }
             for (s in having) { parts.add(s) }
             for (s in orderBy) { parts.add(s) }
+            // 回归（I3）：MySQL 裸 OFFSET（无 LIMIT）是语法错误，必须补 `LIMIT 18446744073709551615` 哨兵；
+            // LIMIT+OFFSET 并存时保持原样。UPDATE/DELETE 路径不经过此处，不受影响。
+            if (hasOffset && !hasLimit) { parts.add("LIMIT 18446744073709551615") }
             for (s in limit) { parts.add(s) }
             if (hasLock) { parts.add("FOR UPDATE") }
         }
