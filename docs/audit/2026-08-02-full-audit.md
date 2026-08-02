@@ -3,7 +3,7 @@
 > 审查日期：2026-08-02
 > 审查范围：全部 `src/` 运行时 + `src/macros/` 宏层 + 三方言 + 三迁移器
 > 审查方式：三路并行深度审查（核心运行时 / 方言+迁移 / 宏生成层），逐行核对 + 交叉验证
-> 状态：**Not ready for release** — 存在 9 个 Critical，修复后需补测试沉淀
+> 状态：**Not ready for release** — 存在 9 个 Critical + 19 个 Important，修复后需补测试沉淀。下一项排期：**I19** 宏写路径未引号标识符（由 I2 修复暴露，2026-08-02）
 
 ---
 
@@ -170,6 +170,12 @@
 - **问题**：upsertSQL 只返回 SQL 不告知额外参数个数，macro 层按方言名字符串特判给 mysql 补 auditUpdate 参数——脆弱。
 - **修法**：返回 (sql, extraParamCount) 或统一协议。
 
+### I19. 宏层写路径标识符未加引号 → PG 驼峰实体可读不可写
+- **位置**：`src/macros/sql_gen.cj:37,221,300,312,319,323`（buildInsertSQLString/buildUpdateSQLString/buildDeleteSQLString/buildSoftDeleteSQLString/buildBatchInsertSQLFunc/buildBatchUpdateSQLFunc）
+- **问题**：写路径 SQL 的表名/列名未引号包裹，PG 未加引号标识符折叠小写，与 I2 修复后保留大小写的建表/读路径不一致 → tx.save/update/delete 无法命中驼峰表/列。
+- **修法**：宏写路径改为方言感知的引号包裹（与读路径 quoteIdentifier、upsert 一致）。
+- **备注**：由 I2 修复暴露（2026-08-02），列为下一项排期任务。
+
 ---
 
 ## 四、Minor（Nice to Have）
@@ -239,7 +245,7 @@
   C9  标识符注入
 
 第三优先级（功能/一致性）：
-  C 系列完成后 → I1~I18 按影响排序
+  C 系列完成后 → I1~I19 按影响排序
   → F1~F3 follow-up
   → M1~M24 minor
 ```
