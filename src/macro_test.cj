@@ -279,6 +279,30 @@ public class NestedUser {
 public class NestedTag {
     var id: Int64 = 0
     var name: String = ""
+
+    // Task 6 batch-include 回归 fixture：ref_many（NestedUser.tags）目标上的嵌套
+    // has_many notes。两个 NestedUser 共享同一 tag 时，assembleRefMany 收集的目标
+    // 若不按 target id 去重，递归层会对同一 tag 装配两次（副本实例各跑一次），
+    // 再往下一层（NestedTagNote.items）时共享的 note 实例被 setter .add() 追加两次。
+    @Rel[has_many, NestedTagNote, tag_id]
+    var notes: ArrayList<NestedTagNote> = ArrayList<NestedTagNote>()
+}
+
+@Refine
+public class NestedTagNote {
+    var id: Int64 = 0
+    var body: String = ""
+    var tag_id: Int64 = 0
+
+    @Rel[has_many, NestedTagItem, note_id]
+    var items: ArrayList<NestedTagItem> = ArrayList<NestedTagItem>()
+}
+
+@Refine
+public class NestedTagItem {
+    var id: Int64 = 0
+    var name: String = ""
+    var note_id: Int64 = 0
 }
 
 @Refine

@@ -2387,6 +2387,128 @@ public class NestedIncludeTest {
         @Expect(entities[0].author.getOrThrow().tags[0].id, 10)
     }
 
+    // Task 6 batch-include 回归：顶层 ref_many → 嵌套 has_many，两个主实体共享同一目标。
+    // NestedUser.tags（ref_many NestedTag）装配出的 tag 目标上递归装配 notes（has_many）。
+    // 两个 NestedUser 都关联 tag t1（junction 两行）→ assembleRefMany 收集的目标列表
+    // 含同一 tag id（10）的两个副本实例。修复前不按 target id 去重，嵌套层对两个副本
+    // 各自跑一次 notes 装配；嵌套层 assembleCollections 再把共享的 note 实例重复收集进
+    // targets，往下一层（NestedTagNote.items）时 setter .add() 对同一 note 追加两次。
+    @TestCase
+    public func testNestedRefManySharedTargetDedup(): Unit {
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        let mainCols: Array<SqlColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("name", false),
+        ]
+        let mainRows = [
+            Array<Any>(2, {i => if (i == 0) { 1 } else { "u1" }}),
+            Array<Any>(2, {i => if (i == 0) { 2 } else { "u2" }}),
+        ]
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(mainCols, mainRows))
+        let tagCols: Array<SqlColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("name", false),
+            MapperMockColumnInfo("nestedUser_id", false),
+        ]
+        let tagRows = [
+            Array<Any>(3, {i => if (i == 0) { 10 } else if (i == 1) { "t1" } else { 1 }}),
+            Array<Any>(3, {i => if (i == 0) { 10 } else if (i == 1) { "t1" } else { 2 }}),
+        ]
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(tagCols, tagRows))
+        let noteCols: Array<SqlColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("tag_id", false),
+            MapperMockColumnInfo("body", false),
+        ]
+        let noteRows = [
+            Array<Any>(3, {i => if (i == 0) { 100 } else if (i == 1) { 10 } else { "n1" }}),
+            Array<Any>(3, {i => if (i == 0) { 101 } else if (i == 1) { 10 } else { "n2" }}),
+        ]
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(noteCols, noteRows))
+        let q = NestedUser.query()
+            .include(NestedUserRel.tags.withInclude(NestedTagRel.notes))
+            .using(tx)
+        let entities = q.all()
+        // 主查询 + junction 批量 + notes 批量 = 三次查询；notes 装配每 tag id 只跑一次
+        @Expect(conn.stmt.capturedSqlHistory.size, 3)
+        @Expect(conn.stmt.capturedSqlHistory[1].contains("FROM \"nestedUser_tags\" JOIN \"nestedTag\""), true)
+        @Expect(conn.stmt.capturedSqlHistory[2].contains("FROM \"nestedTagNote\""), true)
+        @Expect(entities.size, 2)
+        @Expect(entities[0].tags.size, 1)
+        @Expect(entities[0].tags[0].id, 10)
+        @Expect(entities[0].tags[0].notes.size, 2)
+        @Expect(entities[0].tags[0].notes[0].body, "n1")
+        @Expect(entities[0].tags[0].notes[1].body, "n2")
+        @Expect(entities[1].tags.size, 1)
+        @Expect(entities[1].tags[0].id, 10)
+        @Expect(entities[1].tags[0].notes.size, 2)
+    }
+
+    // 共享目标再往下一层（ref_many → has_many → has_many）：修复前嵌套层 assembleCollections
+    // 把共享的 note 实例（同一 tag 的两个副本各命中同一分组）重复收集进 targets，items 递归
+    // 对同一 note 跑两次 → note.items 被 .add() 追加成 [i1, i1]。修复后每 target id 只装配一次。
+    @TestCase
+    public func testNestedRefManySharedTargetNoDeepDuplicate(): Unit {
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        let mainCols: Array<SqlColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("name", false),
+        ]
+        let mainRows = [
+            Array<Any>(2, {i => if (i == 0) { 1 } else { "u1" }}),
+            Array<Any>(2, {i => if (i == 0) { 2 } else { "u2" }}),
+        ]
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(mainCols, mainRows))
+        let tagCols: Array<SqlColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("name", false),
+            MapperMockColumnInfo("nestedUser_id", false),
+        ]
+        let tagRows = [
+            Array<Any>(3, {i => if (i == 0) { 10 } else if (i == 1) { "t1" } else { 1 }}),
+            Array<Any>(3, {i => if (i == 0) { 10 } else if (i == 1) { "t1" } else { 2 }}),
+        ]
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(tagCols, tagRows))
+        let noteCols: Array<SqlColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("tag_id", false),
+            MapperMockColumnInfo("body", false),
+        ]
+        let noteRows = [
+            Array<Any>(3, {i => if (i == 0) { 100 } else if (i == 1) { 10 } else { "n1" }}),
+            Array<Any>(3, {i => if (i == 0) { 101 } else if (i == 1) { 10 } else { "n2" }}),
+        ]
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(noteCols, noteRows))
+        let itemCols: Array<SqlColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("note_id", false),
+            MapperMockColumnInfo("name", false),
+        ]
+        let itemRows = [
+            Array<Any>(3, {i => if (i == 0) { 1000 } else if (i == 1) { 100 } else { "i1" }}),
+            Array<Any>(3, {i => if (i == 0) { 1001 } else if (i == 1) { 101 } else { "i2" }}),
+        ]
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(itemCols, itemRows))
+        let q = NestedUser.query()
+            .include(NestedUserRel.tags
+                .withInclude(NestedTagRel.notes.withInclude(NestedTagNoteRel.items)))
+            .using(tx)
+        let entities = q.all()
+        // 主查询 + junction + notes + items = 四次查询
+        @Expect(conn.stmt.capturedSqlHistory.size, 4)
+        @Expect(entities.size, 2)
+        @Expect(entities[0].tags.size, 1)
+        @Expect(entities[0].tags[0].notes.size, 2)
+        @Expect(entities[0].tags[0].notes[0].items.size, 1)
+        @Expect(entities[0].tags[0].notes[0].items[0].id, 1000)
+        @Expect(entities[0].tags[0].notes[0].items[0].name, "i1")
+        @Expect(entities[0].tags[0].notes[1].items.size, 1)
+        @Expect(entities[0].tags[0].notes[1].items[0].id, 1001)
+        @Expect(entities[0].tags[0].notes[1].items[0].name, "i2")
+    }
+
     // 嵌套 include 环（自定义 IRelation getNested 返回自身）：深度守卫必须终止递归并抛错。
     @TestCase
     public func testNestedCycleDepthGuard(): Unit {

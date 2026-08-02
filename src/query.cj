@@ -826,6 +826,12 @@ public class Query<T> {
         // 3. 递归装配各关系的嵌套 include（目标实体为空时下一层早退，不产生额外查询）。
         //    下一层 sourceTable = 父关系的 targetTable（当前层实体的表），供嵌套 ref_many
         //    推导 junction 源列 `<当前层表>_id`。
+        //    已知限制（diamond include，Task 6 batch-include 记档延期）：同一层两条关系
+        //    指向同一目标表且带相同嵌套 include（如 author.withInclude(profile) +
+        //    editor.withInclude(profile)，两个用户目标相同时）会对该表发两条冗余批量
+        //    查询、嵌套 has_many 可能重复装配。按「目标表」去重的朴素守卫会把目标不同
+        //    （author≠editor）时第二条递归整体跳过造成漏数据，正确做法需按目标表合并
+        //    pairs 的目标与嵌套关系并去重，改动大，故记档延期。
         for ((rel, targets) in pairs) {
             let nested = rel.getNested()
             if (nested.size == 0) { continue }
@@ -888,8 +894,12 @@ public class Query<T> {
     //   6. 回填：主实体按各自主键命中分组，has_many 逐个 add、has_one 取组内第一条。
     //      fk 不匹配任何主实体（脏数据/查询边界）的组不会被装配，主实体不受影响。
     // Task 6 扩展：返回各关系实际装配到的目标实体数组（has_many 取组内全部、has_one 取
-    // 每条已装配实体的 ts[0]），供嵌套 include 递归装配下一层关联。rawIds 顶层来自
-    // rawIdExtractor（主查询映射循环收集）、嵌套层来自父关系的 getTargetIdExtractor。
+    // 每条已装配实体的 ts[0]，按 target id 去重），供嵌套 include 递归装配下一层关联。
+    // 去重理由：多个主实体命中同一目标分组（ref_to 共享目标、ref_many 共享目标的多副本
+    // 实例）时，组内目标实例是同一个对象，重复收集会让递归层对该实例的嵌套 has_many
+    // 跑两次、setter .add() 把子项追加成两份（同 assembleRefTo 的 targetSeen）。
+    // rawIds 顶层来自 rawIdExtractor（主查询映射循环收集）、嵌套层来自父关系的
+    // getTargetIdExtractor。
     private func assembleCollections<E>(
         exec: ExecutionContext,
         dialect: Dialect,
@@ -984,10 +994,17 @@ public class Query<T> {
 
             // 6. 回填：has_many 逐目标 add；has_one 取组内第一条（重复 fk 时取先读到的行）。
             //    同时收集该关系装配到的目标实体（has_many 取组内全部、has_one 取 ts[0]）。
+            //    收集按 target id（getTargetIdExtractor → fkKey）去重：多个主实体命中同一
+            //    目标分组时（如 ref_to 共享目标、或 ref_many 两个父实体共享同一 tag 的副本
+            //    实例），组内目标实例是同一个对象，重复收集会让递归层对该实例的嵌套
+            //    has_many 跑两次、setter .add() 把子项追加成两份。去重只影响递归层装配的
+            //    目标列表，单层 setter 仍按主实体逐次执行（同 assembleRefTo 的 targetSeen）。
             for (rel in rels2) {
                 let (kind, _, _, _, _, _) = rel.resolve()
                 let setter = rel.getFieldSetter()
+                let idExtractor = rel.getTargetIdExtractor()
                 var targets = ArrayList<Any>()
+                var targetSeen = HashMap<String, Bool>()
                 for (ei in 0..entities.size) {
                     let rawId = rawIds[ei]
                     if (isEmptyFk(rawId)) { continue }
@@ -995,10 +1012,21 @@ public class Query<T> {
                     match (groupMap.get(key)) {
                         case Some(ts) =>
                             if (kind == RelationKind.HasManyRel) {
-                                for (t in ts) { setter(entities[ei], t); targets.add(t) }
+                                for (t in ts) {
+                                    setter(entities[ei], t)
+                                    let tKey = fkKey(idExtractor(t))
+                                    if (!targetSeen.contains(tKey)) {
+                                        targetSeen[tKey] = true
+                                        targets.add(t)
+                                    }
+                                }
                             } else {
                                 setter(entities[ei], ts[0])
-                                targets.add(ts[0])
+                                let tKey = fkKey(idExtractor(ts[0]))
+                                if (!targetSeen.contains(tKey)) {
+                                    targetSeen[tKey] = true
+                                    targets.add(ts[0])
+                                }
                             }
                         case None => ()
                     }
@@ -1020,11 +1048,14 @@ public class Query<T> {
     //      `<源表>_id` 的字段，SELECT 中该目标列先于中间表源 id 列出现，buildColumnMap 对同名
     //      键「后写覆盖」（std HashMap.add 语义），分组键 srcCol 取到最后写入的中间表列索引、
     //      仍正确，但该假设的目标字段会错读到中间表源 id 值（target 表出现 `<源表>_id` 字段极罕见）；
-    //   5. 按中间表源 id 值分组建 HashMap<srcId, Array<TargetEntity>>；
+    //   5. 按中间表源 id 值分组建 HashMap<srcId, Array<TargetEntity>>；跨源组按目标主键 id
+    //      缓存实例（多个主实体共享同一目标时，所有父实体的关联列表持有同一个目标对象，
+    //      语义同 assembleRefTo 的 targetMap 缓存，见本方法第 5 步注释）；
     //   6. 回填：主实体按各自主键命中分组，逐个 add。孤儿行（中间表行指向已删目标）
     //      由 INNER JOIN 天然排除，不装配、不抛错。
-    // Task 6 扩展：返回各关系实际装配到的目标实体数组（逐目标 add 时收集），
-    // 供嵌套 include 递归装配下一层关联。
+    // Task 6 扩展：返回各关系实际装配到的目标实体数组（逐目标 add 时收集、按 target id
+    // 去重），供嵌套 include 递归装配下一层关联——共享目标只装配一次，避免递归层把
+    // 嵌套 has_many 的 setter .add() 对同一目标重复追加（assembleCollections 同样去重）。
     // 中间表列名与 buildJunctionSchema / relation_gen.cj 一致：
     //   源列 = <源表名>_id（sourceTable 由 assembleRecursive 传入：顶层为主查询 FROM 表，
     //     嵌套层为当前层级实体所在表 = 父关系 targetTable，见 assembleRecursive 注释），
@@ -1129,11 +1160,25 @@ public class Query<T> {
 
             // 5. 按中间表源 id 值分组成目标实体列表（源 id 类型跟随主实体主键：Int64 或 String）。
             //    INNER JOIN 已排除孤儿行；中间表源 id 列非空，getOrNull 仅防御。
+            //    跨源组按目标主键 id 缓存目标实例（targetInstanceCache）：多个主实体共享
+            //    同一目标（两个 Post 都打同一 tag）时，各 junction 行映射的是同一目标的
+            //    副本，若各自持有独立实例，嵌套递归对每个副本各跑一次，且下一层共享的
+            //    嵌套目标会被 setter .add() 重复追加。缓存让共享目标在所有父实体的关联
+            //    列表里是同一个对象（语义同 assembleRefTo 的 targetMap 缓存），配合第 6 步
+            //    按 target id 去重后，递归层对每个目标 id 只装配一次即可让所有持有它的
+            //    父实体都看到嵌套结果。缓存 key 用查询结果强制选中的目标主键列 "id"
+            //    （值即目标 id），不依赖 getTargetIdExtractor：手工构造的 relation 若用
+            //    dummy extractor（恒返回固定值）也不至于把不同目标误判为同一目标。
+            //    目标主键可能是 Int64 或 String，统一取字符串 key：getOrNull<String> 在
+            //    真实驱动（pgsql/mariadb）上对数值列也返回文本形式（Some），严格 mock
+            //    返回 None 时回退 getOrNull<Int64>。同目标多行值一致，取先读到的实例。
             let columnMap = buildColumnMap(result2.columnInfos, exec.getParamOffset())
             let srcIdx = columnMap.get(srcCol).getOrThrow()
+            let idIdx = columnMap.get("id").getOrThrow()
             let isStringPk = fkIsString(ids[0])
             let targetMapper = rels2[0].getTargetMapper()
             var groupMap = HashMap<String, ArrayList<Any>>()
+            var targetInstanceCache = HashMap<String, Any>()
             while (result2.next()) {
                 let keyOpt: Option<String> = if (isStringPk) {
                     match (result2.getOrNull<String>(srcIdx)) {
@@ -1155,22 +1200,45 @@ public class Query<T> {
                                 groupMap[key] = ng
                                 ng
                         }
-                        group.add(targetMapper(result2, columnMap))
+                        let tKey = match (result2.getOrNull<String>(idIdx)) {
+                            case Some(v) => v
+                            case None => result2.getOrNull<Int64>(idIdx).getOrThrow().toString()
+                        }
+                        match (targetInstanceCache.get(tKey)) {
+                            case Some(shared) => group.add(shared)
+                            case None =>
+                                let mapped = targetMapper(result2, columnMap)
+                                targetInstanceCache[tKey] = mapped
+                                group.add(mapped)
+                        }
                     case None => ()
                 }
             }
 
-            // 6. 回填：逐目标 add；同时收集该关系装配到的目标实体
+            // 6. 回填：逐目标 add；同时收集该关系装配到的目标实体。收集按 target id
+            //    （getTargetIdExtractor → fkKey）去重：多个主实体共享同一目标时，第 5 步
+            //    已让共享目标是同一个实例，targets 若不去重会收集同一实例两次，递归层
+            //    （嵌套 include）会对该实例的嵌套 has_many 跑两次、setter .add() 把子项
+            //    追加成两份。去重只影响递归层，单层 setter 仍按主实体逐次 add。
             for (rel in rels2) {
                 let setter = rel.getFieldSetter()
+                let idExtractor = rel.getTargetIdExtractor()
                 var targets = ArrayList<Any>()
+                var targetSeen = HashMap<String, Bool>()
                 for (ei in 0..entities.size) {
                     let rawId = rawIds[ei]
                     if (isEmptyFk(rawId)) { continue }
                     let key = fkKey(rawId)
                     match (groupMap.get(key)) {
                         case Some(ts) =>
-                            for (t in ts) { setter(entities[ei], t); targets.add(t) }
+                            for (t in ts) {
+                                setter(entities[ei], t)
+                                let tKey = fkKey(idExtractor(t))
+                                if (!targetSeen.contains(tKey)) {
+                                    targetSeen[tKey] = true
+                                    targets.add(t)
+                                }
+                            }
                         case None => ()
                     }
                 }
