@@ -13,7 +13,7 @@ public enum HookKind {
     | TxBeforeDelete
     | TxAfterDelete
 
-    // 事务外钩子 —— Entity.save/update/delete 中触发，scope.db = None
+    // 事务外钩子 —— 原由已移除的静态 Entity.save/update/delete 触发，现已不再触发（C3）
     | BeforeCreate
     | AfterCreate
     | BeforeUpdate
