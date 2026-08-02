@@ -9,7 +9,9 @@ public interface Dialect {
     func render(stmt: Statement): (String, Array<Any>)
     func quoteIdentifier(name: String): String
     func hasUpsertSupport(): Bool
-    func upsertSQL(table: String, columns: Array<String>, conflictColumns: Array<String>, auditCreateCols: Array<String>, auditUpdateCols: Array<String>, versionCol: String): String
+    // 返回 (sql, extraParamCount)：extraParamCount 是调用方在实体字段值之外，
+    // 还必须按 columns 顺序追加的额外参数个数（如 MySQL 审计更新列生成的 `col = ?`）
+    func upsertSQL(table: String, columns: Array<String>, conflictColumns: Array<String>, auditCreateCols: Array<String>, auditUpdateCols: Array<String>, versionCol: String): (String, Int64)
     func dataTypeOf(st: StorageType): String
     func hasReturningSupport(): Bool
     func hasJSONSupport(): Bool

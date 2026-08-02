@@ -148,13 +148,25 @@ func buildTxUpsertExtend(className: String, fields: ArrayList<FieldInfo>, tableN
     if (hasCreatedAt) { auditCreateArr = auditCreateArr + Token(TokenKind.STRING_LITERAL, "created_at") }
     auditCreateArr = auditCreateArr + Token(TokenKind.RSQUARE)
 
-    var auditUpdateArr = Tokens()
-    auditUpdateArr = auditUpdateArr + Token(TokenKind.LSQUARE)
-    if (hasUpdatedAt) { auditUpdateArr = auditUpdateArr + Token(TokenKind.STRING_LITERAL, "updated_at") }
-    auditUpdateArr = auditUpdateArr + Token(TokenKind.RSQUARE)
-
     let versionName = findVersionField(fields)
     let versionLit = Token(TokenKind.STRING_LITERAL, versionName)
+
+    // 审计更新列（如 updated_at）：按 columns 顺序收集，保证追加的参数顺序与
+    // 方言 upsertSQL 中 `col = ?` 的生成顺序一致（两者都按 columns 遍历）
+    var auditUpdateCols = ArrayList<String>()
+    for (f in fields) {
+        if (isRelationField(f.typeName)) { continue }
+        if (f.name == "updated_at" && hasUpdatedAt) { auditUpdateCols.add(f.name) }
+    }
+    var auditUpdateArr = Tokens()
+    auditUpdateArr = auditUpdateArr + Token(TokenKind.LSQUARE)
+    first = true
+    for (c in auditUpdateCols) {
+        if (!first) { auditUpdateArr = auditUpdateArr + Token(TokenKind.COMMA) }
+        auditUpdateArr = auditUpdateArr + Token(TokenKind.STRING_LITERAL, c)
+        first = false
+    }
+    auditUpdateArr = auditUpdateArr + Token(TokenKind.RSQUARE)
 
     // 参数：params.add(entity.field)
     var paramsTok = Tokens()
@@ -165,11 +177,15 @@ func buildTxUpsertExtend(className: String, fields: ArrayList<FieldInfo>, tableN
             params.add(entity.$(fName));
         )
     }
-    // MySQL 的审计更新列需要额外参数（updated_at = ?）
-    var mysqlExtraParams = Tokens()
-    if (hasUpdatedAt) {
-        mysqlExtraParams = mysqlExtraParams + quote(
-            if (d.name() == "mysql") { params.add(entity.updated_at); }
+    // 审计更新列需要额外参数（如 MySQL 的 `col = ?`），是否追加由方言返回的
+    // extraParamCount 决定，不再按方言名字符串特判；version 列冲突时自增不含参数。
+    // 追加顺序与 columns 一致，与方言 `= ?` 的生成顺序对应。
+    var auditUpdateParams = Tokens()
+    for (c in auditUpdateCols) {
+        if (c == versionName) { continue }
+        let cTok = Token(TokenKind.IDENTIFIER, c)
+        auditUpdateParams = auditUpdateParams + quote(
+            params.add(entity.$(cTok));
         )
     }
 
@@ -184,10 +200,16 @@ func buildTxUpsertExtend(className: String, fields: ArrayList<FieldInfo>, tableN
                 if (scope.aborted) { throw scope.error.getOrThrow() }
                 let d = this.getDialect()
                 if (!d.hasUpsertSupport()) { throw Exception("upsert not supported by dialect: " + d.name()) }
-                let sql = d.upsertSQL($(tableNameLit), $(colsArr), $(pksArr), $(auditCreateArr), $(auditUpdateArr), $(versionLit))
+                let (sql, extraCount) = d.upsertSQL($(tableNameLit), $(colsArr), $(pksArr), $(auditCreateArr), $(auditUpdateArr), $(versionLit))
                 var params = ArrayList<Any>()
                 $(paramsTok)
-                $(mysqlExtraParams)
+                let baseCount = params.size
+                if (extraCount != 0) {
+                    $(auditUpdateParams)
+                }
+                if (extraCount != params.size - baseCount) {
+                    throw Exception("upsert extra param count mismatch")
+                }
                 let _ = this.execute(sql, params.toArray())
                 let afterScope = Scope<$(cn)>(entity)
                 afterScope.db = Some(this)

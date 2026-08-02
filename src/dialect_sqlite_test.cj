@@ -358,6 +358,9 @@ public class DialectTest {
     public func testUpsertSupport(): Unit {
         let dialect = SQLiteDialect()
         @Expect(dialect.hasUpsertSupport(), false)
+        let (sql, extraCount) = dialect.upsertSQL("users", ["id", "name"], ["id"], [], [], "")
+        @Expect(sql, "")
+        @Expect(extraCount, 0)
     }
 
     @TestCase

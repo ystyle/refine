@@ -303,6 +303,25 @@ class CaptureStatement <: SqlStatement {
     }
 }
 
+// 故意返回错误的额外参数个数（声明 1 个但 SQL 实际不需要），
+// 验证宏层按方言返回的 extraParamCount 生成的守卫断言能在执行前拦截
+class MismatchCountDialect <: Dialect {
+    public func name(): String { "mismatch-count" }
+    public func render(stmt: Statement): (String, Array<Any>) { ("", []) }
+    public func quoteIdentifier(name: String): String { "\"" + name + "\"" }
+    public func hasUpsertSupport(): Bool { true }
+    public func upsertSQL(table: String, _columns: Array<String>, _conflictColumns: Array<String>, _auditCreateCols: Array<String>, _auditUpdateCols: Array<String>, _versionCol: String): (String, Int64) {
+        ("INSERT INTO " + table + " VALUES (?)", 1)
+    }
+    public func dataTypeOf(st: StorageType): String { "TEXT" }
+    public func hasReturningSupport(): Bool { false }
+    public func hasJSONSupport(): Bool { false }
+    public func hasIsolationSupport(): Bool { false }
+    public func migrator(db: DB): Migrator { SQLiteMigrator(db) }
+    public func initialize(db: DB): Unit {}
+    public func defaultValueOf(st: StorageType): String { "" }
+}
+
 class CaptureConnection <: Connection {
     public var stmt: CaptureStatement = CaptureStatement()
 
@@ -834,6 +853,26 @@ public class MacroSaveTest {
             tx.upsert(p)
             @Fail("expected unsupported dialect exception")
         } catch (_: Exception) {
+            @Expect(conn.stmt.capturedSql, "")
+        }
+    }
+
+    @TestCase
+    public func testTxUpsertExtraParamCountMismatchThrows(): Unit {
+        clearHooks()
+        let conn = CaptureConnection()
+        let rf = Refine(RMockDS(), MismatchCountDialect(), 1)
+        let tx = Tx(conn, rf, 1)
+
+        let p = Post()
+        p.id = 1
+        p.title = "T"
+        p.content = "C"
+        try {
+            tx.upsert(p)
+            @Fail("expected extra param count mismatch exception")
+        } catch (e: Exception) {
+            @Expect(e.message.contains("extra param count mismatch"), true)
             @Expect(conn.stmt.capturedSql, "")
         }
     }

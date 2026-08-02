@@ -169,10 +169,12 @@ public class MySQLDialect <: Dialect {
 
     public func hasUpsertSupport(): Bool { true }
 
-    public func upsertSQL(table: String, columns: Array<String>, _conflictColumns: Array<String>, auditCreateCols: Array<String>, auditUpdateCols: Array<String>, versionCol: String): String {
+    public func upsertSQL(table: String, columns: Array<String>, _conflictColumns: Array<String>, auditCreateCols: Array<String>, auditUpdateCols: Array<String>, versionCol: String): (String, Int64) {
         var cols = ArrayList<String>()
         var placeholders = ArrayList<String>()
         var updates = ArrayList<String>()
+        // 审计更新列（非 version、非 auditCreate）生成 `col = ?`，每个需要一个额外参数
+        var extraParamCount: Int64 = 0
         for (c in columns) {
             cols.add(quoteIdentifier(c))
             placeholders.add("?")
@@ -183,11 +185,12 @@ public class MySQLDialect <: Dialect {
                 updates.add(quoteIdentifier(c) + " = " + quoteIdentifier(c) + " + 1")
             } else if (auditUpdateCols.contains(c)) {
                 updates.add(quoteIdentifier(c) + " = ?")
+                extraParamCount++
             } else {
                 updates.add(quoteIdentifier(c) + " = VALUES(" + quoteIdentifier(c) + ")")
             }
         }
-        "INSERT INTO " + quoteIdentifier(table) + " (" + String.join(cols.toArray(), delimiter: ", ") + ") VALUES (" + String.join(placeholders.toArray(), delimiter: ", ") + ") ON DUPLICATE KEY UPDATE " + String.join(updates.toArray(), delimiter: ", ")
+        ("INSERT INTO " + quoteIdentifier(table) + " (" + String.join(cols.toArray(), delimiter: ", ") + ") VALUES (" + String.join(placeholders.toArray(), delimiter: ", ") + ") ON DUPLICATE KEY UPDATE " + String.join(updates.toArray(), delimiter: ", "), extraParamCount)
     }
 
     public func dataTypeOf(st: StorageType): String {

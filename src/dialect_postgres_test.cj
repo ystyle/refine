@@ -386,19 +386,33 @@ public class PostgreSQLDialectTest {
     public func testUpsertSQL(): Unit {
         let dialect = PostgreSQLDialect()
         @Expect(dialect.hasUpsertSupport(), true)
-        let sql = dialect.upsertSQL("users", ["id", "name"], ["id"], [], [], "")
+        let (sql, extraCount) = dialect.upsertSQL("users", ["id", "name"], ["id"], [], [], "")
         @Expect(sql.contains("ON CONFLICT"), true)
         @Expect(sql.contains("INSERT INTO"), true)
+        @Expect(extraCount, 0)
     }
 
     @TestCase
     public func testUpsertSQLVersionAudit(): Unit {
         let dialect = PostgreSQLDialect()
-        let sql = dialect.upsertSQL("users", ["id", "name", "created_at", "updated_at", "version"], ["id"], ["created_at"], ["updated_at"], "version")
+        let (sql, extraCount) = dialect.upsertSQL("users", ["id", "name", "created_at", "updated_at", "version"], ["id"], ["created_at"], ["updated_at"], "version")
         @Expect(sql.contains("\"users\".\"version\" = \"users\".\"version\" + 1"), true)
         @Expect(sql.contains("\"updated_at\" = EXCLUDED.\"updated_at\""), true)
         @Expect(sql.contains("\"created_at\" = EXCLUDED.\"created_at\""), false)
         @Expect(sql.contains("\"name\" = EXCLUDED.\"name\""), true)
+        @Expect(extraCount, 0)
+    }
+
+    @TestCase
+    public func testUpsertExtraParamCountAlwaysZero(): Unit {
+        let dialect = PostgreSQLDialect()
+        // PostgreSQL 用 EXCLUDED.col 更新冲突行，不需要额外参数
+        let (_, c0) = dialect.upsertSQL("users", ["id", "name"], ["id"], [], [], "")
+        @Expect(c0, 0)
+        let (_, c1) = dialect.upsertSQL("users", ["id", "updated_at"], ["id"], [], ["updated_at"], "")
+        @Expect(c1, 0)
+        let (_, c2) = dialect.upsertSQL("users", ["id", "created_at", "updated_at", "version"], ["id"], ["created_at"], ["updated_at"], "version")
+        @Expect(c2, 0)
     }
 
     @TestCase

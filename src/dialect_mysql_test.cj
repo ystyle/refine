@@ -280,19 +280,44 @@ public class MySQLDialectTest {
     public func testRenderUpsert(): Unit {
         let dialect = MySQLDialect()
         @Expect(dialect.hasUpsertSupport(), true)
-        let sql = dialect.upsertSQL("users", ["id", "name"], ["id"], [], [], "")
+        let (sql, extraCount) = dialect.upsertSQL("users", ["id", "name"], ["id"], [], [], "")
         @Expect(sql.contains("ON DUPLICATE KEY UPDATE"), true)
         @Expect(sql.contains("INSERT INTO"), true)
+        @Expect(extraCount, 0)
     }
 
     @TestCase
     public func testRenderUpsertVersionAudit(): Unit {
         let dialect = MySQLDialect()
-        let sql = dialect.upsertSQL("users", ["id", "name", "created_at", "updated_at", "version"], ["id"], ["created_at"], ["updated_at"], "version")
+        let (sql, extraCount) = dialect.upsertSQL("users", ["id", "name", "created_at", "updated_at", "version"], ["id"], ["created_at"], ["updated_at"], "version")
         @Expect(sql.contains("`version` = `version` + 1"), true)
         @Expect(sql.contains("`updated_at` = ?"), true)
         @Expect(sql.contains("`created_at` = VALUES(`created_at`)"), false)
         @Expect(sql.contains("`name` = VALUES(`name`)"), true)
+        @Expect(extraCount, 1)
+    }
+
+    @TestCase
+    public func testUpsertExtraParamCount(): Unit {
+        let dialect = MySQLDialect()
+        // 无审计更新列 → 0
+        let (_, c0) = dialect.upsertSQL("users", ["id", "name"], ["id"], [], [], "")
+        @Expect(c0, 0)
+        // 审计更新列在 columns 中 → 每个生成 `col = ?` 计 1
+        let (_, c1) = dialect.upsertSQL("users", ["id", "name", "updated_at"], ["id"], [], ["updated_at"], "")
+        @Expect(c1, 1)
+        // version 列即使出现在审计更新列中也被排除（生成 `col = col + 1` 而非 `?`）
+        let (_, c2) = dialect.upsertSQL("users", ["id", "version"], ["id"], [], ["version"], "version")
+        @Expect(c2, 0)
+        // auditCreate 列即使出现在审计更新列中也跳过 update 子句（不生成 `?`）
+        let (_, c3) = dialect.upsertSQL("users", ["id", "created_at", "updated_at"], ["id"], ["created_at", "updated_at"], ["updated_at"], "")
+        @Expect(c3, 0)
+        // 多个审计更新列依次计数
+        let (_, c4) = dialect.upsertSQL("users", ["id", "a", "b"], ["id"], [], ["a", "b"], "")
+        @Expect(c4, 2)
+        // 审计更新列不在 columns 中 → 不生成 `?`
+        let (_, c5) = dialect.upsertSQL("users", ["id", "name"], ["id"], [], ["updated_at"], "")
+        @Expect(c5, 0)
     }
 
     @TestCase
