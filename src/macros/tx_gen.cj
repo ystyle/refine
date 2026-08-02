@@ -208,7 +208,7 @@ func buildTxUpsertExtend(className: String, fields: ArrayList<FieldInfo>, tableN
                     $(auditUpdateParams)
                 }
                 if (extraCount != params.size - baseCount) {
-                    throw Exception("upsert extra param count mismatch")
+                    throw Exception("upsert extra param count mismatch expected " + extraCount.toString() + " got " + (params.size - baseCount).toString())
                 }
                 let _ = this.execute(sql, params.toArray())
                 let afterScope = Scope<$(cn)>(entity)

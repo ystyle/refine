@@ -303,15 +303,18 @@ class CaptureStatement <: SqlStatement {
     }
 }
 
-// 故意返回错误的额外参数个数（声明 1 个但 SQL 实际不需要），
-// 验证宏层按方言返回的 extraParamCount 生成的守卫断言能在执行前拦截
+// 故意返回错误的额外参数个数（声明 2 个但 SQL 实际不需要），
+// 验证宏层按方言返回的 extraParamCount 生成的守卫断言能在执行前拦截。
+// 用 2 而非 1：Post 当前无 updated_at 时宏层追加 0 个额外参数（2 != 0 抛错）；
+// 若未来 Post 增加 updated_at，宏层会追加 1 个（2 != 1 仍抛错），
+// 而用 1 则会被 1 == 1 放过，测试会静默失效。
 class MismatchCountDialect <: Dialect {
     public func name(): String { "mismatch-count" }
     public func render(stmt: Statement): (String, Array<Any>) { ("", []) }
     public func quoteIdentifier(name: String): String { "\"" + name + "\"" }
     public func hasUpsertSupport(): Bool { true }
     public func upsertSQL(table: String, _columns: Array<String>, _conflictColumns: Array<String>, _auditCreateCols: Array<String>, _auditUpdateCols: Array<String>, _versionCol: String): (String, Int64) {
-        ("INSERT INTO " + table + " VALUES (?)", 1)
+        ("INSERT INTO " + table + " VALUES (?)", 2)
     }
     public func dataTypeOf(st: StorageType): String { "TEXT" }
     public func hasReturningSupport(): Bool { false }
