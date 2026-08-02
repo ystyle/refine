@@ -15,10 +15,10 @@ public class PostgreSQLDialect <: Dialect {
     public func render(stmt: Statement): (String, Array<Any>) {
         params = ArrayList<Any>()
         paramIdx = 1
-        renderBody(stmt)
+        (renderBody(stmt), params.toArray())
     }
 
-    private func renderBody(stmt: Statement): (String, Array<Any>) {
+    private func renderBody(stmt: Statement): String {
         var select = ArrayList<String>()
         var from = ArrayList<String>()
         var joins = ArrayList<String>()
@@ -91,7 +91,7 @@ public class PostgreSQLDialect <: Dialect {
             for (s in limit) { parts.add(s) }
             if (hasLock) { parts.add("FOR UPDATE") }
         }
-        (String.join(parts.toArray(), delimiter: " "), params.toArray())
+        String.join(parts.toArray(), delimiter: " ")
     }
 
     private func renderExpr(expr: Expr): String {
@@ -114,8 +114,7 @@ public class PostgreSQLDialect <: Dialect {
             case Aliased(expr, alias) =>
                 renderExpr(expr) + " AS " + quoteIdentifier(alias)
             case SubQuery(s) =>
-                let (subSql, _) = renderBody(s)
-                "(" + subSql + ")"
+                "(" + renderBody(s) + ")"
         }
     }
 

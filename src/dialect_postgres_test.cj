@@ -332,6 +332,28 @@ public class PostgreSQLDialectTest {
         @Expect(checkInt(params[2], 30))
     }
 
+    // 回归：子查询之后的参数编号必须继续（$1=内层先，$2=外层后），params 顺序与占位符一致
+    @TestCase
+    public func testRenderParamAfterSubQuery(): Unit {
+        let dialect = PostgreSQLDialect()
+        let inner = Statement()
+        inner.addClause(SelectClause([Column("id")]))
+        inner.addClause(FromClause("t"))
+        inner.addClause(WhereClause([Binary(Column("v"), Eq, Value(10))]))
+        let outer = Statement()
+        outer.addClause(SelectClause([Column("x")]))
+        outer.addClause(FromClause("parent"))
+        outer.addClause(WhereClause([
+            Binary(Column("x"), In, SubQuery(inner)),
+            Binary(Column("y"), Eq, Value(5))
+        ]))
+        let (sql, params) = dialect.render(outer)
+        @Expect(sql, "SELECT \"x\" FROM \"parent\" WHERE \"x\" IN (SELECT \"id\" FROM \"t\" WHERE \"v\" = $1) AND \"y\" = $2")
+        @Expect(params.size, 2)
+        @Expect(checkInt(params[0], 10))
+        @Expect(checkInt(params[1], 5))
+    }
+
     @TestCase
     public func testUpsertSQL(): Unit {
         let dialect = PostgreSQLDialect()
