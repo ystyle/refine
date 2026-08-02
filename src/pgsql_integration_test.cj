@@ -85,7 +85,7 @@ public class PostgreSQLIntegrationTest {
     }
 
     @TestCase
-    public func testAutoMigrateAltersColumn(): Unit {
+    public func testAutoMigrateAddOnlyLeavesExistingColumn(): Unit {
         match (tryPostgres()) {
             case Some(rf) =>
                 let m = rf.migrator()
@@ -99,13 +99,15 @@ public class PostgreSQLIntegrationTest {
                 let newSchema = PgSchema("__test_pg_alt2", newCols, [])
                 m.autoMigrate([newSchema])
                 rf.transaction { tx: Tx =>
+                    // 只加语义：已存在列即使类型/可空性不同也不被修改
                     let r = tx.query("SELECT data_type, is_nullable FROM information_schema.columns WHERE table_name = ? AND column_name = ?", ["__test_pg_alt2", "val"])
                     if (r.next()) {
-                        @Expect(r.get<String>(0), "text")
-                        @Expect(r.get<String>(1), "YES")
+                        @Expect(r.get<String>(0), "character varying")
+                        @Expect(r.get<String>(1), "NO")
                     } else {
                         @Expect(true, false)
                     }
+                    // 缺失列仍被补充
                     let r2 = tx.query("SELECT COUNT(*) FROM information_schema.columns WHERE table_name = ? AND column_name = ?", ["__test_pg_alt2", "extra"])
                     if (r2.next()) {
                         @Expect(r2.get<Int64>(0), 1)

@@ -81,10 +81,7 @@ public class PostgreSQLMigrator <: Migrator {
             let existingCols = getExistingColumns(tableName)
             for (col in schema.columns()) {
                 match (existingCols.get(col.name)) {
-                    case Some(old) =>
-                        if (old.storageType != col.storageType || old.nullable != col.nullable) {
-                            alterColumn(tableName, old, col)
-                        }
+                    case Some(_) => ()
                     case None => addColumn(tableName, col)
                 }
             }
@@ -109,7 +106,7 @@ public class PostgreSQLMigrator <: Migrator {
         map
     }
 
-    private func pgDataTypeToStorage(t: String): StorageType {
+    public static func pgDataTypeToStorage(t: String): StorageType {
         match (t) {
             case "bigint" | "integer" | "smallint" => StorageType.Integer
             case "character varying" | "character" => StorageType.String
@@ -117,7 +114,8 @@ public class PostgreSQLMigrator <: Migrator {
             case "jsonb" | "json" => StorageType.Json
             case "bytea" => StorageType.Bytes
             case "timestamp without time zone" | "timestamp with time zone" => StorageType.Timestamp
-            case "double precision" | "numeric" | "real" => StorageType.Float
+            case "numeric" => StorageType.Decimal
+            case "double precision" | "real" => StorageType.Float
             case "boolean" => StorageType.`Bool`
             case _ => StorageType.Text
         }

@@ -1,7 +1,29 @@
 package refine
 
+import std.database.sql.{Connection, Datasource}
 import std.unittest.*
 import std.unittest.testmacro.*
+
+class CaptureDatasource <: Datasource {
+    public var conn: CaptureConnection = CaptureConnection()
+    public func connect(): Connection { conn }
+    public func close(): Unit {}
+    public func isClosed(): Bool { false }
+    public func setOption(_key: String, _value: String): Unit {}
+}
+
+// 已存在列 val 与 schema 声明类型不同（varchar vs text）、可空性不同（NO vs YES），
+// autoMigrate 只加语义下必须原样保留，仅补充缺失列 extra
+class DiffColumnSchema <: TableSchema {
+    public func tableName(): String { "t8_diff" }
+    public func columns(): Array<ColumnDef> {
+        [
+            ColumnDef("val", StorageType.Text, false, false, true),
+            ColumnDef("extra", StorageType.Integer, false, false, true),
+        ]
+    }
+    public func indexes(): Array<IndexDef> { [] }
+}
 
 @Test
 public class MySQLMigratorTest {
@@ -32,5 +54,73 @@ public class MySQLMigratorTest {
         let migrator = MySQLMigrator(db)
         migrator.createTable(UserMigratorTestSchema())
         @Expect(true, true)
+    }
+
+    // ─── C8: 反向映射无有损（防迁移翻烙饼）──────────────────
+
+    // decimal 之前被有损映射为 Float，导致每轮迁移产生假 diff
+    @TestCase
+    public func testDataTypeToStorageDecimal(): Unit {
+        @Expect(MySQLMigrator.mysqlDataTypeToStorage("decimal", "decimal(65,30)"), StorageType.Decimal)
+    }
+
+    // MySQL Bool 列存储形态是 tinyint(1)，必须读回 Bool，否则读回 Integer 每轮翻转
+    @TestCase
+    public func testDataTypeToStorageTinyintOneIsBool(): Unit {
+        @Expect(MySQLMigrator.mysqlDataTypeToStorage("tinyint", "tinyint(1)"), StorageType.`Bool`)
+    }
+
+    @TestCase
+    public func testDataTypeToStorageTinyintOtherIsInteger(): Unit {
+        @Expect(MySQLMigrator.mysqlDataTypeToStorage("tinyint", "tinyint"), StorageType.Integer)
+        @Expect(MySQLMigrator.mysqlDataTypeToStorage("tinyint", "tinyint(4)"), StorageType.Integer)
+    }
+
+    @TestCase
+    public func testDataTypeToStorageInteger(): Unit {
+        @Expect(MySQLMigrator.mysqlDataTypeToStorage("bigint", "bigint"), StorageType.Integer)
+        @Expect(MySQLMigrator.mysqlDataTypeToStorage("int", "int"), StorageType.Integer)
+        @Expect(MySQLMigrator.mysqlDataTypeToStorage("smallint", "smallint"), StorageType.Integer)
+        @Expect(MySQLMigrator.mysqlDataTypeToStorage("mediumint", "mediumint"), StorageType.Integer)
+    }
+
+    @TestCase
+    public func testDataTypeToStorageFloat(): Unit {
+        @Expect(MySQLMigrator.mysqlDataTypeToStorage("double", "double"), StorageType.Float)
+        @Expect(MySQLMigrator.mysqlDataTypeToStorage("float", "float"), StorageType.Float)
+    }
+
+    @TestCase
+    public func testDataTypeToStorageString(): Unit {
+        @Expect(MySQLMigrator.mysqlDataTypeToStorage("varchar", "varchar(255)"), StorageType.String)
+        @Expect(MySQLMigrator.mysqlDataTypeToStorage("char", "char(10)"), StorageType.String)
+    }
+
+    // ─── C8: autoMigrate 恢复纯只加语义 ───────────────────
+
+    // 已存在列类型不同也不得执行 MODIFY COLUMN，只允许 ADD COLUMN
+    @TestCase
+    public func testAutoMigrateDoesNotAlterExistingColumn(): Unit {
+        let ds = CaptureDatasource()
+        let conn = ds.conn
+        conn.stmt.queryResultQueue.add(RowQueryResult(1))
+        let valRow = Array<Any>(5, {i =>
+            if (i == 0) { "val" } else if (i == 1) { "varchar" } else if (i == 2) { "NO" } else if (i == 3) { "" } else { "varchar(255)" }})
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult([], [valRow]))
+        conn.stmt.queryResultQueue.add(MockQueryResult())
+
+        let db = DB(ds)
+        let migrator = MySQLMigrator(db)
+        migrator.autoMigrate([DiffColumnSchema()])
+
+        var added = false
+        for (i in 0..conn.stmt.capturedSqlHistory.size) {
+            let sql = conn.stmt.capturedSqlHistory[i]
+            if (sql.contains("MODIFY COLUMN")) {
+                @Expect(true, false)
+            }
+            if (sql.contains("ADD COLUMN")) { added = true }
+        }
+        @Expect(added, true)
     }
 }

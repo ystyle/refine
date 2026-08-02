@@ -164,7 +164,7 @@ public class MySQLIntegrationTest {
     }
 
     @TestCase
-    public func testAutoMigrateAltersColumn(): Unit {
+    public func testAutoMigrateAddOnlyLeavesExistingColumn(): Unit {
         match (tryMySQL()) {
             case Some(rf) =>
                 let m = rf.migrator()
@@ -178,13 +178,15 @@ public class MySQLIntegrationTest {
                 let newSchema = ISchema("__test_my_alt2", newCols, [])
                 m.autoMigrate([newSchema])
                 rf.transaction { tx: Tx =>
+                    // 只加语义：已存在列即使类型/可空性不同也不被修改
                     let r = tx.query("SELECT DATA_TYPE, IS_NULLABLE FROM information_schema.COLUMNS WHERE table_schema = DATABASE() AND table_name = ? AND COLUMN_NAME = ?", ["__test_my_alt2", "val"])
                     if (r.next()) {
-                        @Expect(r.get<String>(1), "text")
-                        @Expect(r.get<String>(2), "YES")
+                        @Expect(r.get<String>(1), "varchar")
+                        @Expect(r.get<String>(2), "NO")
                     } else {
                         @Expect(true, false)
                     }
+                    // 缺失列仍被补充
                     let r2 = tx.query("SELECT COUNT(*) FROM information_schema.COLUMNS WHERE table_schema = DATABASE() AND table_name = ? AND COLUMN_NAME = ?", ["__test_my_alt2", "extra"])
                     if (r2.next()) {
                         @Expect(r2.get<Int64>(1), 1)

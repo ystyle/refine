@@ -71,10 +71,7 @@ public class MySQLMigrator <: Migrator {
             let existingCols = getExistingColumns(tableName)
             for (col in schema.columns()) {
                 match (existingCols.get(col.name)) {
-                    case Some(old) =>
-                        if (old.storageType != col.storageType || old.nullable != col.nullable) {
-                            alterColumn(tableName, old, col)
-                        }
+                    case Some(_) => ()
                     case None => addColumn(tableName, col)
                 }
             }
@@ -87,28 +84,31 @@ public class MySQLMigrator <: Migrator {
 
     private func getExistingColumns(tableName: String): HashMap<String, ColumnDef> {
         let s = db.session()
-        let r = s.query("SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE, EXTRA FROM information_schema.COLUMNS WHERE table_schema = DATABASE() AND table_name = ?", [tableName])
+        let r = s.query("SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE, EXTRA, COLUMN_TYPE FROM information_schema.COLUMNS WHERE table_schema = DATABASE() AND table_name = ?", [tableName])
+        let off = s.getParamOffset()
         var map = HashMap<String, ColumnDef>()
         while (r.next()) {
-            let name = r.get<String>(1)
-            let storage = mysqlDataTypeToStorage(r.get<String>(2))
-            let nullable = r.get<String>(3) == "YES"
-            let autoInc = r.get<String>(4).contains("auto_increment")
+            let name = r.get<String>(0 + off)
+            let storage = mysqlDataTypeToStorage(r.get<String>(1 + off), r.get<String>(4 + off))
+            let nullable = r.get<String>(2 + off) == "YES"
+            let autoInc = r.get<String>(3 + off).contains("auto_increment")
             map.add(name, ColumnDef(name, storage, false, autoInc, nullable))
         }
         s.close()
         map
     }
 
-    private func mysqlDataTypeToStorage(t: String): StorageType {
-        match (t) {
-            case "bigint" | "int" | "smallint" | "mediumint" | "tinyint" => StorageType.Integer
+    public static func mysqlDataTypeToStorage(dataType: String, columnType: String): StorageType {
+        match (dataType) {
+            case "bigint" | "int" | "smallint" | "mediumint" => StorageType.Integer
+            case "tinyint" => if (columnType.toAsciiLower() == "tinyint(1)") { StorageType.`Bool` } else { StorageType.Integer }
+            case "decimal" => StorageType.Decimal
             case "varchar" | "char" => StorageType.String
             case "text" | "mediumtext" | "longtext" => StorageType.Text
             case "json" => StorageType.Json
             case "blob" | "longblob" | "mediumblob" => StorageType.Bytes
             case "datetime" | "timestamp" => StorageType.Timestamp
-            case "double" | "float" | "decimal" => StorageType.Float
+            case "double" | "float" => StorageType.Float
             case _ => StorageType.Text
         }
     }
