@@ -211,7 +211,16 @@ public class Query<T> {
     }
 
     public func include(rel: IRelation, fields: Array<Col<Any>>): Query<T> {
-        included.add(FieldOverrideRelation(rel, fields))
+        let override = FieldOverrideRelation(rel, fields)
+        included.add(override)
+        let (kind, _, _, _, _, _) = override.resolve()
+        if (kind != RelationKind.HasManyRel && kind != RelationKind.RefManyRel) {
+            match (this.mapper) {
+                case Some(m) =>
+                    this.mapper = Some(wrapMapper(m, override))
+                case None => ()
+            }
+        }
         this
     }
 

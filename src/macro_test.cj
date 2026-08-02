@@ -164,6 +164,22 @@ public class UuidRefComment {
 }
 
 @Refine
+public class UuidPostWithRel {
+    var id: Int64 = 0
+    var title: String = ""
+
+    @Rel[has_many, UuidComment, post_id]
+    var comments: ArrayList<UuidComment> = ArrayList<UuidComment>()
+}
+
+@Refine
+public class UuidComment {
+    var id: String = ""
+    var body: String = ""
+    var post_id: Int64 = 0
+}
+
+@Refine
 public class ProfileWithRel {
     var id: Int64 = 0
     var bio: String = ""
@@ -3088,6 +3104,166 @@ public class TxPhysicalDeleteCascadeTest {
         @Expect(conn.stmt.capturedSqlHistory[0], "SELECT * FROM softDeleteChild WHERE parent_id = ?")
         @Expect(conn.stmt.capturedSqlHistory[1].contains("UPDATE softDeleteChild SET deleted_at"), true)
         @Expect(conn.stmt.capturedSqlHistory[2], "DELETE FROM softDeleteParent WHERE id = ?")
+    }
+}
+
+// ─── C2: include 预加载基于字段子集装配（缺列不抛异常/丢行） ──
+
+@Test
+public class C2IncludePreloadTest {
+    @TestCase
+    public func testRefToIncludeDefaultAllColumns(): Unit {
+        clearHooks()
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        let cols: Array<ColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("body", false),
+            MapperMockColumnInfo("post_id", false),
+            MapperMockColumnInfo("post.id", false),
+            MapperMockColumnInfo("post.title", false),
+            MapperMockColumnInfo("post.content", false),
+        ]
+        let row = Array<Any>(6, {i =>
+            if (i == 0) { 5 } else if (i == 1) { "nice" } else if (i == 2) { "p1" }
+            else if (i == 3) { "p1" } else if (i == 4) { "First" } else { "Hello" }
+        })
+        conn.stmt.queryResult = MapperMockQueryResult(cols, [row])
+        let q = UuidRefComment.query().include(UuidRefCommentRel.post).using(tx)
+        let entities = q.all()
+        @Expect(entities.size, 1)
+        @Expect(entities[0].post.isSome(), true)
+        let post = entities[0].post.getOrThrow()
+        @Expect(post.id, "p1")
+        @Expect(post.title, "First")
+        @Expect(post.content, "Hello")
+    }
+
+    @TestCase
+    public func testRefToIncludeSubsetFieldsNoThrow(): Unit {
+        clearHooks()
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        let cols: Array<ColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("body", false),
+            MapperMockColumnInfo("post_id", false),
+            MapperMockColumnInfo("post.id", false),
+            MapperMockColumnInfo("post.title", false),
+        ]
+        let row = Array<Any>(5, {i =>
+            if (i == 0) { 5 } else if (i == 1) { "nice" } else if (i == 2) { "p1" }
+            else if (i == 3) { "p1" } else { "First" }
+        })
+        conn.stmt.queryResult = MapperMockQueryResult(cols, [row])
+        let rel = RefTo<UuidPost>("post", Col<Any>("post_id"),
+            [Col<Any>("id"), Col<Any>("title")], "uuidPost",
+            UuidRefCommentRel.postMapper, UuidRefCommentRel.postSetter)
+        let q = UuidRefComment.query().include(rel, [Col<Any>("id"), Col<Any>("title")]).using(tx)
+        let entities = q.all()
+        @Expect(entities.size, 1)
+        let post = entities[0].post.getOrThrow()
+        @Expect(post.id, "p1")
+        @Expect(post.title, "First")
+        @Expect(post.content, "")
+    }
+
+    @TestCase
+    public func testRefToIncludeNullTargetKeepsRow(): Unit {
+        clearHooks()
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        // 模拟 LEFT JOIN 无匹配：目标列缺失（target id 不在结果集中）
+        let cols: Array<ColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("body", false),
+            MapperMockColumnInfo("post_id", false),
+        ]
+        let row = Array<Any>(3, {i =>
+            if (i == 0) { 5 } else if (i == 1) { "orphan" } else { "nope" }
+        })
+        conn.stmt.queryResult = MapperMockQueryResult(cols, [row])
+        let rel = RefTo<UuidPost>("post", Col<Any>("post_id"),
+            [Col<Any>("id"), Col<Any>("title")], "uuidPost",
+            UuidRefCommentRel.postMapper, UuidRefCommentRel.postSetter)
+        let q = UuidRefComment.query().include(rel, [Col<Any>("id"), Col<Any>("title")]).using(tx)
+        let entities = q.all()
+        @Expect(entities.size, 1)
+        @Expect(entities[0].id, 5)
+        @Expect(entities[0].post.isNone(), true)
+    }
+
+    @TestCase
+    public func testHasManyIncludeSubsetFieldsNoThrow(): Unit {
+        clearHooks()
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        let cols: Array<ColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("title", false),
+            MapperMockColumnInfo("comments.id", false),
+            MapperMockColumnInfo("comments.body", false),
+        ]
+        let rows = [
+            Array<Any>(4, {i => if (i == 0) { 5 } else if (i == 1) { "post" } else if (i == 2) { "c1" } else { "first" }}),
+            Array<Any>(4, {i => if (i == 0) { 5 } else if (i == 1) { "post" } else if (i == 2) { "c2" } else { "second" }}),
+        ]
+        conn.stmt.queryResult = MapperMockQueryResult(cols, rows)
+        let rel = HasMany<UuidComment>("comments", "post_id",
+            [Col<Any>("id"), Col<Any>("body")], "uuidComment",
+            UuidCommentRowMapper, UuidPostWithRelRel.commentsSetter)
+        let q = UuidPostWithRel.query().include(rel, [Col<Any>("id"), Col<Any>("body")]).using(tx)
+        let entities = q.all()
+        @Expect(entities.size, 1)
+        let cs = entities[0].comments
+        @Expect(cs.size, 2)
+        @Expect(cs[0].id, "c1")
+        @Expect(cs[0].body, "first")
+        @Expect(cs[0].post_id, 0)
+        @Expect(cs[1].id, "c2")
+        @Expect(cs[1].body, "second")
+    }
+
+    @TestCase
+    public func testRefManyIncludeSubsetFieldsNoThrow(): Unit {
+        clearHooks()
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        let cols: Array<ColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("title", false),
+            MapperMockColumnInfo("tags.id", false),
+        ]
+        let rows = [
+            Array<Any>(3, {i => if (i == 0) { 3 } else if (i == 1) { "post1" } else { "t1" }}),
+            Array<Any>(3, {i => if (i == 0) { 3 } else if (i == 1) { "post1" } else { "t2" }}),
+        ]
+        conn.stmt.queryResult = MapperMockQueryResult(cols, rows)
+        let rel = RefMany<UuidTag>("tags", "uuid_tag_post_tags",
+            [Col<Any>("id")], "uuidTag",
+            UuidTagRowMapper, UuidTagPostRel.tagsSetter)
+        let q = UuidTagPost.query().include(rel, [Col<Any>("id")]).using(tx)
+        let entities = q.all()
+        @Expect(entities.size, 1)
+        let ts = entities[0].tags
+        @Expect(ts.size, 2)
+        @Expect(ts[0].id, "t1")
+        @Expect(ts[0].name, "")
+        @Expect(ts[1].id, "t2")
+    }
+
+    @TestCase
+    public func testRowMapperToleratesMissingColumns(): Unit {
+        // 直接验证生成的 RowMapper 对字段子集宽容：缺列不抛异常、选中填充、未选中默认
+        let cols: Array<ColumnInfo> = [MapperMockColumnInfo("id", false), MapperMockColumnInfo("email", false)]
+        let row = Array<Any>(2, {i => if (i == 0) { 99 } else { "bob@x.com" }})
+        let result = MapperMockQueryResult(cols, [row])
+        result.next()
+        let cm = buildColumnMap(cols)
+        let u = UserRowMapper(result, cm)
+        @Expect(u.id, 99)
+        @Expect(u.email, "bob@x.com")
+        @Expect(u.name, "")
     }
 }
 

@@ -163,28 +163,13 @@ func buildRowMapper(className: String, cd: ClassDecl, rels: ArrayList<RelInfo>, 
                 if (isGeneratedInternalField(vd.identifier.value, internalNames)) { continue }
                 if (!first) { assignments = assignments + Token(TokenKind.NL) }
                 let fieldNameLit = Token(TokenKind.STRING_LITERAL, vd.identifier.value)
-                assignments = assignments + Token(TokenKind.IDENTIFIER, "entity")
-                assignments = assignments + Token(TokenKind.DOT)
-                assignments = assignments + vd.identifier
-                assignments = assignments + Token(TokenKind.ASSIGN)
-                assignments = assignments + Token(TokenKind.IDENTIFIER, "result")
-                assignments = assignments + Token(TokenKind.DOT)
-                assignments = assignments + Token(TokenKind.IDENTIFIER, "get")
-                assignments = assignments + Token(TokenKind.LT)
-                assignments = assignments + vd.declType.toTokens()
-                assignments = assignments + Token(TokenKind.GT)
-                assignments = assignments + Token(TokenKind.LPAREN)
-                assignments = assignments + Token(TokenKind.IDENTIFIER, "columnMap")
-                assignments = assignments + Token(TokenKind.DOT)
-                assignments = assignments + Token(TokenKind.IDENTIFIER, "get")
-                assignments = assignments + Token(TokenKind.LPAREN)
-                assignments = assignments + fieldNameLit
-                assignments = assignments + Token(TokenKind.RPAREN)
-                assignments = assignments + Token(TokenKind.DOT)
-                assignments = assignments + Token(TokenKind.IDENTIFIER, "getOrThrow")
-                assignments = assignments + Token(TokenKind.LPAREN)
-                assignments = assignments + Token(TokenKind.RPAREN)
-                assignments = assignments + Token(TokenKind.RPAREN)
+                let fieldTypeTok = vd.declType.toTokens()
+                let fieldAssign = quote(
+                    if (columnMap.contains($(fieldNameLit))) {
+                        entity.$(vd.identifier) = result.get<$(fieldTypeTok)>(columnMap.get($(fieldNameLit)).getOrThrow())
+                    }
+                )
+                assignments = assignments + fieldAssign
                 first = false
             case _ => ()
         }

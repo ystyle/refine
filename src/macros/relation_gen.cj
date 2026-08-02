@@ -174,7 +174,14 @@ func buildRelationMethods(className: String, rels: ArrayList<RelInfo>, cd: Class
             )))
             cd.body.decls.add(FuncDecl(quote(
                 public func $(removeName)(tx: Tx, entity: $(targetType)): $(cn) {
-                    if (entity.id != 0) { tx.delete(entity) }; this
+                    let anyId: Any = entity.id
+                    let isEmpty = match (anyId) {
+                        case v: Int64 => v == 0
+                        case v: String => v == ""
+                        case _ => false
+                    }
+                    if (!isEmpty) { tx.delete(entity) }
+                    this
                 }
             )))
         } else if (r.kind == "has_one") {
