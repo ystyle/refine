@@ -3442,6 +3442,7 @@ public class WritePathDialectQuotingTest {
 public class C2IncludePreloadTest {
     @TestCase
     public func testRefToIncludeDefaultAllColumns(): Unit {
+        // 仅 mock 固定即将删除的 JOIN 装配路径（wrapMapper），Task 3 随装配代码一并重写。
         let conn = CaptureConnection()
         let tx = Tx(conn)
         let cols: Array<ColumnInfo> = [
@@ -3469,6 +3470,7 @@ public class C2IncludePreloadTest {
 
     @TestCase
     public func testRefToIncludeSubsetFieldsNoThrow(): Unit {
+        // 仅 mock 固定即将删除的 JOIN 装配路径（wrapMapper），Task 3 随装配代码一并重写。
         let conn = CaptureConnection()
         let tx = Tx(conn)
         let cols: Array<ColumnInfo> = [
@@ -3497,6 +3499,7 @@ public class C2IncludePreloadTest {
 
     @TestCase
     public func testRefToIncludeNullTargetKeepsRow(): Unit {
+        // 仅 mock 固定即将删除的 JOIN 装配路径（wrapMapper），Task 3 随装配代码一并重写。
         let conn = CaptureConnection()
         let tx = Tx(conn)
         // 模拟 LEFT JOIN 无匹配：目标列缺失（target id 不在结果集中）
@@ -3521,6 +3524,7 @@ public class C2IncludePreloadTest {
 
     @TestCase
     public func testHasManyIncludeSubsetFieldsNoThrow(): Unit {
+        // 仅 mock 固定即将删除的 JOIN 装配路径（aggregateWithCollections），Task 4 随装配代码一并重写。
         let conn = CaptureConnection()
         let tx = Tx(conn)
         let cols: Array<ColumnInfo> = [
@@ -3551,6 +3555,7 @@ public class C2IncludePreloadTest {
 
     @TestCase
     public func testRefManyIncludeSubsetFieldsNoThrow(): Unit {
+        // 仅 mock 固定即将删除的 JOIN 装配路径（aggregateWithCollections），Task 4 随装配代码一并重写。
         let conn = CaptureConnection()
         let tx = Tx(conn)
         let cols: Array<ColumnInfo> = [

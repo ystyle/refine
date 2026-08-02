@@ -63,7 +63,8 @@ public class Query<T> {
     // I9: 拷贝当前 Query 的全部状态，供 Refine.all/one 在副本上执行 using()，
     // 保证调用方持有的 Query 不被执行上下文（queryDialect/columnOffset/executor）污染。
     // clauses/included 逐项拷贝：Statement 的 clauses 是可变 ArrayList，
-    // 执行路径（processIncluded 等）会替换/追加 clause，必须独立成副本；
+    // Task 2 后 processIncluded 已是 no-op，但深拷贝隔离仍必要——批量装配（Task 3+）
+    // 与执行路径可能在副本上追加/改写 clause，调用方持有的原 Query 必须不受影响；
     // clause 内部（Expr 数组）在现有代码中不会被原地修改，直接共享即可。
     // 注意：新增 Query 字段时必须同步更新此处 copy()，否则 Refine.all/one 副本会丢字段。
     public func copy(): Query<T> {
@@ -162,11 +163,9 @@ public class Query<T> {
             let (sql, params) = dialect.render(pager)
             Logger.logSQL(sql, params)
             let result = exec.query(sql, params)
-            // 集合 include 已知局限（单查询 LEFT JOIN 方案的固有约束）：
-            // - LIMIT/OFFSET 作用于 JOIN 展开后的行（先于内存去重）：某父实体子行较多时，
-            //   单页可能返回少于 size 个唯一父实体，且父子可能跨页拆分；
-            // - 集合 include 下 ORDER BY 顺序在 aggregateWithCollections 返回时可能不保证（HashMap 迭代序）。
-            // TODO: 后续用子查询/分步查询（batch include）方案解决。
+            // Task 2 后主查询不再含 include JOIN：LIMIT/OFFSET 作用于源表行，无展开放大，
+            // 单页恰好返回 size 个主实体（旧 LEFT JOIN 方案的父子跨页拆分/页内去重局限已消除）。
+            // 集合 include 装配改由批量分步查询完成（Task 4 接入），当前处于惰性中间态。
             let columnMap = buildColumnMap(result.columnInfos, columnOffset)
             let mapper = this.mapper.getOrThrow()
             let entities: Array<T>
@@ -297,6 +296,7 @@ public class Query<T> {
         wrapNonCollection(override)
     }
 
+    // TODO(batch-include Task 3): 随批量装配实现删除
     private func wrapNonCollection(rel: IRelation): Query<T> {
         let (kind, _, _, _, _, _) = rel.resolve()
         if (kind != RelationKind.HasManyRel && kind != RelationKind.RefManyRel) {
@@ -339,6 +339,7 @@ public class Query<T> {
         ()
     }
 
+    // TODO(batch-include Task 3): 随批量装配实现删除
     private func wrapMapper(
         baseMapper: (QueryResult, HashMap<String, Int64>) -> T,
         rel: IRelation
@@ -470,6 +471,8 @@ public class Query<T> {
 
     private func countWith(exec: ExecutionContext, dialect: Dialect): Int64 {
         let countStmt = Statement()
+        // TODO(batch-include Task 4): 随批量装配实现删除——批量模式主查询无 JOIN，
+        // COUNT(*) 天然正确，无需 COUNT(DISTINCT)。
         // 集合 include（has_many / ref_many）的 LEFT JOIN 会按子行展开，COUNT(*) 会放大 total。
         // 改为对源表主键去重计数，但仅支持单列 "id" 主键：复合主键 + 集合 include 时
         // COUNT(DISTINCT 单列) 结果不正确/未定义（all()/one() 同样受影响）。
@@ -592,6 +595,7 @@ public class Query<T> {
         }
     }
 
+    // TODO(batch-include Task 4): 随批量装配实现删除
     private func hasCollectionInclude(): Bool {
         for (inc in included) {
             let (kind, _, _, _, _, _) = inc.resolve()
@@ -602,6 +606,7 @@ public class Query<T> {
         false
     }
 
+    // TODO(batch-include Task 4): 随批量装配实现删除
     // I7: 用文档化 API getOrNull<T> 判空（SQL NULL → None），不再依赖驱动对 get<T>
     // 的异常边界行为（跨驱动未验证）。读作 String 对齐字符串主键目标；数字主键列驱动
     // 按字符串读出（现有 PG 集成测试已验证），此处只关心目标 id 是否为 NULL。
@@ -612,6 +617,7 @@ public class Query<T> {
         }
     }
 
+    // TODO(batch-include Task 4): 随批量装配实现删除
     private func aggregateWithCollections(
         result: QueryResult,
         columnMap: HashMap<String, Int64>,
@@ -663,6 +669,7 @@ public class Query<T> {
     }
 }
 
+// TODO(batch-include Task 4): 随批量装配实现删除
 func stripPrefix(
     cm: HashMap<String, Int64>,
     prefix: String

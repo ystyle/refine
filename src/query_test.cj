@@ -954,6 +954,7 @@ public class C4PageCollectionTest {
 
     @TestCase
     public func testPageWithHasManyIncludeDedupsParents(): Unit {
+        // 仅 mock 固定即将删除的 JOIN 装配路径（aggregateWithCollections），Task 4 随装配代码一并重写。
         let conn = CaptureConnection()
         let tx = Tx(conn)
         conn.stmt.queryResultQueue.add(RowQueryResult(2))
@@ -1083,6 +1084,7 @@ public class C4PageCollectionTest {
     // 用自定义 base mapper（不读 RefTo 字段），使 wrapMapper.isNullId 成为目标 id 的首个读取点。
     @TestCase
     public func testRefToIncludeSkipsNullTargetId(): Unit {
+        // 仅 mock 固定即将删除的 JOIN 装配路径（wrapMapper），Task 3 随装配代码一并重写。
         let conn = CaptureConnection()
         let tx = Tx(conn)
         let cols: Array<SqlColumnInfo> = [
@@ -1118,6 +1120,7 @@ public class C4PageCollectionTest {
     // 但依赖驱动边界行为；现用文档化 getOrNull 判空）。
     @TestCase
     public func testCollectionIncludeSkipsNullChildId(): Unit {
+        // 仅 mock 固定即将删除的 JOIN 装配路径（aggregateWithCollections），Task 4 随装配代码一并重写。
         let conn = CaptureConnection()
         let tx = Tx(conn)
         let cols: Array<SqlColumnInfo> = [
@@ -1145,6 +1148,7 @@ public class C4PageCollectionTest {
     // get<Int64> 抛类型不匹配（旧代码崩溃），getOrNull<Int64> 返回 None（新代码不挂载）。
     @TestCase
     public func testRefToIncludeNullTargetIdDefaultMapperNoCrash(): Unit {
+        // 仅 mock 固定即将删除的 JOIN 装配路径（wrapMapper），Task 3 随装配代码一并重写。
         let conn = CaptureConnection()
         let tx = Tx(conn)
         let cols: Array<SqlColumnInfo> = [
@@ -1171,6 +1175,7 @@ public class C4PageCollectionTest {
 
     @TestCase
     public func testHasOneIncludeNullTargetIdDefaultMapperNoCrash(): Unit {
+        // 仅 mock 固定即将删除的 JOIN 装配路径（wrapMapper），Task 3 随装配代码一并重写。
         let conn = CaptureConnection()
         let tx = Tx(conn)
         let cols: Array<SqlColumnInfo> = [
@@ -1195,6 +1200,7 @@ public class C4PageCollectionTest {
 
     @TestCase
     public func testRefToStringPkIncludeNullTargetIdDefaultMapperNoCrash(): Unit {
+        // 仅 mock 固定即将删除的 JOIN 装配路径（wrapMapper），Task 3 随装配代码一并重写。
         let conn = CaptureConnection()
         let tx = Tx(conn)
         let cols: Array<SqlColumnInfo> = [
@@ -1232,6 +1238,7 @@ public class C4CollectionIncludeOrderTest {
 
     @TestCase
     public func testAllWithCollectionIncludePreservesRowOrder(): Unit {
+        // 仅 mock 固定即将删除的 JOIN 装配路径（aggregateWithCollections），Task 4 随装配代码一并重写。
         let conn = CaptureConnection()
         let tx = Tx(conn)
         let cols: Array<SqlColumnInfo> = [
