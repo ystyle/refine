@@ -267,7 +267,7 @@ public class DialectTest {
     @TestCase
     public func testDialectFeatureFlags(): Unit {
         let sqlite = SQLiteDialect()
-        @Expect(sqlite.hasReturningSupport(), true)
+        @Expect(sqlite.hasReturningSupport(), false)
         @Expect(sqlite.hasJSONSupport(), true)
         @Expect(sqlite.hasIsolationSupport(), false)
 

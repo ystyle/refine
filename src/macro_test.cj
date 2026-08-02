@@ -388,7 +388,7 @@ public class MacroSaveTest {
         p.content = "Test Content"
         tx.save(p)
 
-        @Expect(conn.stmt.capturedSql, "INSERT INTO post (title, content) VALUES (?, ?) RETURNING id")
+        @Expect(conn.stmt.capturedSql, "INSERT INTO post (title, content) VALUES (?, ?)")
     }
 
     @TestCase
@@ -402,7 +402,7 @@ public class MacroSaveTest {
         u.email = "alice@test.com"
         tx.save(u)
 
-        @Expect(conn.stmt.capturedSql, "INSERT INTO user (name, email) VALUES (?, ?) RETURNING id")
+        @Expect(conn.stmt.capturedSql, "INSERT INTO user (name, email) VALUES (?, ?)")
     }
 
     @TestCase
@@ -670,7 +670,7 @@ public class MacroSaveTest {
     public func testTxSaveCustomAutoPkEntity(): Unit {
         clearHooks()
         let conn = CaptureConnection()
-        conn.stmt.queryResult = RowQueryResult(42)
+        conn.stmt.mockLastInsertId = 42
         let rf = Refine(RMockDS(), SQLiteDialect(), 0)
         let tx = Tx(conn, rf, 0)
 
@@ -961,10 +961,10 @@ public class MacroSaveTest {
     }
 
     @TestCase
-    public func testTxSaveDBPathSQLiteReturning(): Unit {
+    public func testTxSaveDBPathSQLite(): Unit {
         clearHooks()
         let conn = CaptureConnection()
-        conn.stmt.queryResult = RowQueryResult(7)
+        conn.stmt.mockLastInsertId = 7
         let tx = Tx(conn, 0, SQLiteDialect())
 
         let p = Post()
@@ -972,7 +972,7 @@ public class MacroSaveTest {
         p.content = "C"
         tx.save(p)
 
-        @Expect(conn.stmt.capturedSql.contains("RETURNING"), true)
+        @Expect(conn.stmt.capturedSql.contains("INSERT INTO post (title, content) VALUES (?, ?)"), true)
         @Expect(p.id, 7)
     }
 
@@ -2030,7 +2030,7 @@ public class CascadeTraversalTest {
         p.comments = list
         p.cascadePostSave(tx, ArrayList<Object>())
         @Expect(c.post_id, 5)
-        @Expect(conn.stmt.capturedSql, "INSERT INTO comment (body, post_id) VALUES (?, ?) RETURNING id")
+        @Expect(conn.stmt.capturedSql, "INSERT INTO comment (body, post_id) VALUES (?, ?)")
     }
 
     @TestCase
@@ -2075,7 +2075,7 @@ public class CascadeTraversalTest {
         u.profile = Some(pr)
         u.cascadePostSave(tx, ArrayList<Object>())
         @Expect(pr.user_id, 3)
-        @Expect(conn.stmt.capturedSql, "INSERT INTO profileWithRel (bio, user_id) VALUES (?, ?) RETURNING id")
+        @Expect(conn.stmt.capturedSql, "INSERT INTO profileWithRel (bio, user_id) VALUES (?, ?)")
     }
 
     @TestCase
@@ -2244,7 +2244,7 @@ public class CascadeTraversalTest {
         b.cascadePostSave(tx, visited)
         a.cascadePostSave(tx, visited)
         @Expect(conn.stmt.capturedSqlHistory.size, 1)
-        @Expect(conn.stmt.capturedSqlHistory[0], "INSERT INTO categoryWithRel (name, parent_id) VALUES (?, ?) RETURNING id")
+        @Expect(conn.stmt.capturedSqlHistory[0], "INSERT INTO categoryWithRel (name, parent_id) VALUES (?, ?)")
         @Expect(capturedInt64(conn.stmt.capturedSetValues, 1), 1)
     }
 
@@ -2273,9 +2273,9 @@ public class CascadeTraversalTest {
         d.cascadePostSave(tx, visited)
         c2.cascadePostSave(tx, visited)
         @Expect(conn.stmt.capturedSqlHistory.size, 3)
-        @Expect(conn.stmt.capturedSqlHistory[0], "INSERT INTO categoryWithRel (name, parent_id) VALUES (?, ?) RETURNING id")
-        @Expect(conn.stmt.capturedSqlHistory[1], "INSERT INTO categoryWithRel (name, parent_id) VALUES (?, ?) RETURNING id")
-        @Expect(conn.stmt.capturedSqlHistory[2], "INSERT INTO categoryWithRel (name, parent_id) VALUES (?, ?) RETURNING id")
+        @Expect(conn.stmt.capturedSqlHistory[0], "INSERT INTO categoryWithRel (name, parent_id) VALUES (?, ?)")
+        @Expect(conn.stmt.capturedSqlHistory[1], "INSERT INTO categoryWithRel (name, parent_id) VALUES (?, ?)")
+        @Expect(conn.stmt.capturedSqlHistory[2], "INSERT INTO categoryWithRel (name, parent_id) VALUES (?, ?)")
     }
 
     @TestCase
@@ -2698,7 +2698,7 @@ public class TxCascadeTest {
     public func testTxSaveCascadesHasManyBackfillsFk(): Unit {
         clearHooks()
         let conn = CaptureConnection()
-        conn.stmt.queryResult = RowQueryResult(42)
+        conn.stmt.mockLastInsertId = 42
         let tx = Tx(conn)
         let p = PostWithRel()
         let c = Comment()
@@ -2708,8 +2708,8 @@ public class TxCascadeTest {
         p.comments = list
         tx.save(p)
         @Expect(conn.stmt.capturedSqlHistory.size, 2)
-        @Expect(conn.stmt.capturedSqlHistory[0], "INSERT INTO postWithRel (title, user_id, post_id) VALUES (?, ?, ?) RETURNING id")
-        @Expect(conn.stmt.capturedSqlHistory[1], "INSERT INTO comment (body, post_id) VALUES (?, ?) RETURNING id")
+        @Expect(conn.stmt.capturedSqlHistory[0], "INSERT INTO postWithRel (title, user_id, post_id) VALUES (?, ?, ?)")
+        @Expect(conn.stmt.capturedSqlHistory[1], "INSERT INTO comment (body, post_id) VALUES (?, ?)")
         @Expect(p.id, 42)
         @Expect(c.post_id, 42)
         @Expect(capturedInt64(conn.stmt.capturedSetValues, 4), 42)
@@ -2719,7 +2719,7 @@ public class TxCascadeTest {
     public func testTxSaveCascadesHasOneBackfillsFk(): Unit {
         clearHooks()
         let conn = CaptureConnection()
-        conn.stmt.queryResult = RowQueryResult(7)
+        conn.stmt.mockLastInsertId = 7
         let tx = Tx(conn)
         let u = UserWithRel()
         let pr = ProfileWithRel()
@@ -2727,8 +2727,8 @@ public class TxCascadeTest {
         u.profile = Some(pr)
         tx.save(u)
         @Expect(conn.stmt.capturedSqlHistory.size, 2)
-        @Expect(conn.stmt.capturedSqlHistory[0], "INSERT INTO userWithRel (name) VALUES (?) RETURNING id")
-        @Expect(conn.stmt.capturedSqlHistory[1], "INSERT INTO profileWithRel (bio, user_id) VALUES (?, ?) RETURNING id")
+        @Expect(conn.stmt.capturedSqlHistory[0], "INSERT INTO userWithRel (name) VALUES (?)")
+        @Expect(conn.stmt.capturedSqlHistory[1], "INSERT INTO profileWithRel (bio, user_id) VALUES (?, ?)")
         @Expect(u.id, 7)
         @Expect(pr.user_id, 7)
     }
@@ -2754,7 +2754,7 @@ public class TxCascadeTest {
         @Expect(conn.stmt.capturedSqlHistory.size, 3)
         @Expect(conn.stmt.capturedSqlHistory[0], "UPDATE postWithRel SET title = ?, user_id = ?, post_id = ? WHERE id = ?")
         @Expect(conn.stmt.capturedSqlHistory[1], "UPDATE comment SET body = ?, post_id = ? WHERE id = ?")
-        @Expect(conn.stmt.capturedSqlHistory[2], "INSERT INTO comment (body, post_id) VALUES (?, ?) RETURNING id")
+        @Expect(conn.stmt.capturedSqlHistory[2], "INSERT INTO comment (body, post_id) VALUES (?, ?)")
         @Expect(existing.post_id, 5)
         @Expect(fresh.post_id, 5)
     }
@@ -2809,8 +2809,8 @@ public class TxCascadeTest {
         b.children = lb
         tx.save(a)
         @Expect(conn.stmt.capturedSqlHistory.size, 2)
-        @Expect(conn.stmt.capturedSqlHistory[0], "INSERT INTO categoryWithRel (name, parent_id) VALUES (?, ?) RETURNING id")
-        @Expect(conn.stmt.capturedSqlHistory[1], "INSERT INTO categoryWithRel (name, parent_id) VALUES (?, ?) RETURNING id")
+        @Expect(conn.stmt.capturedSqlHistory[0], "INSERT INTO categoryWithRel (name, parent_id) VALUES (?, ?)")
+        @Expect(conn.stmt.capturedSqlHistory[1], "INSERT INTO categoryWithRel (name, parent_id) VALUES (?, ?)")
     }
 
     @TestCase
@@ -2824,7 +2824,7 @@ public class TxCascadeTest {
         p.author = Some(u)
         tx.save(p)
         @Expect(conn.stmt.capturedSqlHistory.size, 1)
-        @Expect(conn.stmt.capturedSqlHistory[0], "INSERT INTO postWithRel (title, user_id, post_id) VALUES (?, ?, ?) RETURNING id")
+        @Expect(conn.stmt.capturedSqlHistory[0], "INSERT INTO postWithRel (title, user_id, post_id) VALUES (?, ?, ?)")
         @Expect(capturedInt64(conn.stmt.capturedSetValues, 1), 5)
     }
 
@@ -2832,8 +2832,8 @@ public class TxCascadeTest {
     public func testCascadeRefToGhostThenSaveTargetDoesNotBackfill(): Unit {
         clearHooks()
         let conn = CaptureConnection()
-        conn.stmt.queryResultQueue.add(RowQueryResult(1))   // p.id
-        conn.stmt.queryResultQueue.add(RowQueryResult(2))   // u.id
+        conn.stmt.mockLastInsertIdQueue.add(1)   // p.id
+        conn.stmt.mockLastInsertIdQueue.add(2)   // u.id
         conn.stmt.mockRowCount = 1
         let tx = Tx(conn)
         let p = PostWithRel()
@@ -2876,7 +2876,7 @@ public class TxCascadeTest {
     public func testTxSaveResetsMarkersThenUpdateDoesNotReplay(): Unit {
         clearHooks()
         let conn = CaptureConnection()
-        conn.stmt.queryResult = RowQueryResult(42)
+        conn.stmt.mockLastInsertId = 42
         let tx = Tx(conn)
         let p = PostWithRel()
         let c = Comment()
@@ -2900,8 +2900,7 @@ public class TxCascadeTest {
     public func testTxSaveResetsMarkersThenUpdateReplayAfterReassign(): Unit {
         clearHooks()
         let conn = CaptureConnection()
-        conn.stmt.queryResultQueue.add(RowQueryResult(42))
-        conn.stmt.queryResultQueue.add(RowQueryResult(42))
+        conn.stmt.mockLastInsertId = 42
         let tx = Tx(conn)
         let p = PostWithRel()
         let c = Comment()
@@ -2923,7 +2922,7 @@ public class TxCascadeTest {
         tx.update(p)
         @Expect(conn.stmt.capturedSqlHistory.size, 5)
         @Expect(conn.stmt.capturedSqlHistory[3], "UPDATE comment SET body = ?, post_id = ? WHERE id = ?")
-        @Expect(conn.stmt.capturedSqlHistory[4], "INSERT INTO comment (body, post_id) VALUES (?, ?) RETURNING id")
+        @Expect(conn.stmt.capturedSqlHistory[4], "INSERT INTO comment (body, post_id) VALUES (?, ?)")
         @Expect(p._commentsModified, false)
     }
 
@@ -2931,7 +2930,7 @@ public class TxCascadeTest {
     public func testTxSaveRefManyRebuildsJunction(): Unit {
         clearHooks()
         let conn = CaptureConnection()
-        conn.stmt.queryResult = RowQueryResult(42)
+        conn.stmt.mockLastInsertId = 42
         let tx = Tx(conn)
         let p = PostWithRel()
         let t1 = Tag()
@@ -2944,7 +2943,7 @@ public class TxCascadeTest {
         p.tags = list
         tx.save(p)
         @Expect(conn.stmt.capturedSqlHistory.size, 4)
-        @Expect(conn.stmt.capturedSqlHistory[0], "INSERT INTO postWithRel (title, user_id, post_id) VALUES (?, ?, ?) RETURNING id")
+        @Expect(conn.stmt.capturedSqlHistory[0], "INSERT INTO postWithRel (title, user_id, post_id) VALUES (?, ?, ?)")
         @Expect(conn.stmt.capturedSqlHistory[1], "DELETE FROM post_tags WHERE postWithRel_id = ?")
         @Expect(conn.stmt.capturedSqlHistory[2], "INSERT INTO post_tags (postWithRel_id, tag_id) VALUES (?, ?)")
         @Expect(conn.stmt.capturedSqlHistory[3], "INSERT INTO post_tags (postWithRel_id, tag_id) VALUES (?, ?)")
@@ -2993,7 +2992,7 @@ public class CascadeBoundaryTest {
         clearHooks()
         // 两个不同实例的新子对象（都 id=0）不得被 visited 按 (type,id) 误判为同一对象
         let conn = CaptureConnection()
-        conn.stmt.queryResult = RowQueryResult(42)
+        conn.stmt.mockLastInsertId = 42
         let tx = Tx(conn)
         let p = PostWithRel()
         let c1 = Comment()
@@ -3006,9 +3005,9 @@ public class CascadeBoundaryTest {
         p.comments = list
         tx.save(p)
         @Expect(conn.stmt.capturedSqlHistory.size, 3)
-        @Expect(conn.stmt.capturedSqlHistory[0], "INSERT INTO postWithRel (title, user_id, post_id) VALUES (?, ?, ?) RETURNING id")
-        @Expect(conn.stmt.capturedSqlHistory[1], "INSERT INTO comment (body, post_id) VALUES (?, ?) RETURNING id")
-        @Expect(conn.stmt.capturedSqlHistory[2], "INSERT INTO comment (body, post_id) VALUES (?, ?) RETURNING id")
+        @Expect(conn.stmt.capturedSqlHistory[0], "INSERT INTO postWithRel (title, user_id, post_id) VALUES (?, ?, ?)")
+        @Expect(conn.stmt.capturedSqlHistory[1], "INSERT INTO comment (body, post_id) VALUES (?, ?)")
+        @Expect(conn.stmt.capturedSqlHistory[2], "INSERT INTO comment (body, post_id) VALUES (?, ?)")
         @Expect(p.id, 42)
         @Expect(c1.post_id, 42)
         @Expect(c2.post_id, 42)
@@ -3021,13 +3020,13 @@ public class CascadeBoundaryTest {
         clearHooks()
         // 标记 true 且 has_many 列表为空 → save 无子对象要存（只父 INSERT）
         let conn = CaptureConnection()
-        conn.stmt.queryResult = RowQueryResult(42)
+        conn.stmt.mockLastInsertId = 42
         let tx = Tx(conn)
         let p = PostWithRel()
         p.comments = ArrayList<Comment>()
         tx.save(p)
         @Expect(conn.stmt.capturedSqlHistory.size, 1)
-        @Expect(conn.stmt.capturedSqlHistory[0], "INSERT INTO postWithRel (title, user_id, post_id) VALUES (?, ?, ?) RETURNING id")
+        @Expect(conn.stmt.capturedSqlHistory[0], "INSERT INTO postWithRel (title, user_id, post_id) VALUES (?, ?, ?)")
     }
 
     @TestCase
@@ -3050,13 +3049,13 @@ public class CascadeBoundaryTest {
         clearHooks()
         // 标记 true 且 ref_many 列表为空 → save 清空中间表（DELETE 旧关联，无 INSERT）
         let conn = CaptureConnection()
-        conn.stmt.queryResult = RowQueryResult(42)
+        conn.stmt.mockLastInsertId = 42
         let tx = Tx(conn)
         let p = PostWithRel()
         p.tags = ArrayList<Tag>()
         tx.save(p)
         @Expect(conn.stmt.capturedSqlHistory.size, 2)
-        @Expect(conn.stmt.capturedSqlHistory[0], "INSERT INTO postWithRel (title, user_id, post_id) VALUES (?, ?, ?) RETURNING id")
+        @Expect(conn.stmt.capturedSqlHistory[0], "INSERT INTO postWithRel (title, user_id, post_id) VALUES (?, ?, ?)")
         @Expect(conn.stmt.capturedSqlHistory[1], "DELETE FROM post_tags WHERE postWithRel_id = ?")
         @Expect(capturedInt64(conn.stmt.capturedSetValues, 3), 42)
     }
@@ -3083,9 +3082,9 @@ public class CascadeBoundaryTest {
         clearHooks()
         // 三层嵌套：root → l2 → l3，自动递归，fk 逐层回填正确
         let conn = CaptureConnection()
-        conn.stmt.queryResultQueue.add(RowQueryResult(10))
-        conn.stmt.queryResultQueue.add(RowQueryResult(11))
-        conn.stmt.queryResultQueue.add(RowQueryResult(12))
+        conn.stmt.mockLastInsertIdQueue.add(10)
+        conn.stmt.mockLastInsertIdQueue.add(11)
+        conn.stmt.mockLastInsertIdQueue.add(12)
         let tx = Tx(conn)
         let root = CategoryWithRel()
         root.name = "root"
@@ -3101,9 +3100,9 @@ public class CascadeBoundaryTest {
         l2.children = l3List
         tx.save(root)
         @Expect(conn.stmt.capturedSqlHistory.size, 3)
-        @Expect(conn.stmt.capturedSqlHistory[0], "INSERT INTO categoryWithRel (name, parent_id) VALUES (?, ?) RETURNING id")
-        @Expect(conn.stmt.capturedSqlHistory[1], "INSERT INTO categoryWithRel (name, parent_id) VALUES (?, ?) RETURNING id")
-        @Expect(conn.stmt.capturedSqlHistory[2], "INSERT INTO categoryWithRel (name, parent_id) VALUES (?, ?) RETURNING id")
+        @Expect(conn.stmt.capturedSqlHistory[0], "INSERT INTO categoryWithRel (name, parent_id) VALUES (?, ?)")
+        @Expect(conn.stmt.capturedSqlHistory[1], "INSERT INTO categoryWithRel (name, parent_id) VALUES (?, ?)")
+        @Expect(conn.stmt.capturedSqlHistory[2], "INSERT INTO categoryWithRel (name, parent_id) VALUES (?, ?)")
         @Expect(root.id, 10)
         @Expect(l2.id, 11)
         @Expect(l3.id, 12)
@@ -3176,8 +3175,8 @@ public class CascadeBoundaryTest {
         clearHooks()
         // 级联 save 子对象（无 id）：version 0→1 初始化、父 id 回填子 fk、子 INSERT 带 version 列
         let conn = CaptureConnection()
-        conn.stmt.queryResultQueue.add(RowQueryResult(1))
-        conn.stmt.queryResultQueue.add(RowQueryResult(2))
+        conn.stmt.mockLastInsertIdQueue.add(1)
+        conn.stmt.mockLastInsertIdQueue.add(2)
         let tx = Tx(conn)
         let order = VersionedOrder()
         order.name = "o"
@@ -3188,8 +3187,8 @@ public class CascadeBoundaryTest {
         order.items = list
         tx.save(order)
         @Expect(conn.stmt.capturedSqlHistory.size, 2)
-        @Expect(conn.stmt.capturedSqlHistory[0], "INSERT INTO versionedOrder (name, version) VALUES (?, ?) RETURNING id")
-        @Expect(conn.stmt.capturedSqlHistory[1], "INSERT INTO versionedOrderItem (name, version, order_id) VALUES (?, ?, ?) RETURNING id")
+        @Expect(conn.stmt.capturedSqlHistory[0], "INSERT INTO versionedOrder (name, version) VALUES (?, ?)")
+        @Expect(conn.stmt.capturedSqlHistory[1], "INSERT INTO versionedOrderItem (name, version, order_id) VALUES (?, ?, ?)")
         @Expect(order.id, 1)
         @Expect(order.version, 1)
         @Expect(item.id, 2)

@@ -159,7 +159,8 @@ public class SQLiteDialect <: Dialect {
         }
     }
 
-    // 现代 SQLite（≥3.24 支持 ON CONFLICT，≥3.35 支持 RETURNING，JSON1 内建）启用这些能力。
+    // 现代 SQLite（≥3.24 支持 ON CONFLICT，≥3.35 支持 RETURNING，JSON1 内建）。
+    // upsert 与 json 已启用：upsert SQL 经真实 sqlite3 CLI（3.53.4）验证通过。
     // 后续引入连接抽象后，再按实际 SQLite 版本细化开关（见 audit I15 决策）。
     public func hasUpsertSupport(): Bool { true }
 
@@ -203,8 +204,10 @@ public class SQLiteDialect <: Dialect {
         }
     }
 
-    // 现代 SQLite（≥3.35 支持 RETURNING；JSON1 自 SQLite 3.38 起为内建，更早版本多为编译期启用）
-    public func hasReturningSupport(): Bool { true }
+    // SQLite ≥3.35 语法上支持 RETURNING，但本项目没有真实 SQLite 驱动可验证 save 的
+    // RETURNING 路径（当前仅有 mock 与 sqlite3 CLI 语法检查），保持关闭不冒险切换 SQLite
+    // 保存路径到 RETURNING。待引入驱动后按真实行为启用（见 audit I15 决策）。
+    public func hasReturningSupport(): Bool { false }
 
     public func hasJSONSupport(): Bool { true }
 
