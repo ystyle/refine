@@ -33,7 +33,7 @@ public class MySQLMigrator <: Migrator {
     public func hasTable(name: String): Bool {
         let s = db.session()
         let r = s.query("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = ?", [name])
-        let exists = r.next() && r.get<Int64>(1) > 0
+        let exists = r.next() && r.get<Int64>(0 + s.getParamOffset()) > 0
         s.close()
         exists
     }
@@ -101,7 +101,7 @@ public class MySQLMigrator <: Migrator {
     public static func mysqlDataTypeToStorage(dataType: String, columnType: String): StorageType {
         match (dataType) {
             case "bigint" | "int" | "smallint" | "mediumint" => StorageType.Integer
-            case "tinyint" => if (columnType.toAsciiLower() == "tinyint(1)") { StorageType.`Bool` } else { StorageType.Integer }
+            case "tinyint" => if (columnType.toAsciiLower().contains("tinyint(1)")) { StorageType.`Bool` } else { StorageType.Integer }
             case "decimal" => StorageType.Decimal
             case "varchar" | "char" => StorageType.String
             case "text" | "mediumtext" | "longtext" => StorageType.Text
@@ -117,7 +117,7 @@ public class MySQLMigrator <: Migrator {
         let s = db.session()
         let r = s.query("SELECT INDEX_NAME FROM information_schema.STATISTICS WHERE table_schema = DATABASE() AND table_name = ?", [tableName])
         var names = ArrayList<String>()
-        while (r.next()) { names.add(r.get<String>(1)) }
+        while (r.next()) { names.add(r.get<String>(0 + s.getParamOffset())) }
         s.close()
         names
     }

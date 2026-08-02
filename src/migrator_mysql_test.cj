@@ -25,6 +25,17 @@ class DiffColumnSchema <: TableSchema {
     public func indexes(): Array<IndexDef> { [] }
 }
 
+// 已存在索引 idx_foo（STATISTICS 第 0 列），autoMigrate 只加语义下不得重复 CREATE INDEX
+class IndexedDiffSchema <: TableSchema {
+    public func tableName(): String { "t9_idx" }
+    public func columns(): Array<ColumnDef> {
+        [ ColumnDef("id", StorageType.Integer, true, true, false) ]
+    }
+    public func indexes(): Array<IndexDef> {
+        [ IndexDef("idx_foo", ["id"]) ]
+    }
+}
+
 @Test
 public class MySQLMigratorTest {
     @TestCase
@@ -113,14 +124,78 @@ public class MySQLMigratorTest {
         let migrator = MySQLMigrator(db)
         migrator.autoMigrate([DiffColumnSchema()])
 
-        var added = false
+        // 列检测错位时会把已存在的 val 误判为缺失并发起 ADD COLUMN `val`
+        var addedExtra = false
         for (i in 0..conn.stmt.capturedSqlHistory.size) {
             let sql = conn.stmt.capturedSqlHistory[i]
             if (sql.contains("MODIFY COLUMN")) {
                 @Expect(true, false)
             }
-            if (sql.contains("ADD COLUMN")) { added = true }
+            if (sql.contains("ADD COLUMN `val`")) {
+                @Expect(true, false)
+            }
+            if (sql.contains("ADD COLUMN `extra`")) { addedExtra = true }
         }
-        @Expect(added, true)
+        @Expect(addedExtra, true)
+    }
+
+    // ─── C6: 结果列索引必须 paramOffset 感知，真实 MySQL（0-based）不偏移 ──
+
+    // 默认 paramOffset=0 时 hasTable 读第 0 列（COUNT(*)），旧代码硬编码 1 会读到下一列
+    @TestCase
+    public func testHasTableReadsColumnZeroWithDefaultOffset(): Unit {
+        let ds = CaptureDatasource()
+        let conn = ds.conn
+        let row = Array<Any>(2, {i => if (i == 0) { 1 } else { 0 }})
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult([], [row]))
+        let db = DB(ds)
+        let migrator = MySQLMigrator(db)
+        @Expect(migrator.hasTable("t8_has"), true)
+    }
+
+    // mariadb 走 paramOffset=1，hasTable 必须读第 1 列，而非硬编码的第 0 列
+    @TestCase
+    public func testHasTableReadsColumnOneWithMariadbOffset(): Unit {
+        let ds = CaptureDatasource()
+        let conn = ds.conn
+        let row = Array<Any>(2, {i => if (i == 0) { 999 } else { 1 }})
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult([], [row]))
+        let db = DB(ds, 1)
+        let migrator = MySQLMigrator(db)
+        @Expect(migrator.hasTable("t8_has"), true)
+    }
+
+    // getExistingIndexNames 必须读 STATISTICS 第 0 列（paramOffset=0 时）；
+    // 旧代码读第 1 列会拿到错误名字，导致已声明的 idx_foo 被误判缺失而重复 CREATE INDEX
+    @TestCase
+    public func testAutoMigrateSkipsExistingDeclaredIndex(): Unit {
+        let ds = CaptureDatasource()
+        let conn = ds.conn
+        conn.stmt.queryResultQueue.add(RowQueryResult(1))
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult([], []))
+        let idxRow = Array<Any>(2, {i => if (i == 0) { "idx_foo" } else { "idx_wrong" }})
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult([], [idxRow]))
+
+        let db = DB(ds)
+        let migrator = MySQLMigrator(db)
+        migrator.autoMigrate([IndexedDiffSchema()])
+
+        @Expect(conn.stmt.capturedSqlHistory.size >= 3, true)
+        var foundStats = false
+        for (sql in conn.stmt.capturedSqlHistory) {
+            if (sql.contains("information_schema.STATISTICS")) { foundStats = true }
+        }
+        @Expect(foundStats, true)
+        for (i in 0..conn.stmt.capturedSqlHistory.size) {
+            if (conn.stmt.capturedSqlHistory[i].contains("CREATE INDEX")) {
+                @Expect(true, false)
+            }
+        }
+    }
+
+    // C6: tinyint(1) unsigned 也是 Bool 列，不能只精确匹配 "tinyint(1)"
+    @TestCase
+    public func testDataTypeToStorageTinyintOneUnsignedIsBool(): Unit {
+        @Expect(MySQLMigrator.mysqlDataTypeToStorage("tinyint", "tinyint(1) unsigned"), StorageType.`Bool`)
     }
 }

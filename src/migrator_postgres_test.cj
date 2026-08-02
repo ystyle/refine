@@ -69,14 +69,18 @@ public class PostgreSQLMigratorTest {
         let migrator = PostgreSQLMigrator(db)
         migrator.autoMigrate([PgDiffColumnSchema()])
 
-        var added = false
+        // 列检测错位时会把已存在的 val 误判为缺失并发起 ADD COLUMN "val"
+        var addedExtra = false
         for (i in 0..conn.stmt.capturedSqlHistory.size) {
             let sql = conn.stmt.capturedSqlHistory[i]
             if (sql.contains("ALTER COLUMN")) {
                 @Expect(true, false)
             }
-            if (sql.contains("ADD COLUMN")) { added = true }
+            if (sql.contains("ADD COLUMN \"val\"")) {
+                @Expect(true, false)
+            }
+            if (sql.contains("ADD COLUMN \"extra\"")) { addedExtra = true }
         }
-        @Expect(added, true)
+        @Expect(addedExtra, true)
     }
 }
