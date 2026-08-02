@@ -56,12 +56,61 @@ public class SQLiteMigrator <: Migrator {
 
     public static func dropColumnSQL(table: String, colName: String): String { "ALTER TABLE \"" + table + "\" DROP COLUMN \"" + colName + "\"" }
 
-    public func createTable(schema: TableSchema): Unit { let s = db.session(); s.execute(createTableSQL(schema), []); s.close() }
-    public func dropTable(schema: TableSchema): Unit { let s = db.session(); s.execute(dropTableSQL(schema), []); s.close() }
-    public func hasTable(name: String): Bool { let s = db.session(); let r = s.query(hasTableSQL(), [name]); let e = r.next(); s.close(); e }
-    public func addColumn(table: String, col: ColumnDef): Unit { let s = db.session(); s.execute(addColumnSQL(table, col), []); s.close() }
-    public func addIndex(table: String, idx: IndexDef): Unit { let s = db.session(); s.execute(addIndexSQL(table, idx), []); s.close() }
-    public func dropColumn(table: String, colName: String): Unit { let s = db.session(); s.execute(dropColumnSQL(table, colName), []); s.close() }
+    // I6: session 一律 try/finally 关闭，query/execute 抛异常时不得泄漏池化连接
+    public func createTable(schema: TableSchema): Unit {
+        let s = db.session()
+        try {
+            s.execute(createTableSQL(schema), [])
+        } finally {
+            s.close()
+        }
+    }
+
+    public func dropTable(schema: TableSchema): Unit {
+        let s = db.session()
+        try {
+            s.execute(dropTableSQL(schema), [])
+        } finally {
+            s.close()
+        }
+    }
+
+    public func hasTable(name: String): Bool {
+        let s = db.session()
+        try {
+            let r = s.query(hasTableSQL(), [name])
+            r.next()
+        } finally {
+            s.close()
+        }
+    }
+
+    public func addColumn(table: String, col: ColumnDef): Unit {
+        let s = db.session()
+        try {
+            s.execute(addColumnSQL(table, col), [])
+        } finally {
+            s.close()
+        }
+    }
+
+    public func addIndex(table: String, idx: IndexDef): Unit {
+        let s = db.session()
+        try {
+            s.execute(addIndexSQL(table, idx), [])
+        } finally {
+            s.close()
+        }
+    }
+
+    public func dropColumn(table: String, colName: String): Unit {
+        let s = db.session()
+        try {
+            s.execute(dropColumnSQL(table, colName), [])
+        } finally {
+            s.close()
+        }
+    }
 
     public func alterColumn(_table: String, _old: ColumnDef, _new: ColumnDef): Unit {
         throw Exception("SQLite does not support ALTER COLUMN")
@@ -84,20 +133,26 @@ public class SQLiteMigrator <: Migrator {
 
     private func getExistingColumnNames(tableName: String): ArrayList<String> {
         let s = db.session()
-        let r = s.query("PRAGMA table_info(\"" + tableName + "\")", [])
-        var names = ArrayList<String>()
-        while (r.next()) { names.add(r.get<String>(1)) }
-        s.close()
-        names
+        try {
+            let r = s.query("PRAGMA table_info(\"" + tableName + "\")", [])
+            var names = ArrayList<String>()
+            while (r.next()) { names.add(r.get<String>(1)) }
+            names
+        } finally {
+            s.close()
+        }
     }
 
     private func getExistingIndexNames(tableName: String): ArrayList<String> {
         let s = db.session()
-        let r = s.query("SELECT name FROM sqlite_master WHERE type='index' AND tbl_name=?", [tableName])
-        var names = ArrayList<String>()
-        while (r.next()) { names.add(r.get<String>(0)) }
-        s.close()
-        names
+        try {
+            let r = s.query("SELECT name FROM sqlite_master WHERE type='index' AND tbl_name=?", [tableName])
+            var names = ArrayList<String>()
+            while (r.next()) { names.add(r.get<String>(0)) }
+            names
+        } finally {
+            s.close()
+        }
     }
 
 }

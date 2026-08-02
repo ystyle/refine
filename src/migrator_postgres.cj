@@ -30,48 +30,78 @@ public class PostgreSQLMigrator <: Migrator {
         "CREATE TABLE IF NOT EXISTS \"" + schema.tableName() + "\" (" + String.join(colDefs.toArray(), delimiter: ", ") + ")"
     }
 
-    public func createTable(schema: TableSchema): Unit { let s = db.session(); s.execute(createTableSQL(schema, dialect), []); s.close() }
-    public func dropTable(schema: TableSchema): Unit { let s = db.session(); s.execute("DROP TABLE IF EXISTS \"" + schema.tableName() + "\"", []); s.close() }
+    // I6: session 一律 try/finally 关闭，query/execute 抛异常时不得泄漏池化连接
+    public func createTable(schema: TableSchema): Unit {
+        let s = db.session()
+        try {
+            s.execute(createTableSQL(schema, dialect), [])
+        } finally {
+            s.close()
+        }
+    }
+
+    public func dropTable(schema: TableSchema): Unit {
+        let s = db.session()
+        try {
+            s.execute("DROP TABLE IF EXISTS \"" + schema.tableName() + "\"", [])
+        } finally {
+            s.close()
+        }
+    }
 
     public func hasTable(name: String): Bool {
         let s = db.session()
-        let r = s.query("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = current_schema() AND table_name = ?", [name])
-        let exists = r.next() && r.get<Int64>(0) > 0
-        s.close()
-        exists
+        try {
+            let r = s.query("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = current_schema() AND table_name = ?", [name])
+            r.next() && r.get<Int64>(0) > 0
+        } finally {
+            s.close()
+        }
     }
 
     public func addColumn(table: String, col: ColumnDef): Unit {
         let s = db.session()
-        s.execute("ALTER TABLE \"" + table + "\" ADD COLUMN " + columnDefSQL(col, dialect), [])
-        s.close()
+        try {
+            s.execute("ALTER TABLE \"" + table + "\" ADD COLUMN " + columnDefSQL(col, dialect), [])
+        } finally {
+            s.close()
+        }
     }
 
     public func addIndex(table: String, idx: IndexDef): Unit {
         var colParts = ArrayList<String>()
         for (c in idx.columns) { colParts.add("\"" + c + "\"") }
         let s = db.session()
-        s.execute("CREATE INDEX IF NOT EXISTS \"" + idx.name + "\" ON \"" + table + "\" (" + String.join(colParts.toArray(), delimiter: ", ") + ")", [])
-        s.close()
+        try {
+            s.execute("CREATE INDEX IF NOT EXISTS \"" + idx.name + "\" ON \"" + table + "\" (" + String.join(colParts.toArray(), delimiter: ", ") + ")", [])
+        } finally {
+            s.close()
+        }
     }
 
     public func dropColumn(table: String, colName: String): Unit {
         let s = db.session()
-        s.execute("ALTER TABLE \"" + table + "\" DROP COLUMN IF EXISTS \"" + colName + "\"", [])
-        s.close()
+        try {
+            s.execute("ALTER TABLE \"" + table + "\" DROP COLUMN IF EXISTS \"" + colName + "\"", [])
+        } finally {
+            s.close()
+        }
     }
 
     public func alterColumn(table: String, _old: ColumnDef, new: ColumnDef): Unit {
         let s = db.session()
-        s.execute("ALTER TABLE \"" + table + "\" ALTER COLUMN \"" + new.name + "\" TYPE " + dialect.dataTypeOf(new.storageType), [])
-        if (new.primaryKey) {
-            // 主键列保持 NOT NULL，不调整
-        } else if (!new.nullable) {
-            s.execute("ALTER TABLE \"" + table + "\" ALTER COLUMN \"" + new.name + "\" SET NOT NULL", [])
-        } else {
-            s.execute("ALTER TABLE \"" + table + "\" ALTER COLUMN \"" + new.name + "\" DROP NOT NULL", [])
+        try {
+            s.execute("ALTER TABLE \"" + table + "\" ALTER COLUMN \"" + new.name + "\" TYPE " + dialect.dataTypeOf(new.storageType), [])
+            if (new.primaryKey) {
+                // 主键列保持 NOT NULL，不调整
+            } else if (!new.nullable) {
+                s.execute("ALTER TABLE \"" + table + "\" ALTER COLUMN \"" + new.name + "\" SET NOT NULL", [])
+            } else {
+                s.execute("ALTER TABLE \"" + table + "\" ALTER COLUMN \"" + new.name + "\" DROP NOT NULL", [])
+            }
+        } finally {
+            s.close()
         }
-        s.close()
     }
 
     public func autoMigrate(schemas: Array<TableSchema>): Unit {
@@ -94,16 +124,19 @@ public class PostgreSQLMigrator <: Migrator {
 
     private func getExistingColumns(tableName: String): HashMap<String, ColumnDef> {
         let s = db.session()
-        let r = s.query("SELECT column_name, data_type, is_nullable FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = ?", [tableName])
-        var map = HashMap<String, ColumnDef>()
-        while (r.next()) {
-            let name = r.get<String>(0)
-            let storage = pgDataTypeToStorage(r.get<String>(1))
-            let nullable = r.get<String>(2) == "YES"
-            map.add(name, ColumnDef(name, storage, false, false, nullable))
+        try {
+            let r = s.query("SELECT column_name, data_type, is_nullable FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = ?", [tableName])
+            var map = HashMap<String, ColumnDef>()
+            while (r.next()) {
+                let name = r.get<String>(0)
+                let storage = pgDataTypeToStorage(r.get<String>(1))
+                let nullable = r.get<String>(2) == "YES"
+                map.add(name, ColumnDef(name, storage, false, false, nullable))
+            }
+            map
+        } finally {
+            s.close()
         }
-        s.close()
-        map
     }
 
     public static func pgDataTypeToStorage(t: String): StorageType {
@@ -123,11 +156,14 @@ public class PostgreSQLMigrator <: Migrator {
 
     private func getExistingIndexNames(tableName: String): ArrayList<String> {
         let s = db.session()
-        let r = s.query("SELECT indexname FROM pg_indexes WHERE schemaname = current_schema() AND tablename = ?", [tableName])
-        var names = ArrayList<String>()
-        while (r.next()) { names.add(r.get<String>(0)) }
-        s.close()
-        names
+        try {
+            let r = s.query("SELECT indexname FROM pg_indexes WHERE schemaname = current_schema() AND tablename = ?", [tableName])
+            var names = ArrayList<String>()
+            while (r.next()) { names.add(r.get<String>(0)) }
+            names
+        } finally {
+            s.close()
+        }
     }
 
 }

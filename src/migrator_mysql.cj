@@ -27,42 +27,72 @@ public class MySQLMigrator <: Migrator {
         "CREATE TABLE IF NOT EXISTS `" + schema.tableName() + "` (" + String.join(colDefs.toArray(), delimiter: ", ") + ")"
     }
 
-    public func createTable(schema: TableSchema): Unit { let s = db.session(); s.execute(createTableSQL(schema, dialect), []); s.close() }
-    public func dropTable(schema: TableSchema): Unit { let s = db.session(); s.execute("DROP TABLE IF EXISTS `" + schema.tableName() + "`", []); s.close() }
+    // I6: session 一律 try/finally 关闭，query/execute 抛异常时不得泄漏池化连接
+    public func createTable(schema: TableSchema): Unit {
+        let s = db.session()
+        try {
+            s.execute(createTableSQL(schema, dialect), [])
+        } finally {
+            s.close()
+        }
+    }
+
+    public func dropTable(schema: TableSchema): Unit {
+        let s = db.session()
+        try {
+            s.execute("DROP TABLE IF EXISTS `" + schema.tableName() + "`", [])
+        } finally {
+            s.close()
+        }
+    }
 
     public func hasTable(name: String): Bool {
         let s = db.session()
-        let r = s.query("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = ?", [name])
-        let off = s.getParamOffset()
-        let exists = r.next() && r.get<Int64>(0 + off) > 0
-        s.close()
-        exists
+        try {
+            let r = s.query("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = ?", [name])
+            let off = s.getParamOffset()
+            r.next() && r.get<Int64>(0 + off) > 0
+        } finally {
+            s.close()
+        }
     }
 
     public func addColumn(table: String, col: ColumnDef): Unit {
         let s = db.session()
-        s.execute("ALTER TABLE `" + table + "` ADD COLUMN " + columnDefSQL(col, dialect), [])
-        s.close()
+        try {
+            s.execute("ALTER TABLE `" + table + "` ADD COLUMN " + columnDefSQL(col, dialect), [])
+        } finally {
+            s.close()
+        }
     }
 
     public func addIndex(table: String, idx: IndexDef): Unit {
         var colParts = ArrayList<String>()
         for (c in idx.columns) { colParts.add("`" + c + "`") }
         let s = db.session()
-        s.execute("CREATE INDEX `" + idx.name + "` ON `" + table + "` (" + String.join(colParts.toArray(), delimiter: ", ") + ")", [])
-        s.close()
+        try {
+            s.execute("CREATE INDEX `" + idx.name + "` ON `" + table + "` (" + String.join(colParts.toArray(), delimiter: ", ") + ")", [])
+        } finally {
+            s.close()
+        }
     }
 
     public func dropColumn(table: String, colName: String): Unit {
         let s = db.session()
-        s.execute("ALTER TABLE `" + table + "` DROP COLUMN `" + colName + "`", [])
-        s.close()
+        try {
+            s.execute("ALTER TABLE `" + table + "` DROP COLUMN `" + colName + "`", [])
+        } finally {
+            s.close()
+        }
     }
 
     public func alterColumn(table: String, _old: ColumnDef, new: ColumnDef): Unit {
         let s = db.session()
-        s.execute("ALTER TABLE `" + table + "` MODIFY COLUMN " + columnDefSQL(new, dialect), [])
-        s.close()
+        try {
+            s.execute("ALTER TABLE `" + table + "` MODIFY COLUMN " + columnDefSQL(new, dialect), [])
+        } finally {
+            s.close()
+        }
     }
 
     public func autoMigrate(schemas: Array<TableSchema>): Unit {
@@ -85,18 +115,21 @@ public class MySQLMigrator <: Migrator {
 
     private func getExistingColumns(tableName: String): HashMap<String, ColumnDef> {
         let s = db.session()
-        let r = s.query("SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE, EXTRA, COLUMN_TYPE FROM information_schema.COLUMNS WHERE table_schema = DATABASE() AND table_name = ?", [tableName])
-        let off = s.getParamOffset()
-        var map = HashMap<String, ColumnDef>()
-        while (r.next()) {
-            let name = r.get<String>(0 + off)
-            let storage = mysqlDataTypeToStorage(r.get<String>(1 + off), r.get<String>(4 + off))
-            let nullable = r.get<String>(2 + off) == "YES"
-            let autoInc = r.get<String>(3 + off).contains("auto_increment")
-            map.add(name, ColumnDef(name, storage, false, autoInc, nullable))
+        try {
+            let r = s.query("SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE, EXTRA, COLUMN_TYPE FROM information_schema.COLUMNS WHERE table_schema = DATABASE() AND table_name = ?", [tableName])
+            let off = s.getParamOffset()
+            var map = HashMap<String, ColumnDef>()
+            while (r.next()) {
+                let name = r.get<String>(0 + off)
+                let storage = mysqlDataTypeToStorage(r.get<String>(1 + off), r.get<String>(4 + off))
+                let nullable = r.get<String>(2 + off) == "YES"
+                let autoInc = r.get<String>(3 + off).contains("auto_increment")
+                map.add(name, ColumnDef(name, storage, false, autoInc, nullable))
+            }
+            map
+        } finally {
+            s.close()
         }
-        s.close()
-        map
     }
 
     public static func mysqlDataTypeToStorage(dataType: String, columnType: String): StorageType {
@@ -116,12 +149,15 @@ public class MySQLMigrator <: Migrator {
 
     private func getExistingIndexNames(tableName: String): ArrayList<String> {
         let s = db.session()
-        let r = s.query("SELECT INDEX_NAME FROM information_schema.STATISTICS WHERE table_schema = DATABASE() AND table_name = ?", [tableName])
-        let off = s.getParamOffset()
-        var names = ArrayList<String>()
-        while (r.next()) { names.add(r.get<String>(0 + off)) }
-        s.close()
-        names
+        try {
+            let r = s.query("SELECT INDEX_NAME FROM information_schema.STATISTICS WHERE table_schema = DATABASE() AND table_name = ?", [tableName])
+            let off = s.getParamOffset()
+            var names = ArrayList<String>()
+            while (r.next()) { names.add(r.get<String>(0 + off)) }
+            names
+        } finally {
+            s.close()
+        }
     }
 
 }

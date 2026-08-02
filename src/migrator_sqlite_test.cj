@@ -2,6 +2,43 @@ package refine
 
 import std.unittest.*
 import std.unittest.testmacro.*
+import std.collection.HashMap
+import std.database.sql.{Connection, Datasource, ConnectionState, Transaction, ColumnInfo, SqlDbType, QueryResult, UpdateResult}
+import std.database.sql.Statement as SqlStatement
+
+// I6: 迁移器查询/执行抛异常时，session 必须 finally 关闭（否则池化连接泄漏）。
+// 三个 mock 模拟"连接可追踪关闭次数 + prepareStatement/query/update 必抛异常"。
+class ThrowingCaptureStatement <: SqlStatement {
+    public func close(): Unit {}
+    public func isClosed(): Bool { false }
+    public prop parameterColumnInfos: Array<ColumnInfo> { get() { [] } }
+    public func query(): QueryResult { throw Exception("mock query failure") }
+    public func query(_params: Array<SqlDbType>): QueryResult { throw Exception("mock query failure") }
+    public func set<T>(index: Int, value: T): Unit {}
+    public func setNull(index: Int): Unit {}
+    public func setOption(_key: String, _value: String): Unit {}
+    public func update(): UpdateResult { throw Exception("mock update failure") }
+    public func update(_params: Array<SqlDbType>): UpdateResult { throw Exception("mock update failure") }
+}
+
+class ClosingTrackConnection <: Connection {
+    public var stmt: SqlStatement = ThrowingCaptureStatement()
+    public var closedCount: Int64 = 0
+    public func close(): Unit { closedCount++ }
+    public func isClosed(): Bool { closedCount > 0 }
+    public prop state: ConnectionState { get() { ConnectionState.Connected } }
+    public func createTransaction(): Transaction { MockTransaction() }
+    public func getMetaData(): HashMap<String, String> { HashMap<String, String>() }
+    public func prepareStatement(sql: String): SqlStatement { stmt }
+}
+
+class ClosingTrackDatasource <: Datasource {
+    public var conn: ClosingTrackConnection = ClosingTrackConnection()
+    public func connect(): Connection { conn }
+    public func close(): Unit {}
+    public func isClosed(): Bool { false }
+    public func setOption(_key: String, _value: String): Unit {}
+}
 
 // I5: 已有表（id）缺 name 列的旧表，autoMigrate 补 NOT NULL 列必须生成带 DEFAULT 的 ADD COLUMN
 class I5AddNotNullSchema <: TableSchema {
@@ -99,5 +136,31 @@ public class SQLiteMigratorTest {
     public func testDropColumnSQL(): Unit {
         let sql = SQLiteMigrator.dropColumnSQL("user", "age")
         @Expect(sql, "ALTER TABLE \"user\" DROP COLUMN \"age\"")
+    }
+
+    // I6: query 抛异常时 session 必须 finally 关闭（修复前 s.close() 不执行，池化连接泄漏）
+    @TestCase
+    public func testHasTableClosesSessionOnQueryThrow(): Unit {
+        let ds = ClosingTrackDatasource()
+        let migrator = SQLiteMigrator(DB(ds))
+        try {
+            migrator.hasTable("t")
+            @Fail("expected mock query failure")
+        } catch (_: Exception) {
+            @Expect(ds.conn.closedCount, 1)
+        }
+    }
+
+    // I6: execute 抛异常时 session 必须 finally 关闭
+    @TestCase
+    public func testAddColumnClosesSessionOnExecuteThrow(): Unit {
+        let ds = ClosingTrackDatasource()
+        let migrator = SQLiteMigrator(DB(ds))
+        try {
+            migrator.addColumn("t", ColumnDef("x", StorageType.Text, false, false, true))
+            @Fail("expected mock update failure")
+        } catch (_: Exception) {
+            @Expect(ds.conn.closedCount, 1)
+        }
     }
 }

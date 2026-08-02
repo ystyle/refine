@@ -130,4 +130,30 @@ public class PostgreSQLMigratorTest {
         }
         @Expect(bound, true)
     }
+
+    // I6: query 抛异常时 session 必须 finally 关闭（否则池化连接泄漏）
+    @TestCase
+    public func testHasTableClosesSessionOnQueryThrow(): Unit {
+        let ds = ClosingTrackDatasource()
+        let migrator = PostgreSQLMigrator(DB(ds))
+        try {
+            migrator.hasTable("t")
+            @Fail("expected mock query failure")
+        } catch (_: Exception) {
+            @Expect(ds.conn.closedCount, 1)
+        }
+    }
+
+    // I6: execute 抛异常时 session 必须 finally 关闭
+    @TestCase
+    public func testAddColumnClosesSessionOnExecuteThrow(): Unit {
+        let ds = ClosingTrackDatasource()
+        let migrator = PostgreSQLMigrator(DB(ds))
+        try {
+            migrator.addColumn("t", ColumnDef("x", StorageType.Text, false, false, true))
+            @Fail("expected mock update failure")
+        } catch (_: Exception) {
+            @Expect(ds.conn.closedCount, 1)
+        }
+    }
 }
