@@ -2,6 +2,7 @@ package refine
 
 import std.unittest.*
 import std.unittest.testmacro.*
+import std.database.sql.DriverManager
 
 @Test
 public class ConfigTest {
@@ -136,5 +137,48 @@ public class ConfigTest {
         cfg.passwd = "secret"
         @Expect(cfg.driver, "mysql")
         @Expect(cfg.database.getOrThrow(), "testdb")
+    }
+
+    @TestCase
+    public func testConfigToDBWithMySQLDriver(): Unit {
+        DriverManager.deregister("mysql")
+        DriverManager.register("mysql", MockDriver())
+        try {
+            let cfg = DatabaseConfig()
+            cfg.driver = "mysql"
+            cfg.dsn = "mysql://localhost:3306/testdb"
+            cfg.database = Some("testdb")
+            let db = cfg.toDB()
+            @Expect(db.getDialect().name(), "mysql")
+            let s = db.session()
+            @Expect(s.getParamOffset(), 0)
+            s.close()
+            db.close()
+        } finally {
+            DriverManager.deregister("mysql")
+        }
+    }
+
+    @TestCase
+    public func testConfigToDBWithMariaDBDriver(): Unit {
+        let realDrv = DriverManager.getDriver("mariadb")
+        DriverManager.deregister("mariadb")
+        DriverManager.register("mariadb", MockDriver())
+        try {
+            let cfg = DatabaseConfig()
+            cfg.driver = "mariadb"
+            cfg.dsn = "mariadb://localhost:3306/testdb"
+            let db = cfg.toDB()
+            @Expect(db.getDialect().name(), "mysql")
+            let s = db.session()
+            @Expect(s.getParamOffset(), 1)
+            s.close()
+            db.close()
+        } finally {
+            DriverManager.deregister("mariadb")
+            if (let Some(drv) <- realDrv) {
+                DriverManager.register("mariadb", drv)
+            }
+        }
     }
 }

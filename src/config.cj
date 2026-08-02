@@ -27,7 +27,9 @@ public class DatabaseConfig {
                 if (passwd != "") { opts.add(("password", passwd)) }
                 if (let Some(db) <- database) { opts.add(("database", db)) }
                 let ds = drv.open(dsn, opts.toArray())
-                DB(ds)
+                let d = detectDialect(this.driver)
+                let offset = if (this.driver == "mariadb") { 1 } else { 0 }
+                DB(ds, offset, d)
             case None =>
                 throw ConnectionException("Driver '${driver}' not found")
         }

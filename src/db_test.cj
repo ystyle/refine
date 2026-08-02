@@ -1,6 +1,6 @@
 package refine
 
-import std.database.sql.{Connection, Transaction, QueryResult, UpdateResult, ColumnInfo, ConnectionState, TransactionAccessMode, TransactionDeferrableMode, TransactionIsoLevel, SqlDbType, Datasource}
+import std.database.sql.{Connection, Transaction, QueryResult, UpdateResult, ColumnInfo, ConnectionState, TransactionAccessMode, TransactionDeferrableMode, TransactionIsoLevel, SqlDbType, Datasource, DriverManager, Driver}
 import std.database.sql.Statement as SqlStatement
 import std.collection.HashMap
 import std.unittest.*
@@ -122,6 +122,16 @@ class MockDatasource <: Datasource {
     }
 
     public func setOption(key: String, value: String): Unit {}
+}
+
+class MockDriver <: Driver {
+    public prop name: String { get() { "mock" } }
+    public prop preferredPooling: Bool { get() { false } }
+    public prop version: String { get() { "1.0" } }
+
+    public func open(connectionString: String, opts: Array<(String, String)>): Datasource {
+        MockDatasource()
+    }
 }
 
 @Test
@@ -407,5 +417,109 @@ public class DbTest {
         let result = tx.queryOne("SELECT * FROM t WHERE id = ?", [1 as Any],
             { r: QueryResult, cm: HashMap<String, Int64> => 42 })
         @Expect(result.isNone(), true)
+    }
+
+    @TestCase
+    public func testDBWithMySQLDialect(): Unit {
+        let db = DB(MockDatasource(), MySQLDialect())
+        @Expect(db.getDialect().name(), "mysql")
+    }
+
+    @TestCase
+    public func testDBWithPostgreSQLDialect(): Unit {
+        let db = DB(MockDatasource(), PostgreSQLDialect())
+        @Expect(db.getDialect().name(), "postgresql")
+    }
+
+    @TestCase
+    public func testDBDefaultDialectIsSQLite(): Unit {
+        let db = DB(MockDatasource())
+        @Expect(db.getDialect().name(), "sqlite")
+    }
+
+    @TestCase
+    public func testDBFullInitWithParamOffsetAndDialect(): Unit {
+        let db = DB(MockDatasource(), 1, MySQLDialect())
+        @Expect(db.getDialect().name(), "mysql")
+        let s = db.session()
+        @Expect(s.getParamOffset(), 1)
+        s.close()
+    }
+
+    @TestCase
+    public func testDBSessionCarriesDialect(): Unit {
+        let db = DB(MockDatasource(), MySQLDialect())
+        let s = db.session()
+        @Expect(s.getDialect().name(), "mysql")
+        s.close()
+    }
+
+    @TestCase
+    public func testDBTransactionCarriesDialect(): Unit {
+        let db = DB(MockDatasource(), PostgreSQLDialect())
+        let name = db.transaction({ tx => tx.getDialect().name() })
+        @Expect(name, "postgresql")
+    }
+
+    @TestCase
+    public func testDBMigratorWithMySQLDialect(): Unit {
+        let db = DB(MockDatasource(), MySQLDialect())
+        let m = db.migrator()
+        let isMySql = match (m) { case _: MySQLMigrator => true; case _ => false }
+        @Expect(isMySql, true)
+    }
+
+    @TestCase
+    public func testDBMigratorWithPostgreSQLDialect(): Unit {
+        let db = DB(MockDatasource(), PostgreSQLDialect())
+        let m = db.migrator()
+        let isPg = match (m) { case _: PostgreSQLMigrator => true; case _ => false }
+        @Expect(isPg, true)
+    }
+
+    @TestCase
+    public func testDBMigratorDefaultIsSQLite(): Unit {
+        let db = DB(MockDatasource())
+        let m = db.migrator()
+        let isSqlite = match (m) { case _: SQLiteMigrator => true; case _ => false }
+        @Expect(isSqlite, true)
+    }
+
+    @TestCase
+    public func testSessionWithDialect(): Unit {
+        let s = Session(MockConnection(), 0, MySQLDialect())
+        @Expect(s.getDialect().name(), "mysql")
+    }
+
+    @TestCase
+    public func testTxWithDialect(): Unit {
+        let tx = Tx(MockConnection(), 0, PostgreSQLDialect())
+        @Expect(tx.getDialect().name(), "postgresql")
+    }
+
+    @TestCase
+    public func testDBOpenWithMySQLURL(): Unit {
+        DriverManager.deregister("mysql")
+        DriverManager.register("mysql", MockDriver())
+        try {
+            let db = DB.open("mysql://localhost:3306/testdb")
+            @Expect(db.getDialect().name(), "mysql")
+            db.close()
+        } finally {
+            DriverManager.deregister("mysql")
+        }
+    }
+
+    @TestCase
+    public func testDBOpenWithPostgresURL(): Unit {
+        DriverManager.deregister("postgresql")
+        DriverManager.register("postgresql", MockDriver())
+        try {
+            let db = DB.open("postgresql://localhost:5432/testdb")
+            @Expect(db.getDialect().name(), "postgresql")
+            db.close()
+        } finally {
+            DriverManager.deregister("postgresql")
+        }
     }
 }

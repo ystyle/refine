@@ -129,13 +129,7 @@ public class Refine {
     }
 
     public func migrator(): Migrator {
-        let db = DB(datasource)
-        // For MariaDB/MySQL, the session needs 1-based paramOffset
-        if (paramOffset > 0) {
-            dialect.migrator(DB(datasource, paramOffset))
-        } else {
-            dialect.migrator(db)
-        }
+        dialect.migrator(DB(datasource, paramOffset, dialect))
     }
 
     public func close(): Unit {
