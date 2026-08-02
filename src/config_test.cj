@@ -181,4 +181,37 @@ public class ConfigTest {
             }
         }
     }
+
+    // I17: DatabaseConfig 的连接池参数此前全是死参数（从未接线到数据源）。
+    // applyPoolConfig 必须把全部 6 个池参数应用到 PooledDatasource。
+    @TestCase
+    public func testApplyPoolConfigWiring(): Unit {
+        let cfg = DatabaseConfig()
+        cfg.maxPoolSize = 8
+        cfg.maxIdleSize = 3
+        cfg.connectionTimeout = 5
+        cfg.idleTimeout = 120
+        cfg.maxLifeTime = 3600
+        cfg.keepaliveTime = 45
+        let pooled = applyPoolConfig(cfg, MockDatasource())
+        @Expect(pooled.maxSize, 8)
+        @Expect(pooled.maxIdleSize, 3)
+        @Expect(pooled.connectionTimeout.toSeconds(), 5)
+        @Expect(pooled.idleTimeout.toSeconds(), 120)
+        @Expect(pooled.maxLifeTime.toSeconds(), 3600)
+        @Expect(pooled.keepaliveTime.toSeconds(), 45)
+    }
+
+    // I17: 默认池参数同样必须生效。
+    @TestCase
+    public func testApplyPoolConfigDefaults(): Unit {
+        let cfg = DatabaseConfig()
+        let pooled = applyPoolConfig(cfg, MockDatasource())
+        @Expect(pooled.maxSize, 50)
+        @Expect(pooled.maxIdleSize, 25)
+        @Expect(pooled.connectionTimeout.toSeconds(), 30)
+        @Expect(pooled.idleTimeout.toSeconds(), 600)
+        @Expect(pooled.maxLifeTime.toSeconds(), 1800)
+        @Expect(pooled.keepaliveTime.toSeconds(), 60)
+    }
 }

@@ -1,7 +1,8 @@
 package refine
 
 import std.collection.{ArrayList, HashMap}
-import std.database.sql.DriverManager
+import std.core.Duration
+import std.database.sql.{Datasource, DriverManager, PooledDatasource}
 
 public class DatabaseConfig {
     var driver: String = "sqlite"
@@ -29,11 +30,24 @@ public class DatabaseConfig {
                 let ds = drv.open(dsn, opts.toArray())
                 let d = detectDialect(this.driver)
                 let offset = detectParamOffset(this.driver)
-                DB(ds, offset, d)
+                DB(applyPoolConfig(this, ds), offset, d)
             case None =>
                 throw ConnectionException("Driver '${driver}' not found")
         }
     }
+}
+
+// I17: DatabaseConfig 的连接池参数此前从未接线（死参数）。这里把驱动数据源包装为
+// PooledDatasource 并将全部池参数应用到连接池；超时类参数以秒为单位换算为 Duration。
+func applyPoolConfig(cfg: DatabaseConfig, ds: Datasource): PooledDatasource {
+    let pooled = PooledDatasource(ds)
+    pooled.maxSize = cfg.maxPoolSize
+    pooled.maxIdleSize = cfg.maxIdleSize
+    pooled.connectionTimeout = Duration.second * cfg.connectionTimeout
+    pooled.idleTimeout = Duration.second * cfg.idleTimeout
+    pooled.maxLifeTime = Duration.second * cfg.maxLifeTime
+    pooled.keepaliveTime = Duration.second * cfg.keepaliveTime
+    pooled
 }
 
 public class DatabaseRegistry {
