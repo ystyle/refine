@@ -3,7 +3,7 @@
 > 审查日期：2026-08-02
 > 审查范围：全部 `src/` 运行时 + `src/macros/` 宏层 + 三方言 + 三迁移器
 > 审查方式：三路并行深度审查（核心运行时 / 方言+迁移 / 宏生成层），逐行核对 + 交叉验证
-> 状态：**Not ready for release** — 存在 9 个 Critical + 19 个 Important，修复后需补测试沉淀。进度：I19/I20/I21/I22/I23/F1/F2/F3 已修复（2026-08-02~08-03）；**P2 Minor 批次（M1/M2/M4/M5/M6/M7/M8/M9/M11/M13/M14/M15/M23/M24）已处理（2026-08-03）**，设计项 M3/M10/M16/M19/M22 与重构项 M18/M20 待排期。
+> 状态：**Not ready for release** — 存在 9 个 Critical + 19 个 Important，修复后需补测试沉淀。进度：I19/I20/I21/I22/I23/F1/F2/F3 已修复（2026-08-02~08-03）；**P2 Minor 批次（M1/M2/M4/M5/M6/M7/M8/M9/M11/M13/M14/M15/M23/M24）已处理（2026-08-03）**；**设计项 M3/M10/M16/M19/M22 已处理（2026-08-03）**，重构项 M18/M20 待排期。
 
 ---
 
@@ -216,6 +216,7 @@
 - **M2** `visitedContains/visitedKeyContains` 是 public 顶层函数，泄漏内部实现（`refine.cj:165-177`）。
   - **✅ 已解决（2026-08-03，裁决为 by-design）**: 宏生成代码（`relation_gen.cj` 级联系列，位于**用户包**）引用这两个函数，宏展开代码无法访问 refine 包 internal，public 是刻意设计（`CascadeVisitedKeys` 别名同理由）。
 - **M3** `idgen.cj:40-45` Sonyflake machineId 随机化 → 多进程共库时 ID 冲突风险。
+  - **✅ 已解决（2026-08-03）**: `SonyflakeIdGenerator` 增加 `init(machineId: UInt16)` 显式配置构造，保留无参随机构造（向后兼容）；文档注释明确多进程共库必须为各进程配置不同 machineId。新增 4 例：machineId 位段断言（`Decompose`）、非空、默认随机、不同 machineId ID 不同。
 - **M4** `col.cj:24,32` 空数组返回 `Raw("1 = 0")` 硬编码字符串。
   - **✅ 已解决（2026-08-03，裁决为 no-op）**: `anyOf([]) → Raw("1 = 0")`、`notAnyOf([]) → Raw("1 = 1")` 是 SQLite/MySQL/PG 三方言通用的恒假/恒真 SQL 常量，仅作 filter 谓词、无注入面，保持原样。
 - **M5** `db.cj:207-210` `setIsolation` 错误信息硬编码 "SQLite does not support"。
@@ -229,6 +230,7 @@
 - **M9** `dialect_sqlite.cj:174` Timestamp→TEXT，软删除过滤硬编码 `deleted_at = 0`（`refine_macro.cj:99`），若 deleted_at 声明为 DateTime 会永远查不到。
   - **✅ 已解决（2026-08-03）**: 软删过滤与写值按 `deleted_at` 声明类型生成——DateTime → `IS NULL` + `DateTime.now()`，Int64 → `= 0` + `1`（历史行为不变）；新增 `DateTimeSoftDeleteTest` 3 例。**遗留（转 F4）**：DateTime 软删端到端可用还需 `Option<DateTime>` 可空软删字段支持（宏层 `isRelationField` 当前把 `Option<X>` 当 ref_to 关系），见 `§五 F4`。
 - **M10** `error.cj:45-65` `OptimisticLockException` 两个 pk 重载（Int64/String）易混淆。
+  - **✅ 已解决（2026-08-03）**: init 私有化，改为 `createWithInt64Pk`/`createWithStringPk` 工厂方法（公开字段 entityType/pk/expected/actual 不变）。宏生成调用点同步改造：单 Int64 主键走 Int64 工厂，单 String/复合主键走 String 工厂（`tx_gen.cj`）。新增 2 例断言工厂语义，乐观锁既有测试全绿。
 - **M11** `dispatchSet1`（`db.cj:296-299`）从未被调用。
   - **✅ 已解决（2026-08-03）**: `dispatchSet1` 死代码删除（grep 确认零调用方，与 M23 同项）。
 - **M12** `runQuery`（`query.cj:184-198`）是死代码。
@@ -239,12 +241,15 @@
 - **M15** MySQL `getExistingIndexNames` 复合索引名重复出现，且混入 PRIMARY。
   - **✅ 已解决（2026-08-03）**: 改 `SELECT DISTINCT INDEX_NAME ... AND INDEX_NAME != 'PRIMARY'`，复合索引去重且不混入主键。
 - **M16** `DatabaseRegistry` 静态全局状态与"多实例隔离"相悖，无并发保护。
+  - **✅ 已解决（2026-08-03）**: 静态 `Mutex` + `synchronized` 包裹 register/get/initAll/closeAll/clear 全部方法（`initAll` 内调 `get` 依赖 Mutex 可重入不死锁）。新增并发测试：8 线程 × 25 唯一库名并发注册+实例化不崩、注册表一致性（未注册名抛 ConfigException、缓存命中）。
 - **M17** `dummyMapper/dummySetter`（`relation.cj:147-148`）是测试泄漏到生产。
 - **M18** 三方言约 150 行逐字节重复代码（render 主循环、renderExpr 系列），应抽取共享基类。
 - **M19** `Tx` 无"已提交/已回滚"状态，commit 后仍可 execute（无防护）。
+  - **✅ 已解决（2026-08-03）**: `Tx` 增加 `TxState` 状态机（Unbegun/Active/Committed/RolledBack）。begin 重复抛"transaction already begun"；非 Active 下 execute/query/save/rollbackTo/commit/rollback 抛"transaction is not active"；`setIsolation` 不加守卫（`Refine.transaction(level:)` 在 begin 前调用）。所有测试基建补 `tx.begin()`（macro_test 158 处、query_test 70 处、db_test 16 处），新增 12 例状态防护测试。**行为变更提示**：在事务 action 内手动 commit 后再返回会触发外层 commit 抛错（此前为驱动双 commit 错误），属防御性改进。
 - **M20** `Query<T>` 过度膨胀（构建/执行/聚合/DML/分页/include 全在一个类），`db/ref/queryDialect/columnOffset/keyExtractor` 混存多种绑定态。
 - **M21** `Refine.migrator()` 内 `DB(datasource)` 与 `DB(datasource, paramOffset)` 双分支笨拙（`refine.cj:131-139`）。
 - **M22** `meta.cj:228-238` `typeNameToStorageType` 把未知 struct 一律映射为 Text 而非 design 的 Json——自定义类型适配未真正接线到宏。
+  - **✅ 已解决（2026-08-03，schema 默认推断）**: `else` 分支改为 `StorageType.Json`，对齐 design §6.3「struct → Json」。三方言 dataTypeOf(Json) 已就绪（SQLite TEXT / MySQL JSON / PG JSONB），`@Field[Text]` 仍可覆盖。新增 ProfileDoc 实体 + 2 例 schema 断言（storageType=Json、列名含 struct 字段）。**遗留**：宏层 TypeAdapter 读写接线（toStored/fromStored）仍未实现——含未知 struct 字段的实体，写路径 `dispatchSet` 落到 `setNull`、读路径 `result.get<StructType>` 会抛错。本项仅修正 schema 推断，Json 端到端读写需 TypeAdapter 接线（列为后续排期项）。
 - **M23** `db.cj:296-299` dispatchSet1 死代码（与 M11 重复，保留一个）。
   - **✅ 已解决（2026-08-03）**: 与 M11 同项（重复登记），`dispatchSet1` 已删除。
 - **M24** junction schema 无联合主键（post_tags 的 (src_id,tgt_id) 应为主键）。
