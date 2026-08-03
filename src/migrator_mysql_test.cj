@@ -36,11 +36,15 @@ class IndexedDiffSchema <: TableSchema {
     }
 }
 
-// M15: 复合索引（STATISTICS 每列一行，同名多行）+ PRIMARY 混入的场景
+// M15: 复合索引（STATISTICS 每列一行，同名多行）+ PRIMARY 混入的场景。
+// 索引声明在 ["a","b"] 上，columns() 必须含这两列——否则去重回归时抛的是
+// 误导性的 "unknown column" DB 错误而非去重断言（autoMigrate 先建表再查索引）。
 class CompositeIdxSchema <: TableSchema {
     public func tableName(): String { "t10_composite" }
     public func columns(): Array<ColumnDef> {
-        [ ColumnDef("id", StorageType.Integer, true, true, false) ]
+        [ ColumnDef("id", StorageType.Integer, true, true, false),
+          ColumnDef("a", StorageType.Integer, false, false, true),
+          ColumnDef("b", StorageType.Integer, false, false, true) ]
     }
     public func indexes(): Array<IndexDef> {
         [ IndexDef("idx_multi", ["a", "b"]) ]

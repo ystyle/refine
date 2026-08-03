@@ -227,7 +227,7 @@
 - **M8** `query.cj:495` 聚合列名 `Raw(fn + "(" + colName + ")")` 拼字符串；`min/max` 缺 String 版本。
   - **✅ 已解决（2026-08-03）**: (a) 聚合列名改经 `dialect.quoteIdentifier` 引号化（修复 Raw 拼裸列名，与 C9 同源）；(b) 新增 `min/max(col: Col<String>): String`（String 聚合读取器，空结果返回空串）。
 - **M9** `dialect_sqlite.cj:174` Timestamp→TEXT，软删除过滤硬编码 `deleted_at = 0`（`refine_macro.cj:99`），若 deleted_at 声明为 DateTime 会永远查不到。
-  - **✅ 已解决（2026-08-03）**: 软删过滤与写值按 `deleted_at` 声明类型生成——DateTime → `IS NULL` + `DateTime.now()`，Int64 → `= 0` + `1`（历史行为不变）；新增 `DateTimeSoftDeleteTest` 3 例。**遗留**：DateTime 软删端到端可用还需 deleted_at 列可空 + `Option<DateTime>` 字段支持（宏层 `isRelationField` 当前把 `Option<X>` 当 ref_to 关系），属宏设计层后续项。
+  - **✅ 已解决（2026-08-03）**: 软删过滤与写值按 `deleted_at` 声明类型生成——DateTime → `IS NULL` + `DateTime.now()`，Int64 → `= 0` + `1`（历史行为不变）；新增 `DateTimeSoftDeleteTest` 3 例。**遗留（转 F4）**：DateTime 软删端到端可用还需 `Option<DateTime>` 可空软删字段支持（宏层 `isRelationField` 当前把 `Option<X>` 当 ref_to 关系），见 `§五 F4`。
 - **M10** `error.cj:45-65` `OptimisticLockException` 两个 pk 重载（Int64/String）易混淆。
 - **M11** `dispatchSet1`（`db.cj:296-299`）从未被调用。
   - **✅ 已解决（2026-08-03）**: `dispatchSet1` 死代码删除（grep 确认零调用方，与 M23 同项）。
@@ -273,6 +273,12 @@
 - **问题**：(a) 非事务场景下级联保存/删除不具备原子性（中途失败部分落库），文档未说明；(b) 物理删除父实体时，若子实体是软删模型，`cascadeDelete` 走 `tx.deleteCascade`（软删）而父走 `physicalDelete`，导致孤儿——策略继承未文档化/验证；(c) Task6 部分边界测试断言偏弱（如 `@Expect(true, true)` 空占位）。
 - **修法**：文档明确"级联操作应在事务中使用"；物理删父对软删子的策略补说明与测试；加固 Task6 断言。
 - **✅ 已解决（2026-08-03 P1）**：(a) 设计文档新增「6.6 事务与原子性」章节（级联不隐式开事务、自动提交下部分落库、须 `rf.transaction` 包裹），docs-site relations.md/crud.md/transactions.md 同步补充原子性警示。(b) 文档化孤儿策略为**有意行为**（软删子保留历史/审计/恢复能力）：`physicalDelete` 父 → 子按自身策略软删（行保留、`deleted_at` 置位）、父物理删，软删子成孤儿；全软删路径无孤儿。`testTxPhysicalDeleteCascadesChildren` 加固断言（子仅软删无 DELETE、参数序列），见 `macro_test.cj`。(c) 加固弱断言：`refine_test` testSession/testMigrator（断言连接关闭、migrator 类型）、`query_test` testSetMapper/testOneWithMapper（断言 mapper 注册 + 缺 executor 抛 QueryException）、`relation_test` testHasOne/testHasMany/testFieldOverrideRelation（行为断言：返回的 mapper/setter 可调用）。`case None => @Expect(true,true)`（DB 不可用跳过）与 `catch { @Fail + @Expect(true,true) }`（@Fail 已守卫）为合法模式保留。
+
+### F4. DateTime 软删端到端不可用：`isRelationField` 把 `Option<X>` 当关系，阻断 `Option<DateTime>` 可空软删字段
+- **位置**：`meta.cj:205`（`isRelationField` 把 `Option<X>` 一律当 ref_to 关系）
+- **问题**：M9 修复后软删过滤/写值已按 `deleted_at` 声明类型生成（DateTime → `IS NULL` + `DateTime.now()`），但**端到端仍不可用**：非 Option 的 `DateTime deleted_at` 字段实体默认值 `DateTime.now()` 会在 INSERT 时写入非 NULL，`IS NULL` 过滤隐藏所有行；而正确的 `Option<DateTime>` 模型被 `isRelationField` 阻断——`Option<DateTime>` 会被当作 ref_to 关系，跳过列处理（schema/insert/filter 全不识别该字段）。
+- **修法**：宏层支持 `Option<DateTime>` 可空软删字段——`isRelationField` 排除可空时间戳，软删列 schema 标 `nullable=true`，INSERT 对 `None` 绑 NULL（未删行），软删写 `Some(DateTime.now())`。
+- **备注**：由 M9 修复后暴露（2026-08-03），列为后续排期项。
 
 ---
 
