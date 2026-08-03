@@ -7,7 +7,9 @@ import std.database.sql.QueryResult
 // M20: Query<T> 执行方法组——分页 / 全量查询 / 单条 / 计数 / exists / 聚合。
 // 通过 extend 从 query.cj 核心类中按职责拆出。extend 不能访问被扩展类型
 // 的 private 成员，故所调用的类内成员（requireExecutor/getDialect/closeExecutor
-// 等）及本文件内方法均已按约定改为包级可见（无修饰符），见 query.cj 顶部注释。
+// 及 query_batch.cj 的 assembleIncludes/mapMainResult/requireCollectionIdSupport）
+// 为包级可见；本文件内只在本块使用的方法（copyDataClauses/countWith/聚合内部）
+// 为 private（扩展内 private 仅同块可见）。
 extend<T> Query<T> {
 
     public func page(page: Int64, size: Int64): Page<T> {
@@ -123,7 +125,7 @@ extend<T> Query<T> {
     }
 
     // countWith/exists()/aggregate 复用的数据子句拷贝：仅保留 FROM/WHERE/JOIN。
-    func copyDataClauses(source: Statement, target: Statement): Unit {
+    private func copyDataClauses(source: Statement, target: Statement): Unit {
         for (clause in source.clauses) {
             match (clause) {
                 case FromClause(_) | WhereClause(_) | JoinClause(_, _, _) => target.addClause(clause)
@@ -132,7 +134,7 @@ extend<T> Query<T> {
         }
     }
 
-    func countWith(exec: ExecutionContext, dialect: Dialect): Int64 {
+    private func countWith(exec: ExecutionContext, dialect: Dialect): Int64 {
         // 批量模式主查询无 include JOIN：COUNT(*) 天然正确，无需 COUNT(DISTINCT id)
         // （旧 LEFT JOIN 方案的子行展开放大 total 问题已随 JOIN 移除而消除）。
         let countStmt = Statement()
@@ -178,23 +180,23 @@ extend<T> Query<T> {
     public func min(col: Col<String>): String { aggregateString("MIN", col) }
     public func max(col: Col<String>): String { aggregateString("MAX", col) }
 
-    func aggregateInt(fn: String, col: Col<Int64>): Int64 {
+    private func aggregateInt(fn: String, col: Col<Int64>): Int64 {
         aggregate(fn, col.name, 0, { r, o => r.getOrNull<Int64>(0 + o) })
     }
 
-    func aggregateFloat(fn: String, col: Col<Int64>): Float64 {
+    private func aggregateFloat(fn: String, col: Col<Int64>): Float64 {
         aggregate(fn, col.name, 0.0, { r, o => r.getOrNull<Float64>(0 + o) })
     }
 
-    func aggregateFloat(fn: String, col: Col<Float64>): Float64 {
+    private func aggregateFloat(fn: String, col: Col<Float64>): Float64 {
         aggregate(fn, col.name, 0.0, { r, o => r.getOrNull<Float64>(0 + o) })
     }
 
-    func aggregateString(fn: String, col: Col<String>): String {
+    private func aggregateString(fn: String, col: Col<String>): String {
         aggregate(fn, col.name, "", { r, o => r.getOrNull<String>(0 + o) })
     }
 
-    func aggregate<R>(fn: String, colName: String, zero: R, read: (QueryResult, Int64) -> ?R): R {
+    private func aggregate<R>(fn: String, colName: String, zero: R, read: (QueryResult, Int64) -> ?R): R {
         let exec = requireExecutor()
         try {
             let aggStmt = Statement()

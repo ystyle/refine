@@ -4,11 +4,13 @@ import std.collection.ArrayList
 import std.collection.HashMap
 import std.database.sql.QueryResult
 
-// M20: Query<T> 批量 include 装配方法组（约 600 行，原 query.cj 的膨胀主体）。
-// 通过 extend 从 query.cj 核心类中按职责拆出。extend 不能访问被扩展类型
-// 的 private 成员，故类内被本文件调用的成员（included/rawIdExtractor/
-// MaxNestedDepth 及 query.cj 的 requireExecutor 等）已按约定改为包级可见，
-// 本文件内方法亦为包级可见（无修饰符）。装配引擎沿用原语义与注释，逐字迁移。
+// M20: Query<T> 批量 include 装配方法组（727 行，原 query.cj 的膨胀主体）。
+// 通过 extend 从 query.cj 核心类中按职责拆出。extend 不能访问被扩展类型的
+// private 成员，故类内被本文件调用的成员（included/rawIdExtractor/
+// MaxNestedDepth/getSourceTable 及 query.cj 的 requireExecutor 等）在核心为
+// 包级可见。本文件内只在本块使用的方法为 private（扩展内 private 仅同块可见）；
+// assembleIncludes/mapMainResult/requireCollectionIdSupport 被 query_exec.cj
+// 跨文件调用，保持包级可见。装配引擎沿用原语义与注释，逐字迁移。
 extend<T> Query<T> {
 
     // Task 3: ref_to 批量装配。主查询返回实体后调用：
@@ -24,7 +26,7 @@ extend<T> Query<T> {
     // （Expr.Value 数组渲染为单个参数，无法展开为 ?,?,...），且在 scope 内不允许改动
     // 三方言 renderExpr 为 IN 列表新增变体，故 SELECT/FROM 走 Statement 机器，
     // WHERE 的 IN 部分由 buildInClause 手写占位符生成。
-    func assembleRefTo<E>(
+    private func assembleRefTo<E>(
         exec: ExecutionContext,
         dialect: Dialect,
         entities: Array<E>,
@@ -123,14 +125,14 @@ extend<T> Query<T> {
     // 构建 `col IN (?, ?...)` 子句。契约：返回的 (fragment, params) 必须一体追加——
     // 本 WHERE 子句内不能再有其它 Value 占位符（否则 render 收集的参数顺序会与占位符错位）。
     // 批量装配目前只有 IN 列表一个参数源，此契约在 Task 4/5 复用批量装配时同样成立。
-    func buildInClause(dialect: Dialect, col: String, ids: Array<Any>): (String, Array<Any>) {
+    private func buildInClause(dialect: Dialect, col: String, ids: Array<Any>): (String, Array<Any>) {
         buildInClauseCol(dialect.quoteIdentifier(col), ids)
     }
 
     // buildInClause 的通用形态：colSQL 是调用方已构造好的列引用片段（可带表限定，
     // 如 SQLite 的 `"post_tags"."postWithRel_id"`），仅负责生成占位符与参数。
     // Task 5 ref_many junction 查询的 IN 列在中间表上且需表限定，不能经 quoteIdentifier 二次转义。
-    func buildInClauseCol(colSQL: String, ids: Array<Any>): (String, Array<Any>) {
+    private func buildInClauseCol(colSQL: String, ids: Array<Any>): (String, Array<Any>) {
         var placeholders = ArrayList<String>()
         for (_ in 0..ids.size) { placeholders.add("?") }
         (colSQL + " IN (" + String.join(placeholders.toArray(), delimiter: ", ") + ")", ids)
@@ -139,7 +141,7 @@ extend<T> Query<T> {
     // 批量 SELECT 的字段并集 + 强制列：同表多关系合并时取所有选中列；forced 为必须选中的列
     // （目标主键 id、has_many/has_one 的 fk 分组键），即使不在字段子集里也强制前置。
     // 取舍：合并查询按「并集」SELECT，共享目标实体携带并集列值（非某关系声明的子集），属预期行为。
-    func buildBatchSelectCols(rels: ArrayList<IRelation>, forced: Array<String>): Array<Expr> {
+    private func buildBatchSelectCols(rels: ArrayList<IRelation>, forced: Array<String>): Array<Expr> {
         var fieldNames = ArrayList<String>()
         var seenField = HashMap<String, Bool>()
         for (rel in rels) {
@@ -169,7 +171,7 @@ extend<T> Query<T> {
     // 执行批量 IN 查询：SELECT <cols> FROM <table> WHERE <inSQL>，返回结果集。
     // inSQL/inParams 必须由 buildInClause 一体生成（本 WHERE 内无其它 Value 占位符），
     // SELECT/FROM 走 Statement 机器、WHERE 的 IN 部分手写占位符（见 assembleRefTo 注释）。
-    func execBatchQuery(
+    private func execBatchQuery(
         exec: ExecutionContext,
         dialect: Dialect,
         targetTable: String,
@@ -189,7 +191,7 @@ extend<T> Query<T> {
         exec.query(sql, params.toArray())
     }
 
-    func isEmptyFk(v: Any): Bool {
+    private func isEmptyFk(v: Any): Bool {
         match (v) {
             case i: Int64 => i == 0
             case s: String => s == ""
@@ -197,7 +199,7 @@ extend<T> Query<T> {
         }
     }
 
-    func fkKey(v: Any): String {
+    private func fkKey(v: Any): String {
         match (v) {
             case i: Int64 => i.toString()
             case s: String => s
@@ -205,19 +207,14 @@ extend<T> Query<T> {
         }
     }
 
-    func fkIsString(v: Any): Bool {
+    private func fkIsString(v: Any): Bool {
         match (v) {
             case _: String => true
             case _ => false
         }
     }
 
-    // Task 6: 嵌套 include 递归深度上限。正常 include 链（withInclude 链式构建）受
-    // clone-on-write 约束天然无环且深度有限，但深度守卫是防御性保障：用户自定义 IRelation
-    // 实现（getNested 自引用形成环）或未来 API 演化可能产生无限递归，深度超过该值即抛
-    // QueryException 终止（避免栈溢出 / 死循环）。16 层足够覆盖任何实际嵌套场景。
-    // 注意：MaxNestedDepth 字段仍定义于 query.cj 核心类（extend 不能新增成员变量），
-    // 已按 M20 约定改为包级可见（无修饰符），此处直接引用。
+    // 递归深度上限 MaxNestedDepth 的定义与完整理由见 query.cj 核心类（本文件直接引用）。
 
     // 批量装配调度：统一递归引擎入口（Task 6 起 ref_to / has_one / has_many / ref_many
     // 与嵌套 include 共用同一条递归路径，见 assembleRecursive）。顶层 rels = included，
@@ -245,7 +242,7 @@ extend<T> Query<T> {
     // 嵌套层为父关系的 targetTable（ref_many 的 junction 源列必须跟随当前层级，否则嵌套
     // ref_many 会错误使用顶层表名生成 `<顶层表>_id`，PG 上报 column does not exist）。
     // 深度超过 MaxNestedDepth 抛 QueryException（含 include 环时终止递归）。
-    func assembleRecursive<E>(
+    private func assembleRecursive<E>(
         exec: ExecutionContext,
         dialect: Dialect,
         entities: Array<E>,
@@ -303,7 +300,7 @@ extend<T> Query<T> {
     }
 
     // 递归层的 mainIds：用父关系 getTargetIdExtractor 逐目标读取主键，与 targets 按索引对齐。
-    func collectTargetIds(rel: IRelation, targets: Array<Any>): Array<Any> {
+    private func collectTargetIds(rel: IRelation, targets: Array<Any>): Array<Any> {
         let extractor = rel.getTargetIdExtractor()
         var ids = ArrayList<Any>()
         for (t in targets) { ids.add(extractor(t)) }
@@ -313,7 +310,7 @@ extend<T> Query<T> {
     // 是否有需要批量装配的集合 include（has_one / has_many / ref_many）。
     // ref_many 走 junction 中间表（Task 5 接入，与 has 系共用主实体原始主键 rawIds），
     // 故同样判定为需要收集 rawIds（旧 JOIN 路径的 hasCollectionInclude 已删除）。
-    func needsCollectionAssembly(): Bool {
+    private func needsCollectionAssembly(): Bool {
         for (inc in included) {
             let (kind, _, _, _, _, _) = inc.resolve()
             if (kind == RelationKind.HasManyRel || kind == RelationKind.HasOneRel ||
@@ -341,7 +338,7 @@ extend<T> Query<T> {
 
     // 主查询映射循环内逐行收集主实体主键原始值（与实体列表按索引对齐）。前置守卫保证
     // needsCollectionAssembly() 为 true 时 rawIdExtractor 必然已挂载。
-    func collectRawId(result: QueryResult, columnMap: HashMap<String, Int64>): Any {
+    private func collectRawId(result: QueryResult, columnMap: HashMap<String, Int64>): Any {
         this.rawIdExtractor.getOrThrow()(result, columnMap)
     }
 
@@ -380,7 +377,7 @@ extend<T> Query<T> {
     // 跑两次、setter .add() 把子项追加成两份（同 assembleRefTo 的 targetSeen）。
     // rawIds 顶层来自 rawIdExtractor（主查询映射循环收集）、嵌套层来自父关系的
     // getTargetIdExtractor。
-    func assembleCollections<E>(
+    private func assembleCollections<E>(
         exec: ExecutionContext,
         dialect: Dialect,
         entities: Array<E>,
@@ -544,7 +541,7 @@ extend<T> Query<T> {
     // SQL 手写（quoteIdentifier + 占位符，对齐 relation_gen.cj 的 ref_many 单行查询风格）：
     // junction JOIN 语义必须是 INNER JOIN（孤儿行跳过），而 Statement/方言渲染只支持
     // LEFT JOIN 且 FromClause 无别名，无法表达该 JOIN；IN 列带表限定也超出 buildInClause。
-    func assembleRefMany<E>(
+    private func assembleRefMany<E>(
         exec: ExecutionContext,
         dialect: Dialect,
         entities: Array<E>,

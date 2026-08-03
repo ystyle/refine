@@ -9,10 +9,12 @@ import std.database.sql.QueryResult
 // 批量装配（query_batch.cj）通过 extend 按职责拆分。
 //
 // 可见性约定（M20）：仓颉 extend 不能访问被扩展类型的 private 成员，且不能新增
-// 成员变量。因此本类中供 extend 块调用的成员（requireExecutor/closeExecutor/
-// runAfterFindHooks/MaxNestedDepth 及全部字段）一律为「包级可见」（无修饰符，
-// 同 Session.paramOffset / DB.dialect 的既有约定）；真正的私有性由「仅包内使用 +
-// 宏层只调用公开 setter」约束，而非语言 private。移动至各 extend 文件的方法亦为包级可见。
+// 成员变量；扩展内 private 成员仅在同一 extend 块内可见，跨 extend 文件调用需
+// 包级可见。因此本类中供各 extend 块跨文件调用的成员（requireExecutor/
+// closeExecutor/runAfterFindHooks/getSourceTable/MaxNestedDepth 及全部字段）一律为
+// 「包级可见」（无修饰符，同 Session.paramOffset / DB.dialect 的既有约定）；真正的
+// 私有性由「仅包内使用 + 宏层只调用公开 setter」约束，而非语言 private。各 extend
+// 文件内部只在本块内使用的方法恢复 private（见各文件顶部注释）。
 public class Query<T> {
     var stmt: Statement
     var included: ArrayList<IRelation>
@@ -168,6 +170,18 @@ public class Query<T> {
             case Some(d) => d
             case None => SQLiteDialect()
         }
+    }
+
+    // 包级可见（无修饰符）：requireTable（query_dml.cj）与 assembleIncludes
+    // （query_batch.cj）跨 extend 文件都会调用，故置于核心共享基础设施。
+    func getSourceTable(): String {
+        for (clause in stmt.clauses) {
+            match (clause) {
+                case Clause.FromClause(t) => return t
+                case _ => ()
+            }
+        }
+        ""
     }
 
     // 包级可见（无修饰符）：各执行方法（query_exec.cj/query_dml.cj）在 finally 中

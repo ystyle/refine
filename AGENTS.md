@@ -19,9 +19,16 @@ src/
 ├── col.cj              Col<T> 字段描述符
 ├── relation.cj         Relation / RefTo / RefMany / IRelation
 ├── statement.cj        Clause 枚举 / Statement 结构体
-├── query.cj            Query<T> 构建器
+├── query.cj            Query<T> 核心（字段 + 构建器 + setter + 共享基础设施）
+├── query_exec.cj       Query<T> 执行组（all/one/page/count/exists/聚合）
+├── query_dml.cj        Query<T> DML 组（updateWhere/deleteWhere）
+├── query_include.cj    Query<T> include DSL 组 + FieldOverrideRelation
+├── query_batch.cj      Query<T> 批量 include 装配引擎
 ├── dialect.cj          Dialect 接口
-├── sqlite.cj           SQLiteDialect 实现
+├── dialect_base.cj     AbstractDialect 共享基类（render/renderExpr 系列）
+├── dialect_sqlite.cj   SQLiteDialect 实现
+├── dialect_mysql.cj    MySQLDialect 实现
+├── dialect_postgres.cj PostgreSQLDialect 实现
 ├── db.cj               DB / Session / Tx
 ├── storage.cj          StorageType / TypeAdapter
 ├── hook.cj             Hook 系统
