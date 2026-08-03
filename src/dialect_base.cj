@@ -240,7 +240,7 @@ public abstract class AbstractDialect <: Dialect {
 }
 
 // 单次 render() 调用的本地渲染状态（参数缓冲 + PG $n 编号游标），见文件头 R-I4 说明。
-// 包级可见（无修饰符）：PostgreSQLDialect 覆盖 renderParam(ctx) 需要引用该类型。
+// 必须 public：PostgreSQLDialect（独立包外）覆盖 protected open renderParam(ctx) 需要引用该类型。
 public class RenderContext {
     var params: ArrayList<Any> = ArrayList<Any>()
     var paramIdx: Int64 = 1
