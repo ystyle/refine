@@ -2,169 +2,21 @@ package refine
 
 import std.collection.ArrayList
 
-public class SQLiteDialect <: Dialect {
-    private var params = ArrayList<Any>()
-
+// SQLite 方言：占位符 `?`、ANSI 双引号标识符（继承 AbstractDialect 默认）。
+// 差异点（M18 抽取后仅剩）：
+// - hasLockSupport = false：SQLite 无 SELECT ... FOR UPDATE 行锁概念（单写者）
+// - hasIsolationSupport = false：SQLite 无事务隔离级别概念（单写者）
+// - hasReturningSupport = false（继承默认）：SQLite ≥3.35 语法上支持 RETURNING，但本项目没有真实
+//   SQLite 驱动可验证 save 的 RETURNING 路径（当前仅有 mock 与 sqlite3 CLI 语法检查），保持关闭不冒险
+//   切换保存路径到 RETURNING。待引入驱动后按真实行为启用（见 audit I15 决策）。
+public class SQLiteDialect <: AbstractDialect {
     public func name(): String { "sqlite" }
 
-    public func quoteIdentifier(name: String): String {
-        "\"" + name.replace("\"", "\"\"") + "\""
-    }
+    // SQLite 无行锁概念（单写者），渲染时不追加 FOR UPDATE
+    protected override func hasLockSupport(): Bool { false }
 
-    public func render(stmt: Statement): (String, Array<Any>) {
-        params = ArrayList<Any>()
-        (renderBody(stmt), params.toArray())
-    }
-
-    private func renderBody(stmt: Statement): String {
-        var select = ArrayList<String>()
-        var from = ArrayList<String>()
-        var joins = ArrayList<String>()
-        var whereClause = ArrayList<String>()
-        var groupBy = ArrayList<String>()
-        var having = ArrayList<String>()
-        var orderBy = ArrayList<String>()
-        var limit = ArrayList<String>()
-        var hasSelect = false
-        var updateSQL = ""
-        var deleteSQL = ""
-        var whereAdded = false
-        for (i in 0..stmt.clauses.size) {
-            let clause = stmt.clauses[i]
-            match (clause) {
-                case SelectClause(fields) =>
-                    hasSelect = true
-                    if (fields.size == 0) { select.add("SELECT *") }
-                    else { select.add("SELECT " + renderExprList(fields)) }
-                case FromClause(table) =>
-                    from.add("FROM " + quoteIdentifier(table))
-                case WhereClause(predicates) =>
-                    let prefix = if (whereAdded) { "AND " } else { "WHERE " }
-                    whereAdded = true
-                    whereClause.add(prefix + renderAndList(predicates))
-                case OrderByClause(fields) =>
-                    orderBy.add("ORDER BY " + renderExprList(fields))
-                case GroupByClause(fields) =>
-                    groupBy.add("GROUP BY " + renderExprList(fields))
-                case HavingClause(predicates) =>
-                    having.add("HAVING " + renderAndList(predicates))
-                case LimitClause(n) =>
-                    limit.add("LIMIT " + n.toString())
-                case OffsetClause(n) =>
-                    limit.add("OFFSET " + n.toString())
-                case JoinClause(table, alias, on) =>
-                    joins.add("LEFT JOIN " + quoteIdentifier(table) + " " + quoteIdentifier(alias) + " ON " + renderExpr(on))
-                case UpdateClause(table, setCols, setVals) =>
-                    var setParts = ArrayList<String>()
-                    for (_si_ in 0..setCols.size) {
-                        setParts.add(quoteIdentifier(setCols[_si_]) + " = ?")
-                        params.add(setVals[_si_])
-                    }
-                    updateSQL = "UPDATE " + quoteIdentifier(table) + " SET " + String.join(setParts.toArray(), delimiter: ", ")
-                case DeleteClause(table) =>
-                    deleteSQL = "DELETE FROM " + quoteIdentifier(table)
-                case LockClause =>
-                    ()
-            }
-        }
-        var parts = ArrayList<String>()
-        if (updateSQL != "") {
-            parts.add(updateSQL)
-            for (s in whereClause) { parts.add(s) }
-        } else if (deleteSQL != "") {
-            parts.add(deleteSQL)
-            for (s in whereClause) { parts.add(s) }
-        } else {
-            if (!hasSelect) { parts.add("SELECT *") }
-            else { for (s in select) { parts.add(s) } }
-            for (s in from) { parts.add(s) }
-            for (s in joins) { parts.add(s) }
-            for (s in whereClause) { parts.add(s) }
-            for (s in groupBy) { parts.add(s) }
-            for (s in having) { parts.add(s) }
-            for (s in orderBy) { parts.add(s) }
-            for (s in limit) { parts.add(s) }
-
-        }
-        String.join(parts.toArray(), delimiter: " ")
-    }
-
-    private func renderExpr(expr: Expr): String {
-        match (expr) {
-            case Column(n) => quoteIdentifier(n)
-            case Value(v) =>
-                params.add(v)
-                "?"
-            case Binary(l, op, r) =>
-                renderExpr(l) + " " + renderOp(op) + " " + renderExpr(r)
-            case Range(subject, low, high) =>
-                renderExpr(subject) + " BETWEEN " + renderExpr(low) + " AND " + renderExpr(high)
-            case Unary(op, e) =>
-                renderUnaryOp(op) + " " + renderExpr(e)
-            case FuncCall(n, args) =>
-                n + "(" + renderExprList(args) + ")"
-            case Raw(s) => s
-            case Ordered(expr, dir) =>
-                renderExpr(expr) + " " + dir
-            case Aliased(expr, alias) =>
-                renderExpr(expr) + " AS " + quoteIdentifier(alias)
-            case SubQuery(s) =>
-                "(" + renderBody(s) + ")"
-        }
-    }
-
-    private func renderExprList(exprs: Array<Expr>): String {
-        if (exprs.size == 0) { return "" }
-        var parts = ArrayList<String>()
-        for (e in exprs) {
-            parts.add(renderExpr(e))
-        }
-        String.join(parts.toArray(), delimiter: ", ")
-    }
-
-    private func renderAndList(exprs: Array<Expr>): String {
-        if (exprs.size == 0) { return "" }
-        var parts = ArrayList<String>()
-        for (e in exprs) {
-            parts.add(renderExpr(e))
-        }
-        String.join(parts.toArray(), delimiter: " AND ")
-    }
-
-    private func renderOp(op: BinOp): String {
-        match (op) {
-            case Eq => "="
-            case Ne => "<>"
-            case Gt => ">"
-            case Ge => ">="
-            case Lt => "<"
-            case Le => "<="
-            case And => "AND"
-            case Or => "OR"
-            case Like => "LIKE"
-            case In => "IN"
-            case NotIn => "NOT IN"
-            case Between => throw Exception("BinOp.Between 不是二元操作符：Binary(x, Between, y) 缺 AND high，改用 Expr.Range（Col.between(low, high)）")
-            case Add => "+"
-            case Sub => "-"
-            case Mul => "*"
-            case Div => "/"
-            case Mod => "%"
-        }
-    }
-
-    private func renderUnaryOp(op: UnaryOp): String {
-        match (op) {
-            case Not => "NOT"
-            case IsNull => "IS NULL"
-            case IsNotNull => "IS NOT NULL"
-        }
-    }
-
-    // 现代 SQLite（≥3.24 支持 ON CONFLICT，≥3.35 支持 RETURNING，JSON1 自 3.38 起内建）。
-    // upsert 与 json 已启用：upsert SQL 经真实 sqlite3 CLI（3.53.4）验证通过。
-    // 后续引入连接抽象后，再按实际 SQLite 版本细化开关（见 audit I15 决策）。
-    public func hasUpsertSupport(): Bool { true }
+    // SQLite 无事务隔离级别概念（单写者），保持不支持
+    public override func hasIsolationSupport(): Bool { false }
 
     // SQLite upsert 用 ON CONFLICT ... DO UPDATE；冲突行引用用 excluded.col（关键字不区分大小写，
     // 对齐 SQLite 文档采用小写），不需要额外参数（extraParamCount = 0）。
@@ -206,19 +58,7 @@ public class SQLiteDialect <: Dialect {
         }
     }
 
-    // SQLite ≥3.35 语法上支持 RETURNING，但本项目没有真实 SQLite 驱动可验证 save 的
-    // RETURNING 路径（当前仅有 mock 与 sqlite3 CLI 语法检查），保持关闭不冒险切换 SQLite
-    // 保存路径到 RETURNING。待引入驱动后按真实行为启用（见 audit I15 决策）。
-    public func hasReturningSupport(): Bool { false }
-
-    public func hasJSONSupport(): Bool { true }
-
-    // SQLite 无事务隔离级别概念（单写者），保持不支持
-    public func hasIsolationSupport(): Bool { false }
-
     public func migrator(db: DB): Migrator { SQLiteMigrator(db) }
-
-    public func initialize(db: DB): Unit {}
 
     // I5: 返回类型合适的 DEFAULT 值字面量（SQLite 非空表 ADD COLUMN NOT NULL 列必须带 DEFAULT）。
     // 按 SQLite 亲和性选择：数字列用数值字面量，文本列用字符串字面量，BLOB 用 X'' 字面量。

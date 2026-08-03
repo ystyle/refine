@@ -2,174 +2,26 @@ package refine
 
 import std.collection.ArrayList
 
-public class MySQLDialect <: Dialect {
-    private var params = ArrayList<Any>()
-
+// MySQL 方言：占位符 `?`、FOR UPDATE 行锁（继承 AbstractDialect 默认）。
+// 差异点（M18 抽取后仅剩）：
+// - quoteIdentifier = 反引号标识符（内嵌反引号转义为 ``，C9：封闭标识符逃逸注入通道）
+// - renderLimitOffset = 裸 OFFSET（无 LIMIT）前补 `LIMIT 18446744073709551615` 哨兵（I3）
+public class MySQLDialect <: AbstractDialect {
     public func name(): String { "mysql" }
 
-    public func quoteIdentifier(name: String): String {
+    // MySQL 标识符用反引号包裹（`...`），内嵌反引号转义为 ``（C9：封闭标识符逃逸注入通道）
+    public override func quoteIdentifier(name: String): String {
         "`" + name.replace("`", "``") + "`"
     }
 
-    public func render(stmt: Statement): (String, Array<Any>) {
-        params = ArrayList<Any>()
-        (renderBody(stmt), params.toArray())
+    // 回归（I3）：MySQL 裸 OFFSET（无 LIMIT）是语法错误，必须补 `LIMIT 18446744073709551615` 哨兵；
+    // LIMIT+OFFSET 并存时保持原样。UPDATE/DELETE 路径不经过 renderLimitOffset，不受影响。
+    protected override func renderLimitOffset(hasLimit: Bool, hasOffset: Bool, limit: ArrayList<String>): ArrayList<String> {
+        var out = ArrayList<String>()
+        if (hasOffset && !hasLimit) { out.add("LIMIT 18446744073709551615") }
+        for (s in limit) { out.add(s) }
+        out
     }
-
-    private func renderBody(stmt: Statement): String {
-        var select = ArrayList<String>()
-        var from = ArrayList<String>()
-        var joins = ArrayList<String>()
-        var whereClause = ArrayList<String>()
-        var groupBy = ArrayList<String>()
-        var having = ArrayList<String>()
-        var orderBy = ArrayList<String>()
-        var limit = ArrayList<String>()
-        var hasSelect = false
-        var hasLimit = false
-        var hasOffset = false
-        var updateSQL = ""
-        var deleteSQL = ""
-        var hasLock = false
-        var whereAdded = false
-        for (i in 0..stmt.clauses.size) {
-            let clause = stmt.clauses[i]
-            match (clause) {
-                case SelectClause(fields) =>
-                    hasSelect = true
-                    if (fields.size == 0) { select.add("SELECT *") }
-                    else { select.add("SELECT " + renderExprList(fields)) }
-                case FromClause(table) =>
-                    from.add("FROM " + quoteIdentifier(table))
-                case WhereClause(predicates) =>
-                    let prefix = if (whereAdded) { "AND " } else { "WHERE " }
-                    whereAdded = true
-                    whereClause.add(prefix + renderAndList(predicates))
-                case OrderByClause(fields) =>
-                    orderBy.add("ORDER BY " + renderExprList(fields))
-                case GroupByClause(fields) =>
-                    groupBy.add("GROUP BY " + renderExprList(fields))
-                case HavingClause(predicates) =>
-                    having.add("HAVING " + renderAndList(predicates))
-                case LimitClause(n) =>
-                    hasLimit = true
-                    limit.add("LIMIT " + n.toString())
-                case OffsetClause(n) =>
-                    hasOffset = true
-                    limit.add("OFFSET " + n.toString())
-                case JoinClause(table, alias, on) =>
-                    joins.add("LEFT JOIN " + quoteIdentifier(table) + " " + quoteIdentifier(alias) + " ON " + renderExpr(on))
-                case UpdateClause(table, setCols, setVals) =>
-                    var setParts = ArrayList<String>()
-                    for (_si_ in 0..setCols.size) {
-                        setParts.add(quoteIdentifier(setCols[_si_]) + " = ?")
-                        params.add(setVals[_si_])
-                    }
-                    updateSQL = "UPDATE " + quoteIdentifier(table) + " SET " + String.join(setParts.toArray(), delimiter: ", ")
-                case DeleteClause(table) =>
-                    deleteSQL = "DELETE FROM " + quoteIdentifier(table)
-                case LockClause =>
-                    hasLock = true
-            }
-        }
-        var parts = ArrayList<String>()
-        if (updateSQL != "") {
-            parts.add(updateSQL)
-            for (s in whereClause) { parts.add(s) }
-        } else if (deleteSQL != "") {
-            parts.add(deleteSQL)
-            for (s in whereClause) { parts.add(s) }
-        } else {
-            if (!hasSelect) { parts.add("SELECT *") }
-            else { for (s in select) { parts.add(s) } }
-            for (s in from) { parts.add(s) }
-            for (s in joins) { parts.add(s) }
-            for (s in whereClause) { parts.add(s) }
-            for (s in groupBy) { parts.add(s) }
-            for (s in having) { parts.add(s) }
-            for (s in orderBy) { parts.add(s) }
-            // 回归（I3）：MySQL 裸 OFFSET（无 LIMIT）是语法错误，必须补 `LIMIT 18446744073709551615` 哨兵；
-            // LIMIT+OFFSET 并存时保持原样。UPDATE/DELETE 路径不经过此处，不受影响。
-            if (hasOffset && !hasLimit) { parts.add("LIMIT 18446744073709551615") }
-            for (s in limit) { parts.add(s) }
-            if (hasLock) { parts.add("FOR UPDATE") }
-        }
-        String.join(parts.toArray(), delimiter: " ")
-    }
-
-    private func renderExpr(expr: Expr): String {
-        match (expr) {
-            case Column(n) => quoteIdentifier(n)
-            case Value(v) =>
-                params.add(v)
-                "?"
-            case Binary(l, op, r) =>
-                renderExpr(l) + " " + renderOp(op) + " " + renderExpr(r)
-            case Range(subject, low, high) =>
-                renderExpr(subject) + " BETWEEN " + renderExpr(low) + " AND " + renderExpr(high)
-            case Unary(op, e) =>
-                renderUnaryOp(op) + " " + renderExpr(e)
-            case FuncCall(n, args) =>
-                n + "(" + renderExprList(args) + ")"
-            case Raw(s) => s
-            case Ordered(expr, dir) =>
-                renderExpr(expr) + " " + dir
-            case Aliased(expr, alias) =>
-                renderExpr(expr) + " AS " + quoteIdentifier(alias)
-            case SubQuery(s) =>
-                "(" + renderBody(s) + ")"
-        }
-    }
-
-    private func renderExprList(exprs: Array<Expr>): String {
-        if (exprs.size == 0) { return "" }
-        var parts = ArrayList<String>()
-        for (e in exprs) {
-            parts.add(renderExpr(e))
-        }
-        String.join(parts.toArray(), delimiter: ", ")
-    }
-
-    private func renderAndList(exprs: Array<Expr>): String {
-        if (exprs.size == 0) { return "" }
-        var parts = ArrayList<String>()
-        for (e in exprs) {
-            parts.add(renderExpr(e))
-        }
-        String.join(parts.toArray(), delimiter: " AND ")
-    }
-
-    private func renderOp(op: BinOp): String {
-        match (op) {
-            case Eq => "="
-            case Ne => "<>"
-            case Gt => ">"
-            case Ge => ">="
-            case Lt => "<"
-            case Le => "<="
-            case And => "AND"
-            case Or => "OR"
-            case Like => "LIKE"
-            case In => "IN"
-            case NotIn => "NOT IN"
-            case Between => throw Exception("BinOp.Between 不是二元操作符：Binary(x, Between, y) 缺 AND high，改用 Expr.Range（Col.between(low, high)）")
-            case Add => "+"
-            case Sub => "-"
-            case Mul => "*"
-            case Div => "/"
-            case Mod => "%"
-        }
-    }
-
-    private func renderUnaryOp(op: UnaryOp): String {
-        match (op) {
-            case Not => "NOT"
-            case IsNull => "IS NULL"
-            case IsNotNull => "IS NOT NULL"
-        }
-    }
-
-    public func hasUpsertSupport(): Bool { true }
 
     public func upsertSQL(table: String, columns: Array<String>, conflictColumns: Array<String>, auditCreateCols: Array<String>, auditUpdateCols: Array<String>, versionCol: String): (String, Int64) {
         var cols = ArrayList<String>()
@@ -220,15 +72,7 @@ public class MySQLDialect <: Dialect {
         }
     }
 
-    public func hasReturningSupport(): Bool { false }
-
-    public func hasJSONSupport(): Bool { true }
-
-    public func hasIsolationSupport(): Bool { true }
-
     public func migrator(db: DB): Migrator { MySQLMigrator(db) }
-
-    public func initialize(db: DB): Unit {}
 
     // I5: 返回类型合适的 DEFAULT 值字面量（当前仅 SQLite 迁移器消费，三方言统一实现保持一致）。
     public func defaultValueOf(st: StorageType): String {

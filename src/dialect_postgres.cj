@@ -2,173 +2,23 @@ package refine
 
 import std.collection.ArrayList
 
-public class PostgreSQLDialect <: Dialect {
-    private var params = ArrayList<Any>()
-    private var paramIdx: Int64 = 1
-
+// PostgreSQL 方言：ANSI 双引号标识符、FOR UPDATE 行锁（继承 AbstractDialect 默认）。
+// 差异点（M18 抽取后仅剩）：
+// - renderParam = "$n" 编号占位符（从 1 递增并推进 paramIdx，跨子查询延续编号）
+// - hasReturningSupport = true：PG 原生支持 RETURNING（save 用 RETURNING 回填生成字段）
+public class PostgreSQLDialect <: AbstractDialect {
     public func name(): String { "postgresql" }
 
-    public func quoteIdentifier(name: String): String {
-        "\"" + name.replace("\"", "\"\"") + "\""
+    // PG 占位符用 $n 编号（从 1 递增），覆盖 base 的 "?"；参数顺序与占位符编号一致，
+    // 子查询渲染延续外层编号（render 每次重置 paramIdx = 1）
+    protected override func renderParam(): String {
+        let ph = "$" + paramIdx.toString()
+        paramIdx++
+        ph
     }
 
-    public func render(stmt: Statement): (String, Array<Any>) {
-        params = ArrayList<Any>()
-        paramIdx = 1
-        (renderBody(stmt), params.toArray())
-    }
-
-    private func renderBody(stmt: Statement): String {
-        var select = ArrayList<String>()
-        var from = ArrayList<String>()
-        var joins = ArrayList<String>()
-        var whereClause = ArrayList<String>()
-        var groupBy = ArrayList<String>()
-        var having = ArrayList<String>()
-        var orderBy = ArrayList<String>()
-        var limit = ArrayList<String>()
-        var hasSelect = false
-        var updateSQL = ""
-        var deleteSQL = ""
-        var hasLock = false
-        var whereAdded = false
-        for (i in 0..stmt.clauses.size) {
-            let clause = stmt.clauses[i]
-            match (clause) {
-                case SelectClause(fields) =>
-                    hasSelect = true
-                    if (fields.size == 0) { select.add("SELECT *") }
-                    else { select.add("SELECT " + renderExprList(fields)) }
-                case FromClause(table) =>
-                    from.add("FROM " + quoteIdentifier(table))
-                case WhereClause(predicates) =>
-                    let prefix = if (whereAdded) { "AND " } else { "WHERE " }
-                    whereAdded = true
-                    whereClause.add(prefix + renderAndList(predicates))
-                case OrderByClause(fields) =>
-                    orderBy.add("ORDER BY " + renderExprList(fields))
-                case GroupByClause(fields) =>
-                    groupBy.add("GROUP BY " + renderExprList(fields))
-                case HavingClause(predicates) =>
-                    having.add("HAVING " + renderAndList(predicates))
-                case LimitClause(n) =>
-                    limit.add("LIMIT " + n.toString())
-                case OffsetClause(n) =>
-                    limit.add("OFFSET " + n.toString())
-                case JoinClause(table, alias, on) =>
-                    joins.add("LEFT JOIN " + quoteIdentifier(table) + " " + quoteIdentifier(alias) + " ON " + renderExpr(on))
-                case UpdateClause(table, setCols, setVals) =>
-                    var setParts = ArrayList<String>()
-                    for (_si_ in 0..setCols.size) {
-                        let ph = "$" + paramIdx.toString()
-                        paramIdx++
-                        setParts.add(quoteIdentifier(setCols[_si_]) + " = " + ph)
-                        params.add(setVals[_si_])
-                    }
-                    updateSQL = "UPDATE " + quoteIdentifier(table) + " SET " + String.join(setParts.toArray(), delimiter: ", ")
-                case DeleteClause(table) =>
-                    deleteSQL = "DELETE FROM " + quoteIdentifier(table)
-                case LockClause =>
-                    hasLock = true
-            }
-        }
-        var parts = ArrayList<String>()
-        if (updateSQL != "") {
-            parts.add(updateSQL)
-            for (s in whereClause) { parts.add(s) }
-        } else if (deleteSQL != "") {
-            parts.add(deleteSQL)
-            for (s in whereClause) { parts.add(s) }
-        } else {
-            if (!hasSelect) { parts.add("SELECT *") }
-            else { for (s in select) { parts.add(s) } }
-            for (s in from) { parts.add(s) }
-            for (s in joins) { parts.add(s) }
-            for (s in whereClause) { parts.add(s) }
-            for (s in groupBy) { parts.add(s) }
-            for (s in having) { parts.add(s) }
-            for (s in orderBy) { parts.add(s) }
-            for (s in limit) { parts.add(s) }
-            if (hasLock) { parts.add("FOR UPDATE") }
-        }
-        String.join(parts.toArray(), delimiter: " ")
-    }
-
-    private func renderExpr(expr: Expr): String {
-        match (expr) {
-            case Column(n) => quoteIdentifier(n)
-            case Value(v) =>
-                params.add(v)
-                let ph = "$" + paramIdx.toString()
-                paramIdx++
-                ph
-            case Binary(l, op, r) =>
-                renderExpr(l) + " " + renderOp(op) + " " + renderExpr(r)
-            case Range(subject, low, high) =>
-                renderExpr(subject) + " BETWEEN " + renderExpr(low) + " AND " + renderExpr(high)
-            case Unary(op, e) =>
-                renderUnaryOp(op) + " " + renderExpr(e)
-            case FuncCall(n, args) =>
-                n + "(" + renderExprList(args) + ")"
-            case Raw(s) => s
-            case Ordered(expr, dir) =>
-                renderExpr(expr) + " " + dir
-            case Aliased(expr, alias) =>
-                renderExpr(expr) + " AS " + quoteIdentifier(alias)
-            case SubQuery(s) =>
-                "(" + renderBody(s) + ")"
-        }
-    }
-
-    private func renderExprList(exprs: Array<Expr>): String {
-        if (exprs.size == 0) { return "" }
-        var parts = ArrayList<String>()
-        for (e in exprs) {
-            parts.add(renderExpr(e))
-        }
-        String.join(parts.toArray(), delimiter: ", ")
-    }
-
-    private func renderOp(op: BinOp): String {
-        match (op) {
-            case Eq => "="
-            case Ne => "<>"
-            case Gt => ">"
-            case Ge => ">="
-            case Lt => "<"
-            case Le => "<="
-            case And => "AND"
-            case Or => "OR"
-            case Like => "LIKE"
-            case In => "IN"
-            case NotIn => "NOT IN"
-            case Between => throw Exception("BinOp.Between 不是二元操作符：Binary(x, Between, y) 缺 AND high，改用 Expr.Range（Col.between(low, high)）")
-            case Add => "+"
-            case Sub => "-"
-            case Mul => "*"
-            case Div => "/"
-            case Mod => "%"
-        }
-    }
-
-    private func renderUnaryOp(op: UnaryOp): String {
-        match (op) {
-            case Not => "NOT"
-            case IsNull => "IS NULL"
-            case IsNotNull => "IS NOT NULL"
-        }
-    }
-
-    private func renderAndList(exprs: Array<Expr>): String {
-        if (exprs.size == 0) { return "" }
-        var parts = ArrayList<String>()
-        for (e in exprs) {
-            parts.add(renderExpr(e))
-        }
-        String.join(parts.toArray(), delimiter: " AND ")
-    }
-
-    public func hasUpsertSupport(): Bool { true }
+    // PG 支持 RETURNING（save 用 RETURNING 回填生成字段）
+    public override func hasReturningSupport(): Bool { true }
 
     public func upsertSQL(table: String, columns: Array<String>, conflictColumns: Array<String>, auditCreateCols: Array<String>, auditUpdateCols: Array<String>, versionCol: String): (String, Int64) {
         var cols = ArrayList<String>()
@@ -219,15 +69,7 @@ public class PostgreSQLDialect <: Dialect {
         }
     }
 
-    public func hasReturningSupport(): Bool { true }
-
-    public func hasJSONSupport(): Bool { true }
-
-    public func hasIsolationSupport(): Bool { true }
-
     public func migrator(db: DB): Migrator { PostgreSQLMigrator(db) }
-
-    public func initialize(db: DB): Unit {}
 
     // I5: 返回类型合适的 DEFAULT 值字面量（当前仅 SQLite 迁移器消费，三方言统一实现保持一致）。
     // PG 按类型用合法字面量：Bool 用 false，Json 用 '{}'::jsonb，Bytes 用 ''::bytea，Timestamp 用 epoch。
