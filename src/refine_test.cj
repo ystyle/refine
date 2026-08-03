@@ -526,6 +526,32 @@ public class RefineTest {
         r.close()
     }
 
+    // R-I1 延续: rf.transaction { tx => query().using(tx).all() } 是最常用查询入口之一。
+    // tx 由 Refine.transaction 创建（Tx(conn, this, paramOffset) → ref = Some(this)），
+    // 修复前 using(exec) 不传播 ref，此路径静默跳过 AfterFind。
+    @TestCase
+    public func testTransactionAllFiresAfterFind(): Unit {
+        let ds = QueryTrackDatasource()
+        let r = Refine(ds, SQLiteDialect(), 0)
+        let flag = HookFlag()
+        r.hook<Int64>("RfTxAllHook", HookKind.AfterFind) { scope: Scope<Int64> =>
+            flag.called = true
+        }
+        let cols: Array<ColumnInfo> = [MapperMockColumnInfo("id", false)]
+        ds.conn.stmt.queryResult = MapperMockQueryResult(cols, [Array<Any>(1, {i => 1})])
+        let q = Query<Int64>()
+        q.select([Expr.Column("id")])
+        q.from("t")
+        q.typeName = "RfTxAllHook"
+        q.setMapper({ result: QueryResult, cm: HashMap<String, Int64> => 0 })
+        r.transaction { tx: Tx =>
+            let rows = q.using(tx).all()
+            @Expect(rows.size, 1)
+        }
+        @Expect(flag.called, true)
+        r.close()
+    }
+
     // I9: 同一个 Query 对象先后复用多次，调用后仍保持原始状态（无并发/复用竞态污染）。
     @TestCase
     public func testQueryReusableAcrossAllCalls(): Unit {

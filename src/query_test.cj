@@ -609,6 +609,56 @@ public class QueryTest {
         @Expect(flag.called, true)
     }
 
+    // R-I1 延续: using(session) 必须从携带 ref 的 Session 传播 Refine 绑定。
+    // rf.session() 创建 Session(conn, rf, paramOffset) → ref = Some(rf)；修复前
+    // using(exec) 只设 executor/queryDialect/columnOffset，此路径静默跳过 AfterFind。
+    @TestCase
+    public func testRefSessionCarriesRefFiresAfterFind(): Unit {
+        let ds = QueryTrackDatasource()
+        let rf = Refine(ds, SQLiteDialect(), 0)
+        let flag = HookFlag()
+        rf.hook<Int64>("RfSessionPropHook", HookKind.AfterFind) { scope: Scope<Int64> =>
+            flag.called = true
+        }
+        let cols: Array<SqlColumnInfo> = [MapperMockColumnInfo("id", false)]
+        ds.conn.stmt.queryResult = MapperMockQueryResult(cols, [Array<Any>(1, {i => 1})])
+        let s = rf.session()
+        let q = Query<Int64>()
+            .select([Expr.Column("id")])
+            .from("t")
+            .using(s)
+        q.typeName = "RfSessionPropHook"
+        q.setMapper({ r: QueryResult, cm: HashMap<String, Int64> => 0 })
+        let rows = q.all()
+        @Expect(rows.size, 1)
+        @Expect(flag.called, true)
+        s.close()
+    }
+
+    // R-I1 延续: 裸 Session（无 ref）不得触发 AfterFind，镜像裸 Tx 约束。
+    @TestCase
+    public func testBareSessionDoesNotFireAfterFind(): Unit {
+        let conn = CaptureConnection()
+        let rf = Refine(RMockDS(), SQLiteDialect(), 0)
+        let flag = HookFlag()
+        rf.hook<Int64>("BareSessionAfterFind", HookKind.AfterFind) { scope: Scope<Int64> =>
+            flag.called = true
+        }
+        let s = Session(conn)
+        let cols: Array<SqlColumnInfo> = [MapperMockColumnInfo("id", false)]
+        conn.stmt.queryResult = MapperMockQueryResult(cols, [Array<Any>(1, {i => 1})])
+        let q = Query<Int64>()
+            .select([Expr.Column("id")])
+            .from("t")
+            .using(s)
+        q.typeName = "BareSessionAfterFind"
+        q.setMapper({ r: QueryResult, cm: HashMap<String, Int64> => 0 })
+        let rows = q.all()
+        @Expect(rows.size, 1)
+        @Expect(flag.called, false)
+        s.close()
+    }
+
     // I14 回归：using(rf) 直接执行路径（rf.session() 持有真实连接）在 AfterFind 钩子
     // 抛错时，Session 必须 finally 关闭（修复前 closeExecutor 被跳过 → 连接泄漏）。
     @TestCase
@@ -3241,5 +3291,51 @@ public class R5GroupedQueryTest {
         let cnt = q.count()
         @Expect(cnt, 7)
         @Expect(conn.stmt.capturedSql, "SELECT COUNT(*) FROM \"t\"")
+    }
+
+    // R-I5 延续: 分组查询无分组时（HAVING 滤掉全部组/空表）count() 必须为 0——
+    // 行数计数循环对空结果集不产生计数（修复前若误取首行值，空集读到 0 之外的错误值）。
+    @TestCase
+    public func testCountWithGroupByEmptyReturnsZero(): Unit {
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        tx.begin()
+        conn.stmt.queryResult = MapperMockQueryResult(
+            [MapperMockColumnInfo("COUNT(*)", false)],
+            []
+        )
+        let q = Query<Int64>()
+            .select([Expr.Column("id")])
+            .from("t")
+            .groupBy([Expr.Column("dept")])
+            .using(tx)
+        let cnt = q.count()
+        @Expect(cnt, 0)
+    }
+
+    // R-I5 延续: 分组 page 空结果时 total = 0、items 空，与分组 count 语义一致。
+    @TestCase
+    public func testPageWithGroupByEmptyTotalZero(): Unit {
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        tx.begin()
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(
+            [MapperMockColumnInfo("COUNT(*)", false)],
+            []
+        ))
+        let cols: Array<SqlColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("dept", false),
+        ]
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(cols, []))
+        let q = Query<Int64>()
+            .select([Expr.Column("id"), Expr.Column("dept")])
+            .from("t")
+            .groupBy([Expr.Column("dept")])
+            .using(tx)
+        q.setMapper({ r: QueryResult, cm: HashMap<String, Int64> => 0 })
+        let pg = q.page(1, 10)
+        @Expect(pg.total, 0)
+        @Expect(pg.items.size, 0)
     }
 }

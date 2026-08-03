@@ -133,10 +133,18 @@ extend<T> Query<T> {
         this
     }
 
+    // R-I1: using(exec) 传播执行上下文携带的 Refine 绑定（Refine.session()/transaction
+    // 创建的 Session/Tx ref = Some(rf)，裸 Session/Tx ref = None）。修复前只设
+    // executor/queryDialect/columnOffset，rf.transaction { tx => query().using(tx).all() }
+    // 等常用路径下 runAfterFindHooks 见 ref=None 静默跳过 AfterFind。
     public func using(exec: ExecutionContext): Query<T> {
         this.executor = exec
         this.queryDialect = Some(exec.getDialect())
         this.columnOffset = exec.getParamOffset()
+        match (exec.getRef()) {
+            case Some(rf) => this.ref = Some(rf)
+            case None => ()
+        }
         this
     }
 

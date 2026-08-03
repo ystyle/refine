@@ -302,12 +302,20 @@ public interface ExecutionContext {
     func execute(sql: String, params: Array<Any>): UpdateResult
     func getDialect(): Dialect
     func getParamOffset(): Int64
+    // R-I1: 执行上下文是否绑定 Refine 实例（Refine.session()/transaction 创建时携带，
+    // 裸 Session/Tx 为 None）。Query.using(exec) 据此把 AfterFind hook 的触发权从
+    // 执行上下文传播到 Query 副本，使 rf.transaction { tx => query().using(tx).all() }
+    // 等常用路径与 query.using(rf).all() 行为一致。
+    func getRef(): Option<Refine>
 }
 
 extend Session <: ExecutionContext {
     public func getParamOffset(): Int64 { paramOffset }
+    public func getRef(): Option<Refine> { ref }
 }
-extend Tx <: ExecutionContext {}
+extend Tx <: ExecutionContext {
+    public func getRef(): Option<Refine> { ref }
+}
 
 extend Tx {
     public func queryAll<T>(sql: String, params: Array<Any>,
