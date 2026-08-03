@@ -240,10 +240,15 @@ func buildRelationMethods(className: String, rels: ArrayList<RelInfo>, cd: Class
 func buildCascadeKeyTokens(className: String, pkFields: ArrayList<FieldInfo>, target: String): Tokens {
     let cnLit = Token(TokenKind.STRING_LITERAL, className + ":")
     let targetTok = Token(TokenKind.IDENTIFIER, target)
+    // pkFields 为空（实体无任何主键）在本函数中不可达：@Refine 实体要么含名为 id 的字段
+    // （extractFields 默认将其标为主键，无 @Id 时 pkFields.size == 1），要么带 @Id 标注
+    // （attr_macros.cj Id 宏 setItem("fieldName", 声明字段名)，applyIdAnnotations 至少标注
+    // 一个字段 → size >= 1）。唯一会 size == 0 的是「既无 id 字段又无 @Id」——此时本函数
+    // 生成的 `target.id` 引用根本无法编译，实体无法构建，故该退化分支是死代码。
+    // 2026-08-01 审计 F2(a) 裁决：移除原 `var key = "<Class>:" + target.id.toString()`
+    // 回退（误导：无主键实体并不存在），改抛明确宏错误——级联删除必须以主键键控环检测。
     if (pkFields.size == 0) {
-        return quote(
-            var key = $(cnLit) + $(targetTok).id.toString()
-        )
+        throw Exception("cascade methods require at least one @Id primary key field on entity " + className)
     }
     let firstPk = pkFields.get(0).getOrThrow()
     var keyTokens = quote(
@@ -406,7 +411,13 @@ func buildCascadeMethods(className: String, rels: ArrayList<RelInfo>, fields: Ar
     }
     let keyTokens = buildCascadeKeyTokens(className, pkFields, "this")
     cd.body.decls.add(FuncDecl(quote(
-        public func cascadeDelete(tx: Tx, visited: ArrayList<String>): $(cn) {
+        // visited 用 CascadeVisitedKeys（= HashSet<String>，refine 包公开类型别名）：
+        // 环检测键是值类型 String，HashSet 提供 O(1) contains（ArrayList 线性扫描是 O(n²)）。
+        // 不用 std.collection.HashSet 全限定名——宏展开上下文中 std.collection 路径
+        // 无法解析（"undeclared type name 'std'"）；别名随 refine.* 导入对用户可见。
+        // 级联 save/update 的 visited 保持 ArrayList<Object>（对象引用需 refEq 语义，
+        // 仓颉无 identity hash 集合，见 refine.cj visitedContains 注释）。
+        public func cascadeDelete(tx: Tx, visited: CascadeVisitedKeys): $(cn) {
             $(keyTokens)
             if (visitedKeyContains(visited, key)) { return this }
             visited.add(key)

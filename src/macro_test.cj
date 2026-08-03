@@ -3,6 +3,7 @@ package refine
 import refine.macros.*
 import std.collection.ArrayList
 import std.collection.HashMap
+import std.collection.HashSet
 import std.database.sql.{Connection, Transaction, QueryResult, UpdateResult, ColumnInfo, ConnectionState, SqlDbType}
 import std.database.sql.Statement as SqlStatement
 import std.time.DateTime
@@ -313,6 +314,30 @@ public class CategoryWithRel {
 
     @Rel[has_many, CategoryWithRel, parent_id]
     var children: ArrayList<CategoryWithRel> = ArrayList<CategoryWithRel>()
+}
+
+// F2(b): 复合主键实体 fixture（级联删除测试）。主键为 tenant_id + line_no 复合键。
+// id 字段保留：has_many 的目标类被宏硬编码读 `.id`（addX/removeX/cascadePostSave/
+// 目标 id 提取器），无 id 字段的目标类编译失败（已知限制，见 method_gen.cj:69-71）。
+// 级联删除键为 "OrderLineItem:<tenant_id>:<line_no>"（pk 字段，与 id 无关）。
+@Refine
+public class OrderLineItem {
+    @Id[]
+    var tenant_id: Int64 = 0
+    @Id[]
+    var line_no: Int64 = 0
+    var sku: String = ""
+    var order_id: Int64 = 0
+    var id: Int64 = 0
+}
+
+@Refine
+public class OrderWithRel {
+    var id: Int64 = 0
+    var note: String = ""
+
+    @Rel[has_many, OrderLineItem, order_id]
+    var lines: ArrayList<OrderLineItem> = ArrayList<OrderLineItem>()
 }
 
 // Task 6: 嵌套 include 递归装配 fixture 链。
@@ -2502,7 +2527,7 @@ public class CascadeTraversalTest {
         p.id = 5
         let cols: Array<ColumnInfo> = [MapperMockColumnInfo("id", false), MapperMockColumnInfo("body", false), MapperMockColumnInfo("post_id", false)]
         conn.stmt.queryResult = MapperMockQueryResult(cols, [Array<Any>(3, {i => if (i == 0) { 9 } else if (i == 1) { "hi" } else { 5 }})])
-        p.cascadeDelete(tx, ArrayList<String>())
+        p.cascadeDelete(tx, HashSet<String>())
         @Expect(conn.stmt.capturedSqlHistory.size, 3)
         @Expect(conn.stmt.capturedSqlHistory[0], "SELECT * FROM comment WHERE post_id = ?")
         @Expect(conn.stmt.capturedSqlHistory[1], "DELETE FROM \"comment\" WHERE \"id\" = ?")
@@ -2519,7 +2544,7 @@ public class CascadeTraversalTest {
         u.id = 3
         let cols: Array<ColumnInfo> = [MapperMockColumnInfo("id", false), MapperMockColumnInfo("bio", false), MapperMockColumnInfo("user_id", false)]
         conn.stmt.queryResult = MapperMockQueryResult(cols, [Array<Any>(3, {i => if (i == 0) { 7 } else if (i == 1) { "b" } else { 3 }})])
-        u.cascadeDelete(tx, ArrayList<String>())
+        u.cascadeDelete(tx, HashSet<String>())
         @Expect(conn.stmt.capturedSqlHistory.size, 2)
         @Expect(conn.stmt.capturedSqlHistory[0], "SELECT * FROM profileWithRel WHERE user_id = ?")
         @Expect(conn.stmt.capturedSqlHistory[1], "DELETE FROM \"profileWithRel\" WHERE \"id\" = ?")
@@ -2537,7 +2562,7 @@ public class CascadeTraversalTest {
         conn.stmt.queryResultQueue.add(MapperMockQueryResult(cols, []))
         let root = CategoryWithRel()
         root.id = 5
-        root.cascadeDelete(tx, ArrayList<String>())
+        root.cascadeDelete(tx, HashSet<String>())
         @Expect(conn.stmt.capturedSqlHistory.size, 5)
         @Expect(conn.stmt.capturedSqlHistory[0], "SELECT * FROM categoryWithRel WHERE parent_id = ?")
         @Expect(conn.stmt.capturedSqlHistory[1], "SELECT * FROM categoryWithRel WHERE parent_id = ?")
@@ -2563,7 +2588,7 @@ public class CascadeTraversalTest {
         }
         let root = CategoryWithRel()
         root.id = 5
-        root.cascadeDelete(tx, ArrayList<String>())
+        root.cascadeDelete(tx, HashSet<String>())
         // 环在第二层被 "CategoryWithRel:5" 键命中即返回，且 deleteCascade 操作层守卫阻止对
         // A'(id=5)（与 root 同 (type,id) 的副本行）重复 DELETE：仅 2 次 SELECT + 1 次 DELETE(B)
         @Expect(conn.stmt.capturedSqlHistory.size, 3)
@@ -2581,7 +2606,7 @@ public class CascadeTraversalTest {
         let tx = Tx(conn)
         let p = PostWithRel()
         p.id = 5
-        let visited = ArrayList<String>()
+        let visited = HashSet<String>()
         visited.add("PostWithRel:5")
         p.cascadeDelete(tx, visited)
         @Expect(conn.stmt.capturedSqlHistory.size, 0)
@@ -2596,8 +2621,83 @@ public class CascadeTraversalTest {
         let u = UuidPost()
         u.id = "uuid-1"
         c.post = Some(u)
-        c.cascadeDelete(tx, ArrayList<String>())
+        c.cascadeDelete(tx, HashSet<String>())
         @Expect(conn.stmt.capturedSqlHistory.size, 0)
+    }
+
+    // ─── F2(b): 复合主键级联删除 ───────────────────────────
+
+    @TestCase
+    public func testCascadeDeleteCompositePkKeyFormat(): Unit {
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        let item = OrderLineItem()
+        item.tenant_id = 7
+        item.line_no = 3
+        let visited = HashSet<String>()
+        item.cascadeDelete(tx, visited)
+        // 键必须是 "<Class>:<pk1>:<pk2>" 冒号拼接（pk 字段顺序 = 声明顺序）
+        @Expect(visited.contains("OrderLineItem:7:3"), true)
+        @Expect(visited.size, 1)
+    }
+
+    @TestCase
+    public func testCascadeDeleteCompositePkSkipsAlreadySeen(): Unit {
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        let item = OrderLineItem()
+        item.tenant_id = 7
+        item.line_no = 3
+        let visited = HashSet<String>()
+        visited.add("OrderLineItem:7:3")
+        item.cascadeDelete(tx, visited)
+        // 已在 visited 中的 (type, pk) 键直接短路，不产生任何 SQL
+        @Expect(conn.stmt.capturedSqlHistory.size, 0)
+    }
+
+    @TestCase
+    public func testCascadeDeleteCompositePkNoDuplicateDelete(): Unit {
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        // 同一复合主键实体经两次 deleteCascade 调用（模拟环/菱形里被两条路径命中），
+        // 第二次必须被 visited 键守卫短路，DELETE 只执行一次
+        let item = OrderLineItem()
+        item.tenant_id = 7
+        item.line_no = 3
+        let visited = HashSet<String>()
+        tx.deleteCascade(item, visited)
+        tx.deleteCascade(item, visited)
+        @Expect(conn.stmt.capturedSqlHistory.size, 1)
+        @Expect(conn.stmt.capturedSqlHistory[0], "DELETE FROM \"orderLineItem\" WHERE \"tenant_id\" = ? AND \"line_no\" = ?")
+        @Expect(capturedInt64(conn.stmt.capturedSetValues, 0), 7)
+        @Expect(capturedInt64(conn.stmt.capturedSetValues, 1), 3)
+        @Expect(visited.contains("OrderLineItem:7:3"), true)
+    }
+
+    @TestCase
+    public func testCascadeDeleteCompositePkChildrenViaParent(): Unit {
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        let order = OrderWithRel()
+        order.id = 5
+        // 子对象（复合主键 OrderLineItem）由 loadX(tx) 从库加载：tenant_id/line_no/sku/order_id
+        let cols: Array<ColumnInfo> = [
+            MapperMockColumnInfo("tenant_id", false),
+            MapperMockColumnInfo("line_no", false),
+            MapperMockColumnInfo("sku", false),
+            MapperMockColumnInfo("order_id", false),
+        ]
+        conn.stmt.queryResult = MapperMockQueryResult(cols, [Array<Any>(4, {i => if (i == 0) { 7 } else if (i == 1) { 3 } else if (i == 2) { "sku-a" } else { 5 }})])
+        let visited = HashSet<String>()
+        order.cascadeDelete(tx, visited)
+        // 父 cascadeDelete：SELECT 子对象 → 对每个子对象 tx.deleteCascade（DELETE）
+        @Expect(conn.stmt.capturedSqlHistory.size, 2)
+        @Expect(conn.stmt.capturedSqlHistory[0], "SELECT * FROM orderLineItem WHERE order_id = ?")
+        @Expect(conn.stmt.capturedSqlHistory[1], "DELETE FROM \"orderLineItem\" WHERE \"tenant_id\" = ? AND \"line_no\" = ?")
+        @Expect(capturedInt64(conn.stmt.capturedSetValues, 0), 5)
+        @Expect(capturedInt64(conn.stmt.capturedSetValues, 1), 7)
+        @Expect(capturedInt64(conn.stmt.capturedSetValues, 2), 3)
+        @Expect(visited.contains("OrderLineItem:7:3"), true)
     }
 
     @TestCase

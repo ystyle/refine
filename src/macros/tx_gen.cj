@@ -445,9 +445,9 @@ func buildTxSoftDeleteExtend(className: String, pkFields: ArrayList<FieldInfo>):
     quote(
         extend Tx {
             public func delete(entity: $(cn)): Unit {
-                this.deleteCascade(entity, ArrayList<String>())
+                this.deleteCascade(entity, CascadeVisitedKeys())
             }
-            public func deleteCascade(entity: $(cn), visited: ArrayList<String>): Unit {
+            public func deleteCascade(entity: $(cn), visited: CascadeVisitedKeys): Unit {
                 $(deleteHookHead)
                 entity.cascadeDelete(this, visited)
                 let (sql, params) = $(softDeleteSQLFuncName)(entity, this.getDialect())
@@ -456,9 +456,9 @@ func buildTxSoftDeleteExtend(className: String, pkFields: ArrayList<FieldInfo>):
             }
 
             public func physicalDelete(entity: $(cn)): Unit {
-                this.physicalDeleteCascade(entity, ArrayList<String>())
+                this.physicalDeleteCascade(entity, CascadeVisitedKeys())
             }
-            public func physicalDeleteCascade(entity: $(cn), visited: ArrayList<String>): Unit {
+            public func physicalDeleteCascade(entity: $(cn), visited: CascadeVisitedKeys): Unit {
                 $(deleteHookHead)
                 entity.cascadeDelete(this, visited)
                 let (sql, params) = $(deleteSQLFuncName)(entity, this.getDialect())
@@ -477,9 +477,9 @@ func buildTxDeleteExtend(className: String, pkFields: ArrayList<FieldInfo>): Tok
     quote(
         extend Tx {
             public func delete(entity: $(cn)): Unit {
-                this.deleteCascade(entity, ArrayList<String>())
+                this.deleteCascade(entity, CascadeVisitedKeys())
             }
-            public func deleteCascade(entity: $(cn), visited: ArrayList<String>): Unit {
+            public func deleteCascade(entity: $(cn), visited: CascadeVisitedKeys): Unit {
                 $(keyTokens)
                 if (visitedKeyContains(visited, key)) { return }
                 let scope = Scope<$(cn)>(entity)

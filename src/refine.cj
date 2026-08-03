@@ -3,6 +3,7 @@ package refine
 import std.database.sql.{Datasource, Connection, Driver, DriverManager, PooledDatasource}
 import std.collection.HashMap
 import std.collection.ArrayList
+import std.collection.HashSet
 import std.convert.*
 
 public class Refine {
@@ -168,6 +169,13 @@ public func detectParamOffset(driver: String): Int64 {
     if (driver == "mariadb") { 1 } else { 0 }
 }
 
+// visitedContains：级联 save/update 的对象引用去重，必须按引用相等（refEq）判断——
+// 级联中新对象 id 都是 0，若按值相等会把两个不同新对象误判为同一对象而跳过。
+// 保留 O(n) 线性扫描的原因：仓颉的 HashSet/HashMap 均按 Equatable 的 == 散列，
+// 没有 identity-based 哈希集合（== 是值语义）；实体类默认未实现 Equatable 或
+// == 为值比较，无法承载 refEq 语义。将 visited 换成「hash 化引用包装」方案可把
+// contains 降为 O(1)，但会改变 visited 结构并波及宏生成的 cascade 签名，代价过高，
+// 故保留线性扫描（深链/大集合下为 O(n²)，属已知约束，见 docs/plans/2026-08-01-cascade-save-design.md）。
 public func visitedContains(visited: ArrayList<Object>, target: Object): Bool {
     for (v in visited) {
         if (refEq(v, target)) { return true }
@@ -175,9 +183,15 @@ public func visitedContains(visited: ArrayList<Object>, target: Object): Bool {
     false
 }
 
-public func visitedKeyContains(visited: ArrayList<String>, key: String): Bool {
-    for (k in visited) {
-        if (k == key) { return true }
-    }
-    false
+// visitedKeyContains：级联 delete 的 (type, pk) 键去重。键是 String（值类型，
+// 实现 Hashable & Equatable），可直接用 HashSet 提供 O(1) contains——cascadeDelete
+// 对 N 个实体递归时，ArrayList 线性扫描会退化为 O(n²)（深链/大集合）。与 visitedContains
+// 不同：String 键没有 identity 语义问题，故此处可以安全地哈希化。
+// CascadeVisitedKeys 别名：宏生成的 cascadeDelete/deleteCascade 签名用它替代
+// std.collection.HashSet<String>（宏展开上下文无法解析 std.collection 全限定路径，
+// 见 relation_gen.cj buildCascadeMethods 注释），用户只需 import refine.* 即可使用。
+public type CascadeVisitedKeys = HashSet<String>
+
+public func visitedKeyContains(visited: CascadeVisitedKeys, key: String): Bool {
+    visited.contains(key)
 }
