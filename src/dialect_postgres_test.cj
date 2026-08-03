@@ -556,4 +556,20 @@ public class PostgreSQLDialectTest {
         let (sql, _) = dialect.render(stmt)
         @Expect(sql, "SELECT \"id\" FROM \"t\" WHERE \"a\" = $1 ORDER BY \"id\" LIMIT 3 OFFSET 0")
     }
+
+    // 回归（M18 评审）：FOR UPDATE + LIMIT/OFFSET 串行交互——renderLimitOffset 先组装分页段，
+    // 再经 hasLockSupport 追加 FOR UPDATE，两钩子不互相干扰（PG 语法：LIMIT/OFFSET 在前，FOR UPDATE 在后）
+    @TestCase
+    public func testRenderForUpdateWithLimitOffset(): Unit {
+        let dialect = PostgreSQLDialect()
+        let stmt = Statement()
+        stmt.addClause(SelectClause([Column("x")]))
+        stmt.addClause(FromClause("t"))
+        stmt.addClause(LimitClause(5))
+        stmt.addClause(OffsetClause(10))
+        stmt.addClause(LockClause)
+        let (sql, params) = dialect.render(stmt)
+        @Expect(sql, "SELECT \"x\" FROM \"t\" LIMIT 5 OFFSET 10 FOR UPDATE")
+        @Expect(params.size, 0)
+    }
 }

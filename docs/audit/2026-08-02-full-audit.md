@@ -3,7 +3,7 @@
 > 审查日期：2026-08-02
 > 审查范围：全部 `src/` 运行时 + `src/macros/` 宏层 + 三方言 + 三迁移器
 > 审查方式：三路并行深度审查（核心运行时 / 方言+迁移 / 宏生成层），逐行核对 + 交叉验证
-> 状态：**Not ready for release** — 存在 9 个 Critical + 19 个 Important，修复后需补测试沉淀。进度：I19/I20/I21/I22/I23/F1/F2/F3 已修复（2026-08-02~08-03）；**P2 Minor 批次（M1/M2/M4/M5/M6/M7/M8/M9/M11/M13/M14/M15/M23/M24）已处理（2026-08-03）**；**设计项 M3/M10/M16/M19/M22 已处理（2026-08-03）**，重构项 M18/M20 待排期。
+> 状态：**Not ready for release** — 存在 9 个 Critical + 19 个 Important，修复后需补测试沉淀。进度：I19/I20/I21/I22/I23/F1/F2/F3 已修复（2026-08-02~08-03）；**P2 Minor 批次（M1/M2/M4/M5/M6/M7/M8/M9/M11/M13/M14/M15/M23/M24）已处理（2026-08-03）**；**设计项 M3/M10/M16/M19/M22 已处理（2026-08-03）**；**重构项 M18 已处理（2026-08-03）**，M20 待排期。
 
 ---
 
@@ -244,6 +244,7 @@
   - **✅ 已解决（2026-08-03）**: 静态 `Mutex` + `synchronized` 包裹 register/get/initAll/closeAll/clear 全部方法（`initAll` 内调 `get` 依赖 Mutex 可重入不死锁）。新增并发测试：8 线程 × 25 唯一库名并发注册+实例化不崩、注册表一致性（未注册名抛 ConfigException、缓存命中）。
 - **M17** `dummyMapper/dummySetter`（`relation.cj:147-148`）是测试泄漏到生产。
 - **M18** 三方言约 150 行逐字节重复代码（render 主循环、renderExpr 系列），应抽取共享基类。
+  - **✅ 已解决（2026-08-03）**: 新建 `AbstractDialect <: Dialect`（`dialect_base.cj`）统一 render/renderBody/renderExpr 系列；方言差异收敛为 open 钩子（renderParam/quoteIdentifier/hasLockSupport/renderLimitOffset/hasIsolationSupport/hasReturningSupport）+ 抽象方法（name/dataTypeOf/upsertSQL/migrator/defaultValueOf）。858 用例全绿，三方言 SQL 输出零变化。**评审收尾（2026-08-03）**: renderLimitOffset 注释补分页钩子边界（仅尾部分页调整类差异，TOP/ROWNUM 式需扩展基类签名或新增钩子）；新增 FOR UPDATE+LIMIT/OFFSET 串行交互测试。
 - **M19** `Tx` 无"已提交/已回滚"状态，commit 后仍可 execute（无防护）。
   - **✅ 已解决（2026-08-03）**: `Tx` 增加 `TxState` 状态机（Unbegun/Active/Committed/RolledBack）。begin 重复抛"transaction already begun"；非 Active 下 execute/query/save/rollbackTo/commit/rollback 抛"transaction is not active"；`setIsolation` 不加守卫（`Refine.transaction(level:)` 在 begin 前调用）。所有测试基建补 `tx.begin()`（macro_test 158 处、query_test 70 处、db_test 16 处），新增 12 例状态防护测试。**行为变更提示**：在事务 action 内手动 commit 后再返回会触发外层 commit 抛错（此前为驱动双 commit 错误），属防御性改进。
   - **评审修复（2026-08-03）**: (a) **异常遮蔽**——action 内手动 commit 后再抛异常时，包装器 catch 里的 `tx.rollback()` 会抛 "transaction is not active" 遮蔽原始异常；`Refine.transaction`（两个重载）与 `DB.transaction` 的 catch 改为 best-effort 回滚（`try { tx.rollback() } catch (_) { () }`），始终抛原始异常。(b) **prepareStatement 补守卫**——与 execute/query 一致要求 Active，堵住 `tx.prepareStatement(sql).update()` 事务结束后发 SQL 的旁路。新增 5 例测试（提交后抛异常保留原始异常 ×3、prepareStatement 未 begin/已 commit 抛异常 ×2）。

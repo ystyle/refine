@@ -46,6 +46,8 @@ public abstract class AbstractDialect <: Dialect {
     // 默认原样返回 limit 列表（SQLite/PG）；MySQL 覆盖为在裸 OFFSET（无 LIMIT）前补
     // `LIMIT 18446744073709551615` 哨兵（I3：MySQL 裸 OFFSET 是语法错误，LIMIT+OFFSET 并存时保持原样）。
     // UPDATE/DELETE 路径不经过此处，不受影响。
+    // 边界：该钩子仅覆盖尾部分页调整类差异（如 MySQL 裸 OFFSET 哨兵）；TOP 式分页（需改写 SELECT 头）
+    // 或 ROWNUM 式（改变子句结构）需扩展基类签名或新增钩子。
     protected open func renderLimitOffset(hasLimit: Bool, hasOffset: Bool, limit: ArrayList<String>): ArrayList<String> {
         limit
     }
