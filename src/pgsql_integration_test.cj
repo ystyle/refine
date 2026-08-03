@@ -672,4 +672,166 @@ public class PostgreSQLIntegrationTest {
             case None => @Expect(true, true)
         }
     }
+
+    // ─── Task 9：混合 has_many + ref_to include 无笛卡尔积（真实 PG） ─────────────
+    // PostWithRel（postWithRel）同时 include author（ref_to "user"）与 comments
+    // （has_many "comment"）。2 个主行 × 各 3 条评论，分步批量协议返回 2 行主实体
+    // （而非 JOIN 展开的 6 行），每行带 3 条评论 + 装配好的 author。
+    @TestCase
+    public func testMixedHasManyRefToNoCartesian(): Unit {
+        match (tryPostgres()) {
+            case Some(rf) =>
+                rf.transaction { tx: Tx =>
+                    tx.execute("DROP TABLE IF EXISTS \"comment\"", [])
+                    tx.execute("DROP TABLE IF EXISTS \"user\"", [])
+                    tx.execute("DROP TABLE IF EXISTS \"postWithRel\"", [])
+                }
+                let m = rf.migrator()
+                m.autoMigrate([PostWithRelSchema(), UserSchema(), CommentSchema()])
+                rf.transaction { tx: Tx =>
+                    tx.execute("INSERT INTO \"user\" (\"name\", \"email\") VALUES (?, ?)", ["AuthorA", "a@x.com"])
+                    tx.execute("INSERT INTO \"user\" (\"name\", \"email\") VALUES (?, ?)", ["AuthorB", "b@x.com"])
+                }
+                let users = User.query().using(rf).order([User.col().id.asc()]).all()
+                @Expect(users.size, 2)
+                rf.transaction { tx: Tx =>
+                    tx.execute("INSERT INTO \"postWithRel\" (\"title\", \"user_id\", \"post_id\") VALUES (?, ?, 0)", ["p1", users[0].id])
+                    tx.execute("INSERT INTO \"postWithRel\" (\"title\", \"user_id\", \"post_id\") VALUES (?, ?, 0)", ["p2", users[1].id])
+                }
+                let posts = PostWithRel.query().using(rf).order([PostWithRel.col().id.asc()]).all()
+                @Expect(posts.size, 2)
+                rf.transaction { tx: Tx =>
+                    for (i in 0..3) {
+                        tx.execute("INSERT INTO \"comment\" (\"body\", \"post_id\") VALUES (?, ?)", ["p1c" + i.toString(), posts[0].id])
+                        tx.execute("INSERT INTO \"comment\" (\"body\", \"post_id\") VALUES (?, ?)", ["p2c" + i.toString(), posts[1].id])
+                    }
+                }
+                let found = PostWithRel.query()
+                    .include(PostWithRelRel.author)
+                    .include(PostWithRelRel.comments)
+                    .using(rf)
+                    .order([PostWithRel.col().id.asc()])
+                    .all()
+                @Expect(found.size, 2)
+                @Expect(found[0].comments.size, 3)
+                @Expect(found[1].comments.size, 3)
+                match (found[0].author) {
+                    case Some(a) => @Expect(a.id, users[0].id)
+                    case None => @Expect(true, false)
+                }
+                match (found[1].author) {
+                    case Some(a) => @Expect(a.id, users[1].id)
+                    case None => @Expect(true, false)
+                }
+                rf.close()
+            case None => @Expect(true, true)
+        }
+    }
+
+    // ─── Task 9：同表多 ref 合并（真实 PG） ─────────────────────────────────────
+    // SameTableRefPost 的 author/editor 两个 ref_to 指向同一目标表 sameTableRefUser，
+    // 批量 include 合并为单条批量查询（查询次数在单元层用 mock 断言）并分别回填，
+    // 此处验证真实 PG 上两个 ref 都正确装配。
+    @TestCase
+    public func testSameTableRefsBothPopulate(): Unit {
+        match (tryPostgres()) {
+            case Some(rf) =>
+                rf.transaction { tx: Tx =>
+                    tx.execute("DROP TABLE IF EXISTS \"sameTableRefPost\"", [])
+                    tx.execute("DROP TABLE IF EXISTS \"sameTableRefUser\"", [])
+                }
+                let m = rf.migrator()
+                m.autoMigrate([SameTableRefPostSchema(), SameTableRefUserSchema()])
+                rf.transaction { tx: Tx =>
+                    tx.execute("INSERT INTO \"sameTableRefUser\" (\"name\", \"email\") VALUES (?, ?)", ["Alice", "a@x.com"])
+                    tx.execute("INSERT INTO \"sameTableRefUser\" (\"name\", \"email\") VALUES (?, ?)", ["Eve", "e@x.com"])
+                }
+                let users = SameTableRefUser.query().using(rf).order([SameTableRefUser.col().id.asc()]).all()
+                @Expect(users.size, 2)
+                rf.transaction { tx: Tx =>
+                    tx.execute("INSERT INTO \"sameTableRefPost\" (\"title\", \"author_id\", \"editor_id\") VALUES (?, ?, ?)", ["t1", users[0].id, users[1].id])
+                }
+                let found = SameTableRefPost.query()
+                    .include(SameTableRefPostRel.author)
+                    .include(SameTableRefPostRel.editor)
+                    .using(rf)
+                    .filter(SameTableRefPost.col().title == "t1")
+                    .one()
+                @Expect(found.isSome(), true)
+                let post = found.getOrThrow()
+                match (post.author) {
+                    case Some(a) =>
+                        @Expect(a.id, users[0].id)
+                        @Expect(a.name, "Alice")
+                    case None => @Expect(true, false)
+                }
+                match (post.editor) {
+                    case Some(e) =>
+                        @Expect(e.id, users[1].id)
+                        @Expect(e.name, "Eve")
+                    case None => @Expect(true, false)
+                }
+                rf.close()
+            case None => @Expect(true, true)
+        }
+    }
+
+    // ─── Task 9：page + has_many include（真实 PG） ─────────────────────────────
+    // page() 的 count + 主查询 LIMIT/OFFSET + 批量 IN 三次查询协议，total 为父实体数、
+    // 每项带全部评论（LIMIT/OFFSET 作用于源表行，不按子行展开）。
+    @TestCase
+    public func testPageWithHasManyInclude(): Unit {
+        match (tryPostgres()) {
+            case Some(rf) =>
+                rf.transaction { tx: Tx =>
+                    tx.execute("DROP TABLE IF EXISTS \"nestedComment\"", [])
+                    tx.execute("DROP TABLE IF EXISTS \"nestedUser\"", [])
+                }
+                let m = rf.migrator()
+                m.autoMigrate([NestedUserSchema(), NestedCommentSchema()])
+                rf.transaction { tx: Tx =>
+                    tx.execute("INSERT INTO \"nestedUser\" (\"name\") VALUES (?)", ["U1"])
+                    tx.execute("INSERT INTO \"nestedUser\" (\"name\") VALUES (?)", ["U2"])
+                }
+                let users = NestedUser.query().using(rf).order([NestedUser.col().id.asc()]).all()
+                @Expect(users.size, 2)
+                rf.transaction { tx: Tx =>
+                    for (i in 0..3) {
+                        tx.execute("INSERT INTO \"nestedComment\" (\"body\", \"user_id\") VALUES (?, ?)", ["u1c" + i.toString(), users[0].id])
+                        tx.execute("INSERT INTO \"nestedComment\" (\"body\", \"user_id\") VALUES (?, ?)", ["u2c" + i.toString(), users[1].id])
+                    }
+                }
+                let pg = NestedUser.query()
+                    .include(NestedUserRel.comments)
+                    .using(rf)
+                    .filter(NestedUser.col().id.anyOf([users[0].id, users[1].id]))
+                    .page(1, 10)
+                @Expect(pg.total, 2)
+                @Expect(pg.items.size, 2)
+                for (u in pg.items) { @Expect(u.comments.size, 3) }
+                rf.close()
+            case None => @Expect(true, true)
+        }
+    }
+
+    // ─── Task 9：空关联（真实 PG） ─────────────────────────────────────────────
+    // 主实体无任何子对象 → 批量查询命中 0 行，comments 保持空列表、不抛异常。
+    @TestCase
+    public func testEmptyHasManyRelation(): Unit {
+        match (tryPostgres()) {
+            case Some(rf) =>
+                rf.transaction { tx: Tx =>
+                    tx.execute("DROP TABLE IF EXISTS \"nestedComment\"", [])
+                    tx.execute("DROP TABLE IF EXISTS \"nestedUser\"", [])
+                }
+                let m = rf.migrator()
+                m.autoMigrate([NestedUserSchema(), NestedCommentSchema()])
+                rf.transaction { tx: Tx => tx.execute("INSERT INTO \"nestedUser\" (\"name\") VALUES (?)", ["Lonely"]) }
+                let found = NestedUser.query().include(NestedUserRel.comments).using(rf).filter(NestedUser.col().name == "Lonely").one()
+                @Expect(found.isSome(), true)
+                @Expect(found.getOrThrow().comments.size, 0)
+                rf.close()
+            case None => @Expect(true, true)
+        }
+    }
 }

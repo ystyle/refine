@@ -116,6 +116,31 @@ public class CamelPost {
     var authorProfile: Option<CamelUser> = None
 }
 
+// Task 9: 同表多 ref 合并集成测试 fixture。SameTableRefPost 声明两个 ref_to 指向
+// 同一目标表（author 用 author_id、editor 用 editor_id），批量 include 按目标表合并
+// 为单条批量查询并分别回填（查询次数在单元层用 mock 断言，此处供真实 MySQL/PG
+// 验证两个 ref 均正确装配的数据正确性）。
+@Refine
+public class SameTableRefUser {
+    var id: Int64 = 0
+    var name: String = ""
+    var email: String = ""
+}
+
+@Refine
+public class SameTableRefPost {
+    var id: Int64 = 0
+    var title: String = ""
+    var author_id: Int64 = 0
+    var editor_id: Int64 = 0
+
+    @Ref[SameTableRefUser, author_id]
+    var author: Option<SameTableRefUser> = None
+
+    @Ref[SameTableRefUser, editor_id]
+    var editor: Option<SameTableRefUser> = None
+}
+
 @Refine
 public class PostWithRel {
     var id: Int64 = 0
