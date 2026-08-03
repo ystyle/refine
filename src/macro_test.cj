@@ -233,6 +233,20 @@ public class StringKeyPost {
     var tags: ArrayList<Tag> = ArrayList<Tag>()
 }
 
+// F1 回归 fixture：Bool storageOverride 主键的 ref_many 源。junction 源列类型跟随
+// 源主键 storageOverride（Bool→StorageType.`Bool`），验证宏层把 Bool 转义为反引号形式
+//（与 buildSchemaClass:44-46 一致），修复前生成裸 StorageType.Bool 编译失败。
+@Refine
+public class BoolPkPost {
+    @Id[auto, true]
+    @Field[`Bool`]
+    var id: Int64 = 0
+    var title: String = ""
+
+    @Ref[Tag, via: bool_pk_post_tags]
+    var tags: ArrayList<Tag> = ArrayList<Tag>()
+}
+
 @Refine
 public class UnderscoreFieldEntity {
     var id: Int64 = 0
@@ -2874,6 +2888,24 @@ public class RefManyTableOverrideTest {
         @Expect(cols[0].name, "uuidKeyTagPost_id")
         @Expect(cols[0].storageType, StorageType.String)
         @Expect(cols[1].name, "uuidTag_id")
+        @Expect(cols[1].storageType, StorageType.Integer)
+    }
+
+    // F1 回归：Bool storageOverride 主键的 junction 源列应为 StorageType.`Bool`
+    //（Bool 是仓颉关键字，宏层须转义为反引号形式，否则生成裸 StorageType.Bool 编译失败）
+    @TestCase
+    public func testJunctionSourceColBoolEscaped(): Unit {
+        let mainSchema = BoolPkPostSchema()
+        let mainCols = mainSchema.columns()
+        @Expect(mainCols.size, 2)
+        @Expect(mainCols[0].name, "id")
+        @Expect(mainCols[0].storageType, StorageType.`Bool`)
+        let js = BoolPkPost_TagsJunctionSchema()
+        let cols = js.columns()
+        @Expect(cols.size, 2)
+        @Expect(cols[0].name, "boolPkPost_id")
+        @Expect(cols[0].storageType, StorageType.`Bool`)
+        @Expect(cols[1].name, "tag_id")
         @Expect(cols[1].storageType, StorageType.Integer)
     }
 }

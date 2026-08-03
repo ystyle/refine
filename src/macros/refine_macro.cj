@@ -157,10 +157,14 @@ public macro Refine(input: Tokens): Tokens {
     // F1: junction 源列类型跟随本类主键类型（宏层可内省）。复合主键取第一个 pk 字段；
     // 单主键即 id 字段（junction SQL 均以 this.id 为源列值）。目标列类型不可跨类内省，
     // 由 buildJunctionSchema 保持 Integer（见其注释的已文档化限制）。
+    // Bool storageOverride 转义：与 buildSchemaClass:44-46 对齐——storageOverride == "Bool"
+    // 时输出 StorageType.`Bool`（Bool 是仓颉关键字，裸 StorageType.Bool 生成代码编译失败）。
     var sourcePkStorage = "StorageType.Integer"
     if (pkFields.size > 0) {
         let pk = pkFields.get(0).getOrThrow()
-        sourcePkStorage = if (pk.storageOverride != "") { "StorageType." + pk.storageOverride } else { typeNameToStorageType(pk.typeName) }
+        sourcePkStorage = if (pk.storageOverride != "") {
+            if (pk.storageOverride == "Bool") { "StorageType.`Bool`" } else { "StorageType." + pk.storageOverride }
+        } else { typeNameToStorageType(pk.typeName) }
     }
     for (rel in mergedRels) {
         if (rel.kind == "ref_many") {

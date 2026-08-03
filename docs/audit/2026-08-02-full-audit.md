@@ -201,6 +201,12 @@
 - **备注**：B5 自审发现（2026-08-02），列为后续排期项。
 - **✅ 已解决（2026-08-03 batch include）**：`qualifyExpr` 已随 include JOIN 路径整体删除（`processIncluded` 变为 no-op），主查询不再产生任何 include JOIN，其 `Expr.Range` 递归缺口随函数删除而消除。
 
+### I23. ref_to/has_many/has_one 管理方法 SQL 标识符未引号化 → PG 驼峰 fk/表名读写失败
+- **位置**：`src/macros/relation_gen.cj:17-21`（refToSQL / hasManyLoadSQL / hasManyClearSQL / hasOneLoadSQL / hasOneRemoveSQL）
+- **问题**：这些面向用户的实体管理方法（loadX/clearX/setX/removeX）的 SQL 仍把裸标识符烘焙进编译期字符串——`refToSQL` 用未引号的目标表名 + 裸 `id` 列，has_many/has_one 系列用未引号的 `r.by` fk 列与未引号的目标表名。PG 下驼峰表名/fk 列折叠小写无法命中（与 I2/I19 同模式）。I19/I20/I21 已覆盖主实体写路径与 ref_many junction，此路径仍遗漏。
+- **修法**：与 I21 相同——SQL 改为运行时 `tx.getDialect().quoteIdentifier`（这些方法均带 `tx: Tx` 参数，dialect 可得）。
+- **备注**：由 I21 修复后同类排查发现（2026-08-03），列为后续排期。
+
 ---
 
 ## 四、Minor（Nice to Have）
