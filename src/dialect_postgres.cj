@@ -34,7 +34,9 @@ public class PostgreSQLDialect <: AbstractDialect {
             if (conflictColumns.contains(c)) { continue }
             if (auditCreateCols.contains(c)) { continue }
             if (c == versionCol) {
-                updates.add(quoteIdentifier(table) + "." + quoteIdentifier(c) + " = " + quoteIdentifier(table) + "." + quoteIdentifier(c) + " + 1")
+                // R-C1: PG 的 DO UPDATE SET 赋值目标（LHS）不允许 table.col 限定（SQLite/MySQL 允许），
+                // 必须裸列名；RHS 裸列名在 PG 有歧义，需表限定引用冲突行当前值（等价 SQLite 裸列 RHS）
+                updates.add(quoteIdentifier(c) + " = " + quoteIdentifier(table) + "." + quoteIdentifier(c) + " + 1")
             } else {
                 updates.add(quoteIdentifier(c) + " = EXCLUDED." + quoteIdentifier(c))
             }

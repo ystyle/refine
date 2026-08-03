@@ -424,7 +424,8 @@ public class PostgreSQLDialectTest {
     public func testUpsertSQLVersionAudit(): Unit {
         let dialect = PostgreSQLDialect()
         let (sql, extraCount) = dialect.upsertSQL("users", ["id", "name", "created_at", "updated_at", "version"], ["id"], ["created_at"], ["updated_at"], "version")
-        @Expect(sql.contains("\"users\".\"version\" = \"users\".\"version\" + 1"), true)
+        // R-C1：PG 的 DO UPDATE SET 目标列不允许 table.col 限定，LHS 必须裸列名、RHS 表限定
+        @Expect(sql.contains("\"version\" = \"users\".\"version\" + 1"), true)
         @Expect(sql.contains("\"updated_at\" = EXCLUDED.\"updated_at\""), true)
         @Expect(sql.contains("\"created_at\" = EXCLUDED.\"created_at\""), false)
         @Expect(sql.contains("\"name\" = EXCLUDED.\"name\""), true)

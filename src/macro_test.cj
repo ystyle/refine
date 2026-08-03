@@ -2228,7 +2228,8 @@ public class VersionedEntityTest {
         // I2：PG 不再强制小写，驼峰表名 versionedPost 原样保留（此前被 toAsciiLower 折叠为 versionedpost）
         @Expect(conn.stmt.capturedSql.contains("INSERT INTO \"versionedPost\" (\"id\", \"title\", \"created_at\", \"updated_at\", \"version\")"), true)
         @Expect(conn.stmt.capturedSql.contains("ON CONFLICT (\"id\") DO UPDATE SET"), true)
-        @Expect(conn.stmt.capturedSql.contains("\"versionedPost\".\"version\" = \"versionedPost\".\"version\" + 1"), true)
+        // R-C1：PG 的 DO UPDATE SET 目标列不允许 table.col 限定，LHS 必须裸列名、RHS 表限定
+        @Expect(conn.stmt.capturedSql.contains("\"version\" = \"versionedPost\".\"version\" + 1"), true)
         @Expect(conn.stmt.capturedSql.contains("\"updated_at\" = EXCLUDED.\"updated_at\""), true)
         @Expect(conn.stmt.capturedSql.contains("\"created_at\" = EXCLUDED.\"created_at\""), false)
         @Expect(conn.stmt.capturedSetValues.size, 5)

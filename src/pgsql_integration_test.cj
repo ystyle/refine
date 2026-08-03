@@ -936,4 +936,66 @@ public class PostgreSQLIntegrationTest {
             case None => @Expect(true, true)
         }
     }
+
+    // ─── R-C1: PG versioned upsert 非法 SQL 回归（真实 PG） ─────────────────────
+    // 修复前 PG 方言 versionCol 分支生成 `"versionedPost"."version" = "versionedPost"."version" + 1`，
+    // PG 17 报 "SET target columns cannot be qualified with the relation name"（DO UPDATE SET 的
+    // LHS 目标列不允许表限定；RHS 裸列名同样有歧义）。修复后 LHS 裸列名、RHS 表限定：
+    // `"version" = "versionedPost"."version" + 1`。
+    // 真实 PG 链路：save 插入（version=1）→ 同主键 upsert 冲突 → DB 版本自增为 2，不报错。
+    @TestCase
+    public func testVersionedUpsertIncrementsVersion(): Unit {
+        match (tryPostgres()) {
+            case Some(rf) =>
+                rf.transaction { tx: Tx =>
+                    tx.execute("DROP TABLE IF EXISTS \"versionedPost\"", [])
+                }
+                rf.migrator().autoMigrate([VersionedPostSchema()])
+                let p = VersionedPost()
+                p.title = "v1"
+                rf.transaction { tx: Tx => tx.save(p) }
+                @Expect(p.version, 1)
+                let pid = p.id
+                @Expect(pid > 0, true)
+                rf.transaction { tx: Tx => tx.upsert(p) }
+                let found = VersionedPost.query().using(rf).filter(VersionedPost.col().id == pid).one()
+                @Expect(found.isSome(), true)
+                @Expect(found.getOrThrow().version, 2)
+                rf.transaction { tx: Tx => tx.execute("DROP TABLE IF EXISTS \"versionedPost\"", []) }
+                rf.close()
+            case None => @Expect(true, true)
+        }
+    }
+
+    // ─── R-C1 补充：非 versioned 实体 PG upsert 冲突更新（此前无任何真实 PG upsert 覆盖） ──
+    // save 插入后改值再 upsert 同主键 → ON CONFLICT DO UPDATE 命中，title/content 被刷新，
+    // 行数不增长（此前 PG 的 upsert 只有 mock/dialect 层断言，无真实数据库验证）。
+    @TestCase
+    public func testPlainUpsertUpdatesOnConflict(): Unit {
+        match (tryPostgres()) {
+            case Some(rf) =>
+                rf.transaction { tx: Tx =>
+                    tx.execute("DROP TABLE IF EXISTS \"pgpost\"", [])
+                }
+                rf.migrator().autoMigrate([PgPostSchema()])
+                let p = PgPost()
+                p.title = "a"
+                p.content = "c1"
+                rf.transaction { tx: Tx => tx.save(p) }
+                let pid = p.id
+                @Expect(pid > 0, true)
+                p.title = "b"
+                p.content = "c2"
+                rf.transaction { tx: Tx => tx.upsert(p) }
+                let found = PgPost.query().using(rf).filter(PgPost.col().id == pid).one()
+                @Expect(found.isSome(), true)
+                @Expect(found.getOrThrow().title, "b")
+                @Expect(found.getOrThrow().content, "c2")
+                let all = PgPost.query().using(rf).all()
+                @Expect(all.size, 1)
+                rf.transaction { tx: Tx => tx.execute("DROP TABLE IF EXISTS \"pgpost\"", []) }
+                rf.close()
+            case None => @Expect(true, true)
+        }
+    }
 }

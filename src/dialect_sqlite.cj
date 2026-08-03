@@ -20,8 +20,9 @@ public class SQLiteDialect <: AbstractDialect {
 
     // SQLite upsert 用 ON CONFLICT ... DO UPDATE；冲突行引用用 excluded.col（关键字不区分大小写，
     // 对齐 SQLite 文档采用小写），不需要额外参数（extraParamCount = 0）。
-    // version 冲突自增用无表前缀的列名（SQLite 的 DO UPDATE SET 不支持 table.col 限定符，
-    // 未限定列名即引用冲突前的原行值，与 PG 的 EXCLUDED 语义对应）。
+    // version 冲突自增用无表前缀的列名：SQLite 的 DO UPDATE SET 不支持 table.col 限定符（LHS 与
+    // RHS 都不行）。RHS 未限定列名引用冲突行的当前值（原行 version），等价于 PG 的 "table"."version" + 1，
+    // 而非 PG 的 EXCLUDED."version"（EXCLUDED 是被拒绝插入的新值，语义不同）。
     // 契约：auditCreateCols 与 auditUpdateCols 不相交；auditCreate 优先（continue 跳过，不生成更新子句）。
     public func upsertSQL(table: String, columns: Array<String>, conflictColumns: Array<String>, auditCreateCols: Array<String>, auditUpdateCols: Array<String>, versionCol: String): (String, Int64) {
         var cols = ArrayList<String>()
