@@ -638,6 +638,7 @@ public class MacroSaveTest {
     public func testTxSavePost(): Unit {
         let conn = CaptureConnection()
         let tx = Tx(conn)
+        tx.begin()
 
         let p = Post()
         p.title = "Test Title"
@@ -651,6 +652,7 @@ public class MacroSaveTest {
     public func testTxSaveUser(): Unit {
         let conn = CaptureConnection()
         let tx = Tx(conn)
+        tx.begin()
 
         let u = User()
         u.name = "Alice"
@@ -664,6 +666,7 @@ public class MacroSaveTest {
     public func testTxUpdatePost(): Unit {
         let conn = CaptureConnection()
         let tx = Tx(conn)
+        tx.begin()
 
         let p = Post()
         p.id = 1
@@ -678,6 +681,7 @@ public class MacroSaveTest {
     public func testTxDeletePost(): Unit {
         let conn = CaptureConnection()
         let tx = Tx(conn)
+        tx.begin()
 
         let p = Post()
         p.id = 1
@@ -691,6 +695,7 @@ public class MacroSaveTest {
         let conn = CaptureConnection()
         let rf = Refine(RMockDS(), SQLiteDialect(), 0)
         let tx = Tx(conn, rf, 0)
+        tx.begin()
 
         let flag = HookFlag()
         rf.hook<Post>("Post", HookKind.TxBeforeCreate) { scope: Scope<Post> =>
@@ -711,6 +716,7 @@ public class MacroSaveTest {
         let conn = CaptureConnection()
         let rf = Refine(RMockDS(), SQLiteDialect(), 0)
         let tx = Tx(conn, rf, 0)
+        tx.begin()
 
         let afterFindFlag = HookFlag()
         rf.hook<Post>("Post", HookKind.AfterFind) { scope: Scope<Post> =>
@@ -730,6 +736,7 @@ public class MacroSaveTest {
     public func testTxBatchSavePost(): Unit {
         let conn = CaptureConnection()
         let tx = Tx(conn)
+        tx.begin()
 
         let p1 = Post()
         p1.title = "Title 1"
@@ -747,6 +754,7 @@ public class MacroSaveTest {
     public func testTxBatchSaveUser(): Unit {
         let conn = CaptureConnection()
         let tx = Tx(conn)
+        tx.begin()
 
         let u1 = User()
         u1.name = "Alice"
@@ -765,6 +773,7 @@ public class MacroSaveTest {
         let conn = CaptureConnection()
         let rf = Refine(RMockDS(), SQLiteDialect(), 0)
         let tx = Tx(conn, rf, 0)
+        tx.begin()
 
         let flag = HookFlag()
         rf.hook<Post>("Post", HookKind.TxBeforeCreate) { scope: Scope<Post> =>
@@ -783,6 +792,7 @@ public class MacroSaveTest {
         let conn = CaptureConnection()
         let rf = Refine(RMockDS(), SQLiteDialect(), 0)
         let tx = Tx(conn, rf, 0)
+        tx.begin()
 
         let flag = HookFlag()
         rf.hook<Post>("Post", HookKind.TxAfterCreate) { scope: Scope<Post> =>
@@ -802,6 +812,7 @@ public class MacroSaveTest {
         conn.stmt.mockLastInsertId = 100
         conn.stmt.mockRowCount = 2
         let tx = Tx(conn)
+        tx.begin()
 
         let p1 = Post(); p1.title = "A"; p1.content = "B"
         let p2 = Post(); p2.title = "C"; p2.content = "D"
@@ -816,6 +827,7 @@ public class MacroSaveTest {
     public func testTxBatchSaveEmptyEntities(): Unit {
         let conn = CaptureConnection()
         let tx = Tx(conn)
+        tx.begin()
 
         tx.batchSave(ArrayList<Post>().toArray())
 
@@ -830,6 +842,7 @@ public class MacroSaveTest {
         let rf = Refine(RMockDS(), SQLiteDialect(), 0)
         rf.setIdGenerator(TestIdGenerator())
         let tx = Tx(conn, rf, 0)
+        tx.begin()
 
         let p = UuidPost()
         p.title = "Test"
@@ -847,6 +860,7 @@ public class MacroSaveTest {
         let rf = Refine(RMockDS(), SQLiteDialect(), 0)
         rf.setIdGenerator(TestIdGenerator())
         let tx = Tx(conn, rf, 0)
+        tx.begin()
 
         let p = UuidPost()
         p.id = "my-custom-id"
@@ -863,6 +877,7 @@ public class MacroSaveTest {
         let rf = Refine(RMockDS(), SQLiteDialect(), 0)
         rf.setIdGenerator(TestIdGenerator())
         let tx = Tx(conn, rf, 0)
+        tx.begin()
 
         let p1 = UuidPost(); p1.title = "A"; p1.content = "B"
         let p2 = UuidPost(); p2.title = "C"; p2.content = "D"
@@ -880,6 +895,7 @@ public class MacroSaveTest {
         let rf = Refine(RMockDS(), SQLiteDialect(), 0)
         rf.setIdGenerator(TestIdGenerator())
         let tx = Tx(conn, rf, 0)
+        tx.begin()
 
         let e = StringKeyEntity()
         e.name = "abc"
@@ -895,6 +911,7 @@ public class MacroSaveTest {
         let rf = Refine(RMockDS(), SQLiteDialect(), 0)
         rf.setIdGenerator(TestIdGenerator())
         let tx = Tx(conn, rf, 0)
+        tx.begin()
 
         let e1 = StringKeyEntity(); e1.name = "a"
         let e2 = StringKeyEntity(); e2.name = "b"
@@ -912,6 +929,7 @@ public class MacroSaveTest {
         conn.stmt.mockLastInsertId = 42
         let rf = Refine(RMockDS(), SQLiteDialect(), 0)
         let tx = Tx(conn, rf, 0)
+        tx.begin()
 
         let e = CustomAutoPkEntity()
         e.label = "x"
@@ -927,6 +945,7 @@ public class MacroSaveTest {
     public func testTxSaveManualIdPostIncludesId(): Unit {
         let conn = CaptureConnection()
         let tx = Tx(conn)
+        tx.begin()
 
         let p = ManualIdPost()
         p.id = 42
@@ -942,6 +961,7 @@ public class MacroSaveTest {
         let rf = Refine(RMockDS(), SQLiteDialect(), 0)
         rf.setIdGenerator(TestInt64IdGenerator())
         let tx = Tx(conn, rf, 0)
+        tx.begin()
 
         let p = ManualIdPost()
         p.title = "AutoGen"
@@ -957,6 +977,7 @@ public class MacroSaveTest {
         let rf = Refine(RMockDS(), SQLiteDialect(), 0)
         rf.setIdGenerator(TestInt64IdGenerator())
         let tx = Tx(conn, rf, 0)
+        tx.begin()
 
         let p1 = ManualIdPost(); p1.title = "A"
         let p2 = ManualIdPost(); p2.title = "B"
@@ -974,6 +995,7 @@ public class MacroSaveTest {
         let rf = Refine(RMockDS(), SQLiteDialect(), 0)
         rf.setIdGenerator(TestInt64IdGenerator())
         let tx = Tx(conn, rf, 0)
+        tx.begin()
 
         let p = ManualIdPost()
         p.id = 42
@@ -987,6 +1009,7 @@ public class MacroSaveTest {
     public func testTxUpdateManualIdPost(): Unit {
         let conn = CaptureConnection()
         let tx = Tx(conn)
+        tx.begin()
 
         let p = ManualIdPost()
         p.id = 1
@@ -1001,6 +1024,7 @@ public class MacroSaveTest {
     public func testTxDeleteManualIdPost(): Unit {
         let conn = CaptureConnection()
         let tx = Tx(conn)
+        tx.begin()
 
         let p = ManualIdPost()
         p.id = 1
@@ -1014,6 +1038,7 @@ public class MacroSaveTest {
     public func testTxSaveOrderTagCompoundPk(): Unit {
         let conn = CaptureConnection()
         let tx = Tx(conn)
+        tx.begin()
 
         let ot = OrderTag()
         ot.order_id = 1
@@ -1028,6 +1053,7 @@ public class MacroSaveTest {
     public func testTxUpdateOrderTagCompoundPk(): Unit {
         let conn = CaptureConnection()
         let tx = Tx(conn)
+        tx.begin()
 
         let ot = OrderTag()
         ot.order_id = 1
@@ -1041,6 +1067,7 @@ public class MacroSaveTest {
     public func testTxDeleteOrderTagCompoundPk(): Unit {
         let conn = CaptureConnection()
         let tx = Tx(conn)
+        tx.begin()
 
         let ot = OrderTag()
         ot.order_id = 1
@@ -1057,6 +1084,7 @@ public class MacroSaveTest {
         let conn = CaptureConnection()
         let rf = Refine(RMockDS(), MySQLDialect(), 1)
         let tx = Tx(conn, rf, 1)
+        tx.begin()
 
         let p = Post()
         p.id = 1
@@ -1074,6 +1102,7 @@ public class MacroSaveTest {
         let conn = CaptureConnection()
         let rf = Refine(RMockDS(), PostgreSQLDialect(), 0)
         let tx = Tx(conn, rf, 0)
+        tx.begin()
 
         let p = Post()
         p.id = 1
@@ -1091,6 +1120,7 @@ public class MacroSaveTest {
         let conn = CaptureConnection()
         let rf = Refine(RMockDS(), NoUpsertDialect(), 0)
         let tx = Tx(conn, rf, 0)
+        tx.begin()
 
         let p = Post()
         p.id = 1
@@ -1108,6 +1138,7 @@ public class MacroSaveTest {
         let conn = CaptureConnection()
         let rf = Refine(RMockDS(), MismatchCountDialect(), 1)
         let tx = Tx(conn, rf, 1)
+        tx.begin()
 
         let p = Post()
         p.id = 1
@@ -1126,6 +1157,7 @@ public class MacroSaveTest {
     public func testTxUpsertDBPathMySQL(): Unit {
         let conn = CaptureConnection()
         let tx = Tx(conn, 1, MySQLDialect())
+        tx.begin()
 
         let p = Post()
         p.id = 1
@@ -1141,6 +1173,7 @@ public class MacroSaveTest {
     public func testTxUpsertDBPathPostgres(): Unit {
         let conn = CaptureConnection()
         let tx = Tx(conn, 0, PostgreSQLDialect())
+        tx.begin()
 
         let p = Post()
         p.id = 1
@@ -1157,6 +1190,7 @@ public class MacroSaveTest {
         let conn = CaptureConnection()
         conn.stmt.queryResult = RowQueryResult(7)
         let tx = Tx(conn, 0, PostgreSQLDialect())
+        tx.begin()
 
         let p = PgPost()
         p.title = "T"
@@ -1172,6 +1206,7 @@ public class MacroSaveTest {
         // 本项目无真实 SQLite 驱动，此处用 CaptureConnection（mock）仅验证宏层生成的 upsert SQL
         let conn = CaptureConnection()
         let tx = Tx(conn, 0, SQLiteDialect())
+        tx.begin()
 
         let p = Post()
         p.id = 1
@@ -1190,6 +1225,7 @@ public class MacroSaveTest {
         let conn = CaptureConnection()
         conn.stmt.mockLastInsertId = 7
         let tx = Tx(conn, 0, SQLiteDialect())
+        tx.begin()
 
         let p = Post()
         p.title = "T"
@@ -1206,6 +1242,7 @@ public class MacroSaveTest {
     public func testTxBatchUpdatePost(): Unit {
         let conn = CaptureConnection()
         let tx = Tx(conn)
+        tx.begin()
 
         let p1 = Post()
         p1.id = 1
@@ -1224,6 +1261,7 @@ public class MacroSaveTest {
     public func testTxBatchUpdateEmpty(): Unit {
         let conn = CaptureConnection()
         let tx = Tx(conn)
+        tx.begin()
 
         tx.batchUpdate(ArrayList<Post>().toArray())
 
@@ -1235,6 +1273,7 @@ public class MacroSaveTest {
         let conn = CaptureConnection()
         let rf = Refine(RMockDS(), SQLiteDialect(), 0)
         let tx = Tx(conn, rf, 0)
+        tx.begin()
 
         let flag = HookFlag()
         rf.hook<Post>("Post", HookKind.TxBeforeUpdate) { scope: Scope<Post> =>
@@ -1252,6 +1291,7 @@ public class MacroSaveTest {
     public func testTxBatchUpdateCompoundPk(): Unit {
         let conn = CaptureConnection()
         let tx = Tx(conn)
+        tx.begin()
 
         let ot1 = OrderItemTag()
         ot1.order_id = 1
@@ -1270,6 +1310,7 @@ public class MacroSaveTest {
     public func testTxBatchUpdateNoUpdatableColumns(): Unit {
         let conn = CaptureConnection()
         let tx = Tx(conn)
+        tx.begin()
 
         let ot1 = OrderTag()
         ot1.order_id = 1
@@ -1288,6 +1329,7 @@ public class MacroSaveTest {
         let rf = Refine(RMockDS(), MySQLDialect(), 1)
         rf.setIdGenerator(TestIdGenerator())
         let tx = Tx(conn, rf, 1)
+        tx.begin()
 
         let e = UuidPost()
         e.title = "T"
@@ -1324,6 +1366,7 @@ public class MacroExistingTest {
         let conn = CaptureConnection()
         let rf = Refine(RMockDS(), SQLiteDialect(), 0)
         let tx = Tx(conn, rf, 0)
+        tx.begin()
 
         let flag = HookFlag()
         rf.hook<Post>("Post", HookKind.TxBeforeCreate) { scope: Scope<Post> =>
@@ -1388,6 +1431,7 @@ public class MacroExistingTest {
     public func testIncludeRefToBatchAssembly(): Unit {
         let conn = CaptureConnection()
         let tx = Tx(conn)
+        tx.begin()
         // 主查询：postWithRel 自身列（user_id=99）
         let mainCols: Array<ColumnInfo> = [
             MapperMockColumnInfo("id", false),
@@ -1523,6 +1567,7 @@ public class SoftDeleteTest {
     public func testTxDeleteIsUpdateForSoftDelete(): Unit {
         let conn = CaptureConnection()
         let tx = Tx(conn)
+        tx.begin()
         let u = SoftUser()
         u.id = 1
         u.name = "test"
@@ -1536,6 +1581,7 @@ public class SoftDeleteTest {
     public func testTxPhysicalDeleteIsDeleteForSoftDelete(): Unit {
         let conn = CaptureConnection()
         let tx = Tx(conn)
+        tx.begin()
         let u = SoftUser()
         u.id = 1
         u.name = "test"
@@ -1548,6 +1594,7 @@ public class SoftDeleteTest {
     public func testTxDeleteIsDeleteForHardDeleted(): Unit {
         let conn = CaptureConnection()
         let tx = Tx(conn)
+        tx.begin()
         let u = HardUser()
         u.id = 1
         u.name = "test"
@@ -1625,6 +1672,7 @@ public class DateTimeSoftDeleteTest {
     public func testTxDeleteWritesDateTimeValue(): Unit {
         let conn = CaptureConnection()
         let tx = Tx(conn)
+        tx.begin()
         let e = DateTimeSoftDeleteEntity()
         e.id = 1
         tx.delete(e)
@@ -1644,6 +1692,7 @@ public class DateTimeSoftDeleteTest {
     public func testTxPhysicalDeleteIsDelete(): Unit {
         let conn = CaptureConnection()
         let tx = Tx(conn)
+        tx.begin()
         let e = DateTimeSoftDeleteEntity()
         e.id = 1
         tx.physicalDelete(e)
@@ -1727,6 +1776,7 @@ public class VersionedEntityTest {
     public func testTxSaveVersionedPostInjectsAuditAndVersion(): Unit {
         let conn = CaptureConnection()
         let tx = Tx(conn)
+        tx.begin()
         let before = DateTime.now()
 
         let p = VersionedPost()
@@ -1748,6 +1798,7 @@ public class VersionedEntityTest {
         let conn = CaptureConnection()
         conn.stmt.mockRowCount = 1
         let tx = Tx(conn)
+        tx.begin()
 
         let p = VersionedPost()
         p.id = 1
@@ -1764,6 +1815,7 @@ public class VersionedEntityTest {
         let conn = CaptureConnection()
         conn.stmt.mockRowCount = 0
         let tx = Tx(conn)
+        tx.begin()
 
         let p = VersionedPost()
         p.id = 1
@@ -1787,6 +1839,7 @@ public class VersionedEntityTest {
         conn.stmt.mockRowCount = 0
         conn.stmt.queryResult = RowQueryResult(5)
         let tx = Tx(conn)
+        tx.begin()
 
         let p = VersionedPost()
         p.id = 1
@@ -1805,6 +1858,7 @@ public class VersionedEntityTest {
     public func testTxSaveVersionedEventClientPkInjectsVersion(): Unit {
         let conn = CaptureConnection()
         let tx = Tx(conn)
+        tx.begin()
 
         let e = VersionedEvent()
         e.id = "evt-1"
@@ -1820,6 +1874,7 @@ public class VersionedEntityTest {
         let conn = CaptureConnection()
         conn.stmt.mockRowCount = 0
         let tx = Tx(conn)
+        tx.begin()
 
         let e = VersionedEvent()
         e.id = "evt-1"
@@ -1839,6 +1894,7 @@ public class VersionedEntityTest {
         let conn = CaptureConnection()
         conn.stmt.mockRowCount = 1
         let tx = Tx(conn)
+        tx.begin()
 
         let p = VersionedPost()
         p.id = 1
@@ -1855,6 +1911,7 @@ public class VersionedEntityTest {
     public func testTxSaveVersionedOrderTagInjectsVersion(): Unit {
         let conn = CaptureConnection()
         let tx = Tx(conn)
+        tx.begin()
 
         let ot = VersionedOrderTag()
         ot.order_id = 1
@@ -1871,6 +1928,7 @@ public class VersionedEntityTest {
         let conn = CaptureConnection()
         conn.stmt.mockRowCount = 1
         let tx = Tx(conn)
+        tx.begin()
 
         let ot = VersionedOrderTag()
         ot.order_id = 1
@@ -1889,6 +1947,7 @@ public class VersionedEntityTest {
         conn.stmt.mockRowCount = 0
         conn.stmt.queryResult = RowQueryResult(3)
         let tx = Tx(conn)
+        tx.begin()
 
         let ot = VersionedOrderTag()
         ot.order_id = 1
@@ -1910,6 +1969,7 @@ public class VersionedEntityTest {
         let conn = CaptureConnection()
         conn.stmt.mockRowCount = 1
         let tx = Tx(conn)
+        tx.begin()
 
         let p = VersionedPost()
         p.id = 1
@@ -1937,6 +1997,7 @@ public class VersionedEntityTest {
         let conn = CaptureConnection()
         conn.stmt.mockRowCount = 1
         let tx = Tx(conn)
+        tx.begin()
 
         let p = VersionedPost()
         p.id = 1
@@ -1954,6 +2015,7 @@ public class VersionedEntityTest {
     public func testTxBatchSaveVersionedPostInjectsAuditAndVersion(): Unit {
         let conn = CaptureConnection()
         let tx = Tx(conn)
+        tx.begin()
 
         let p1 = VersionedPost()
         p1.title = "A"
@@ -1971,6 +2033,7 @@ public class VersionedEntityTest {
     public func testTxBatchSaveVersionedEventClientPkInjectsVersion(): Unit {
         let conn = CaptureConnection()
         let tx = Tx(conn)
+        tx.begin()
 
         let e1 = VersionedEvent()
         e1.id = "evt-1"
@@ -1989,6 +2052,7 @@ public class VersionedEntityTest {
     public func testTxBatchSaveVersionedOrderTagInjectsVersion(): Unit {
         let conn = CaptureConnection()
         let tx = Tx(conn)
+        tx.begin()
 
         let ot1 = VersionedOrderTag()
         ot1.order_id = 1
@@ -2010,6 +2074,7 @@ public class VersionedEntityTest {
         let conn = CaptureConnection()
         conn.stmt.mockRowCount = 2
         let tx = Tx(conn)
+        tx.begin()
 
         let p1 = VersionedPost()
         p1.id = 1
@@ -2035,6 +2100,7 @@ public class VersionedEntityTest {
         let conn = CaptureConnection()
         conn.stmt.mockRowCount = 1
         let tx = Tx(conn)
+        tx.begin()
 
         let p1 = VersionedPost()
         p1.id = 1
@@ -2062,6 +2128,7 @@ public class VersionedEntityTest {
         let conn = CaptureConnection()
         conn.stmt.mockRowCount = 2
         let tx = Tx(conn)
+        tx.begin()
 
         let ot1 = VersionedOrderTag()
         ot1.order_id = 1
@@ -2087,6 +2154,7 @@ public class VersionedEntityTest {
         let conn = CaptureConnection()
         let rf = Refine(RMockDS(), MySQLDialect(), 1)
         let tx = Tx(conn, rf, 1)
+        tx.begin()
 
         let p = VersionedPost()
         p.id = 1
@@ -2107,6 +2175,7 @@ public class VersionedEntityTest {
         let conn = CaptureConnection()
         let rf = Refine(RMockDS(), PostgreSQLDialect(), 0)
         let tx = Tx(conn, rf, 0)
+        tx.begin()
 
         let p = VersionedPost()
         p.id = 1
@@ -2130,6 +2199,7 @@ public class VersionedEntityTest {
         let conn = CaptureConnection()
         let rf = Refine(RMockDS(), SQLiteDialect(), 0)
         let tx = Tx(conn, rf, 0)
+        tx.begin()
 
         let p = VersionedPost()
         p.id = 1
@@ -2150,6 +2220,7 @@ public class VersionedEntityTest {
         let conn = CaptureConnection()
         let rf = Refine(RMockDS(), MySQLDialect(), 1)
         let tx = Tx(conn, rf, 1)
+        tx.begin()
 
         let e = VersionedEvent()
         e.id = "evt-1"
@@ -2254,6 +2325,7 @@ public class CascadeTraversalTest {
     public func testCascadePreSaveRefToBackfillsFk(): Unit {
         let conn = CaptureConnection()
         let tx = Tx(conn)
+        tx.begin()
         let p = PostWithRel()
         let u = User()
         u.id = 42
@@ -2267,6 +2339,7 @@ public class CascadeTraversalTest {
     public func testCascadePreSaveRefToZeroIdClearsFk(): Unit {
         let conn = CaptureConnection()
         let tx = Tx(conn)
+        tx.begin()
         let p = PostWithRel()
         let u = User()
         p.author = Some(u)
@@ -2278,6 +2351,7 @@ public class CascadeTraversalTest {
     public func testCascadePreSaveRefToNoneClearsFk(): Unit {
         let conn = CaptureConnection()
         let tx = Tx(conn)
+        tx.begin()
         let p = PostWithRel()
         p.user_id = 7
         p.author = None
@@ -2289,6 +2363,7 @@ public class CascadeTraversalTest {
     public func testCascadePreSaveSkipsWhenNotModified(): Unit {
         let conn = CaptureConnection()
         let tx = Tx(conn)
+        tx.begin()
         let p = PostWithRel()
         let u = User()
         u.id = 42
@@ -2301,6 +2376,7 @@ public class CascadeTraversalTest {
     public func testCascadePreSaveStringFkBackfills(): Unit {
         let conn = CaptureConnection()
         let tx = Tx(conn)
+        tx.begin()
         let c = UuidRefComment()
         let u = UuidPost()
         u.id = "uuid-1"
@@ -2313,6 +2389,7 @@ public class CascadeTraversalTest {
     public func testCascadePreSaveStringFkClears(): Unit {
         let conn = CaptureConnection()
         let tx = Tx(conn)
+        tx.begin()
         let c = UuidRefComment()
         c.post_id = "old"
         c.post = Some(UuidPost())
@@ -2324,6 +2401,7 @@ public class CascadeTraversalTest {
     public func testCascadePreSaveStringFkNoneClears(): Unit {
         let conn = CaptureConnection()
         let tx = Tx(conn)
+        tx.begin()
         let c = UuidRefComment()
         c.post_id = "old"
         c.post = None
@@ -2335,6 +2413,7 @@ public class CascadeTraversalTest {
     public func testCascadePostSaveHasManyNewChildSaves(): Unit {
         let conn = CaptureConnection()
         let tx = Tx(conn)
+        tx.begin()
         let p = PostWithRel()
         p.id = 5
         let c = Comment()
@@ -2350,6 +2429,7 @@ public class CascadeTraversalTest {
     public func testCascadePostSaveHasManyExistingChildUpdates(): Unit {
         let conn = CaptureConnection()
         let tx = Tx(conn)
+        tx.begin()
         let p = PostWithRel()
         p.id = 5
         let c = Comment()
@@ -2367,6 +2447,7 @@ public class CascadeTraversalTest {
     public func testCascadePostSaveHasManyNotModifiedSkips(): Unit {
         let conn = CaptureConnection()
         let tx = Tx(conn)
+        tx.begin()
         let p = PostWithRel()
         p.id = 5
         let c = Comment()
@@ -2381,6 +2462,7 @@ public class CascadeTraversalTest {
     public func testCascadePostSaveHasOneSavesChild(): Unit {
         let conn = CaptureConnection()
         let tx = Tx(conn)
+        tx.begin()
         let u = UserWithRel()
         u.id = 3
         let pr = ProfileWithRel()
@@ -2395,6 +2477,7 @@ public class CascadeTraversalTest {
     public func testCascadePostSaveRefManyRebuilds(): Unit {
         let conn = CaptureConnection()
         let tx = Tx(conn)
+        tx.begin()
         let p = PostWithRel()
         p.id = 5
         let t1 = Tag()
@@ -2416,6 +2499,7 @@ public class CascadeTraversalTest {
     public func testCascadePostSaveRefManyNotModifiedSkips(): Unit {
         let conn = CaptureConnection()
         let tx = Tx(conn)
+        tx.begin()
         let p = PostWithRel()
         p.id = 5
         let t = Tag()
@@ -2429,6 +2513,7 @@ public class CascadeTraversalTest {
     public func testCascadePostSaveVisitedSkipsDuplicates(): Unit {
         let conn = CaptureConnection()
         let tx = Tx(conn)
+        tx.begin()
         let p = PostWithRel()
         p.id = 5
         let c = Comment()
@@ -2447,6 +2532,7 @@ public class CascadeTraversalTest {
     public func testCascadePostSaveSkipsVisitedChild(): Unit {
         let conn = CaptureConnection()
         let tx = Tx(conn)
+        tx.begin()
         let p = PostWithRel()
         p.id = 5
         let c = Comment()
@@ -2465,6 +2551,7 @@ public class CascadeTraversalTest {
     public func testCascadePostSaveHasOneSkipsVisitedChild(): Unit {
         let conn = CaptureConnection()
         let tx = Tx(conn)
+        tx.begin()
         let u = UserWithRel()
         u.id = 3
         let pr = ProfileWithRel()
@@ -2481,6 +2568,7 @@ public class CascadeTraversalTest {
     public func testCascadePreSaveRefToResetsMarker(): Unit {
         let conn = CaptureConnection()
         let tx = Tx(conn)
+        tx.begin()
         let p = PostWithRel()
         let u = User()
         u.id = 42
@@ -2495,6 +2583,7 @@ public class CascadeTraversalTest {
     public func testCascadePostSaveHasManyResetsMarker(): Unit {
         let conn = CaptureConnection()
         let tx = Tx(conn)
+        tx.begin()
         let p = PostWithRel()
         p.id = 5
         let c = Comment()
@@ -2511,6 +2600,7 @@ public class CascadeTraversalTest {
     public func testCascadePostSaveHasOneResetsMarker(): Unit {
         let conn = CaptureConnection()
         let tx = Tx(conn)
+        tx.begin()
         let u = UserWithRel()
         u.id = 3
         let pr = ProfileWithRel()
@@ -2526,6 +2616,7 @@ public class CascadeTraversalTest {
     public func testCascadePostSaveRefManyResetsMarker(): Unit {
         let conn = CaptureConnection()
         let tx = Tx(conn)
+        tx.begin()
         let p = PostWithRel()
         p.id = 5
         let t1 = Tag()
@@ -2543,6 +2634,7 @@ public class CascadeTraversalTest {
     public func testCascadeCycleSaveNoDuplicateInsert(): Unit {
         let conn = CaptureConnection()
         let tx = Tx(conn)
+        tx.begin()
         let a = CategoryWithRel()
         a.id = 1
         let b = CategoryWithRel()
@@ -2565,6 +2657,7 @@ public class CascadeTraversalTest {
     public func testCascadeDiamondSaveNoDuplicateSharedChild(): Unit {
         let conn = CaptureConnection()
         let tx = Tx(conn)
+        tx.begin()
         let p = CategoryWithRel()
         p.id = 1
         let c1 = CategoryWithRel()
@@ -2595,6 +2688,7 @@ public class CascadeTraversalTest {
     public func testCascadeDeleteChildrenThenJunction(): Unit {
         let conn = CaptureConnection()
         let tx = Tx(conn)
+        tx.begin()
         let p = PostWithRel()
         p.id = 5
         let cols: Array<ColumnInfo> = [MapperMockColumnInfo("id", false), MapperMockColumnInfo("body", false), MapperMockColumnInfo("post_id", false)]
@@ -2612,6 +2706,7 @@ public class CascadeTraversalTest {
     public func testCascadeDeleteHasOneViaQuery(): Unit {
         let conn = CaptureConnection()
         let tx = Tx(conn)
+        tx.begin()
         let u = UserWithRel()
         u.id = 3
         let cols: Array<ColumnInfo> = [MapperMockColumnInfo("id", false), MapperMockColumnInfo("bio", false), MapperMockColumnInfo("user_id", false)]
@@ -2628,6 +2723,7 @@ public class CascadeTraversalTest {
     public func testCascadeDeleteRecursiveGrandchildren(): Unit {
         let conn = CaptureConnection()
         let tx = Tx(conn)
+        tx.begin()
         let cols: Array<ColumnInfo> = [MapperMockColumnInfo("id", false), MapperMockColumnInfo("name", false), MapperMockColumnInfo("parent_id", false)]
         conn.stmt.queryResultQueue.add(MapperMockQueryResult(cols, [Array<Any>(3, {i => if (i == 0) { 9 } else if (i == 1) { "c" } else { 5 }})]))
         conn.stmt.queryResultQueue.add(MapperMockQueryResult(cols, [Array<Any>(3, {i => if (i == 0) { 12 } else if (i == 1) { "g" } else { 9 }})]))
@@ -2649,6 +2745,7 @@ public class CascadeTraversalTest {
     public func testCascadeDeleteDbCycleTerminates(): Unit {
         let conn = CaptureConnection()
         let tx = Tx(conn)
+        tx.begin()
         let cols: Array<ColumnInfo> = [MapperMockColumnInfo("id", false), MapperMockColumnInfo("name", false), MapperMockColumnInfo("parent_id", false)]
         // DB 常驻环：A(id=5) → B(id=9) → A'(id=5) → ... 每次 loadX 都新建实体实例，
         // 对象引用（refEq）永远匹配不上，必须靠 (type,id) 键终止递归
@@ -2676,6 +2773,7 @@ public class CascadeTraversalTest {
     public func testCascadeDeleteVisitedSkipsAlreadySeen(): Unit {
         let conn = CaptureConnection()
         let tx = Tx(conn)
+        tx.begin()
         let p = PostWithRel()
         p.id = 5
         let visited = HashSet<String>()
@@ -2688,6 +2786,7 @@ public class CascadeTraversalTest {
     public func testCascadeDeleteRefToNotProcessed(): Unit {
         let conn = CaptureConnection()
         let tx = Tx(conn)
+        tx.begin()
         let c = UuidRefComment()
         c.id = 3
         let u = UuidPost()
@@ -2703,6 +2802,7 @@ public class CascadeTraversalTest {
     public func testCascadeDeleteCompositePkKeyFormat(): Unit {
         let conn = CaptureConnection()
         let tx = Tx(conn)
+        tx.begin()
         let item = OrderLineItem()
         item.tenant_id = 7
         item.line_no = 3
@@ -2717,6 +2817,7 @@ public class CascadeTraversalTest {
     public func testCascadeDeleteCompositePkSkipsAlreadySeen(): Unit {
         let conn = CaptureConnection()
         let tx = Tx(conn)
+        tx.begin()
         let item = OrderLineItem()
         item.tenant_id = 7
         item.line_no = 3
@@ -2731,6 +2832,7 @@ public class CascadeTraversalTest {
     public func testCascadeDeleteCompositePkNoDuplicateDelete(): Unit {
         let conn = CaptureConnection()
         let tx = Tx(conn)
+        tx.begin()
         // 同一复合主键实体经两次 deleteCascade 调用（模拟环/菱形里被两条路径命中），
         // 第二次必须被 visited 键守卫短路，DELETE 只执行一次
         let item = OrderLineItem()
@@ -2750,6 +2852,7 @@ public class CascadeTraversalTest {
     public func testCascadeDeleteCompositePkChildrenViaParent(): Unit {
         let conn = CaptureConnection()
         let tx = Tx(conn)
+        tx.begin()
         let order = OrderWithRel()
         order.id = 5
         // 子对象（复合主键 OrderLineItem）由 loadX(tx) 从库加载：tenant_id/line_no/sku/order_id
@@ -2829,6 +2932,7 @@ public class RefManyRelationApiTest {
     public func testAppendTagsSingle(): Unit {
         let conn = CaptureConnection()
         let tx = Tx(conn)
+        tx.begin()
         let p = PostWithRel()
         p.id = 42
         let t = Tag()
@@ -2846,6 +2950,7 @@ public class RefManyRelationApiTest {
     public func testAppendTagsArray(): Unit {
         let conn = CaptureConnection()
         let tx = Tx(conn)
+        tx.begin()
         let p = PostWithRel()
         p.id = 42
         let t1 = Tag()
@@ -2867,6 +2972,7 @@ public class RefManyRelationApiTest {
     public func testReplaceTags(): Unit {
         let conn = CaptureConnection()
         let tx = Tx(conn)
+        tx.begin()
         let p = PostWithRel()
         p.id = 42
         let t1 = Tag()
@@ -2890,6 +2996,7 @@ public class RefManyRelationApiTest {
     public func testDeleteTagsSingle(): Unit {
         let conn = CaptureConnection()
         let tx = Tx(conn)
+        tx.begin()
         let p = PostWithRel()
         p.id = 42
         let t = Tag()
@@ -2905,6 +3012,7 @@ public class RefManyRelationApiTest {
     public func testDeleteTagsArray(): Unit {
         let conn = CaptureConnection()
         let tx = Tx(conn)
+        tx.begin()
         let p = PostWithRel()
         p.id = 42
         let t1 = Tag()
@@ -2926,6 +3034,7 @@ public class RefManyRelationApiTest {
     public func testClearTags(): Unit {
         let conn = CaptureConnection()
         let tx = Tx(conn)
+        tx.begin()
         let p = PostWithRel()
         p.id = 42
         p.clearTags(tx)
@@ -2938,6 +3047,7 @@ public class RefManyRelationApiTest {
     public func testCountTags(): Unit {
         let conn = CaptureConnection()
         let tx = Tx(conn)
+        tx.begin()
         let p = PostWithRel()
         p.id = 42
         let col: ColumnInfo = MapperMockColumnInfo("COUNT(*)", false)
@@ -2953,6 +3063,7 @@ public class RefManyRelationApiTest {
     public func testAppendTagsUnsavedThrows(): Unit {
         let conn = CaptureConnection()
         let tx = Tx(conn)
+        tx.begin()
         let p = PostWithRel()
         p.id = 42
         let t = Tag()
@@ -2968,6 +3079,7 @@ public class RefManyRelationApiTest {
     public func testDeleteTagsUnsavedThrows(): Unit {
         let conn = CaptureConnection()
         let tx = Tx(conn)
+        tx.begin()
         let p = PostWithRel()
         p.id = 42
         let t = Tag()
@@ -2995,6 +3107,7 @@ public class RefManyTableOverrideTest {
     public func testAppendTagsUsesJunctionColumnNames(): Unit {
         let conn = CaptureConnection()
         let tx = Tx(conn)
+        tx.begin()
         let p = CustomTagPost()
         p.id = 42
         let t = CustomTag()
@@ -3007,6 +3120,7 @@ public class RefManyTableOverrideTest {
     public func testDeleteTagsUsesJunctionColumnNames(): Unit {
         let conn = CaptureConnection()
         let tx = Tx(conn)
+        tx.begin()
         let p = CustomTagPost()
         p.id = 42
         let t = CustomTag()
@@ -3019,6 +3133,7 @@ public class RefManyTableOverrideTest {
     public func testLoadTagsUsesJunctionColumnNames(): Unit {
         let conn = CaptureConnection()
         let tx = Tx(conn)
+        tx.begin()
         let p = CustomTagPost()
         p.id = 42
         p.loadTags(tx)
@@ -3088,6 +3203,7 @@ public class RefManyStringPkTargetTest {
     public func testAppendUnsavedStringPkTargetThrows(): Unit {
         let conn = CaptureConnection()
         let tx = Tx(conn)
+        tx.begin()
         let p = UuidTagPost()
         p.id = 42
         let t = UuidTag()
@@ -3103,6 +3219,7 @@ public class RefManyStringPkTargetTest {
     public func testDeleteUnsavedStringPkTargetThrows(): Unit {
         let conn = CaptureConnection()
         let tx = Tx(conn)
+        tx.begin()
         let p = UuidTagPost()
         p.id = 42
         let t = UuidTag()
@@ -3118,6 +3235,7 @@ public class RefManyStringPkTargetTest {
     public func testAppendSavedStringPkTargetWritesId(): Unit {
         let conn = CaptureConnection()
         let tx = Tx(conn)
+        tx.begin()
         let p = UuidTagPost()
         p.id = 42
         let t = UuidTag()
@@ -3141,6 +3259,7 @@ public class TxCascadeTest {
         let conn = CaptureConnection()
         conn.stmt.mockLastInsertId = 42
         let tx = Tx(conn)
+        tx.begin()
         let p = PostWithRel()
         let c = Comment()
         c.body = "hello"
@@ -3161,6 +3280,7 @@ public class TxCascadeTest {
         let conn = CaptureConnection()
         conn.stmt.mockLastInsertId = 7
         let tx = Tx(conn)
+        tx.begin()
         let u = UserWithRel()
         let pr = ProfileWithRel()
         pr.bio = "b"
@@ -3178,6 +3298,7 @@ public class TxCascadeTest {
         let conn = CaptureConnection()
         conn.stmt.mockRowCount = 1
         let tx = Tx(conn)
+        tx.begin()
         let p = PostWithRel()
         p.id = 5
         let existing = Comment()
@@ -3202,6 +3323,7 @@ public class TxCascadeTest {
     public func testTxDeleteCascadesChildrenThenParent(): Unit {
         let conn = CaptureConnection()
         let tx = Tx(conn)
+        tx.begin()
         let p = PostWithRel()
         p.id = 5
         let cols: Array<ColumnInfo> = [MapperMockColumnInfo("id", false), MapperMockColumnInfo("body", false), MapperMockColumnInfo("post_id", false)]
@@ -3220,6 +3342,7 @@ public class TxCascadeTest {
     public func testTxDeleteSoftDeleteCascadesChildren(): Unit {
         let conn = CaptureConnection()
         let tx = Tx(conn)
+        tx.begin()
         let p = SoftDeleteParent()
         p.id = 1
         let cols: Array<ColumnInfo> = [MapperMockColumnInfo("id", false), MapperMockColumnInfo("name", false), MapperMockColumnInfo("deleted_at", false), MapperMockColumnInfo("parent_id", false)]
@@ -3235,6 +3358,7 @@ public class TxCascadeTest {
     public func testTxSaveCycleNoDuplicateInsertSharedVisited(): Unit {
         let conn = CaptureConnection()
         let tx = Tx(conn)
+        tx.begin()
         let a = CategoryWithRel()
         let b = CategoryWithRel()
         let la = ArrayList<CategoryWithRel>()
@@ -3253,6 +3377,7 @@ public class TxCascadeTest {
     public func testTxSaveRefToBackfillsFkBeforeInsert(): Unit {
         let conn = CaptureConnection()
         let tx = Tx(conn)
+        tx.begin()
         let p = PostWithRel()
         let u = User()
         u.id = 5
@@ -3270,6 +3395,7 @@ public class TxCascadeTest {
         conn.stmt.mockLastInsertIdQueue.add(2)   // u.id
         conn.stmt.mockRowCount = 1
         let tx = Tx(conn)
+        tx.begin()
         let p = PostWithRel()
         let u = User()
         u.name = "ghost"
@@ -3297,6 +3423,7 @@ public class TxCascadeTest {
         let conn = CaptureConnection()
         conn.stmt.mockRowCount = 1
         let tx = Tx(conn)
+        tx.begin()
         let p = PostWithRel()
         p.id = 5
         p.title = "x"
@@ -3310,6 +3437,7 @@ public class TxCascadeTest {
         let conn = CaptureConnection()
         conn.stmt.mockLastInsertId = 42
         let tx = Tx(conn)
+        tx.begin()
         let p = PostWithRel()
         let c = Comment()
         c.body = "hello"
@@ -3333,6 +3461,7 @@ public class TxCascadeTest {
         let conn = CaptureConnection()
         conn.stmt.mockLastInsertId = 42
         let tx = Tx(conn)
+        tx.begin()
         let p = PostWithRel()
         let c = Comment()
         c.body = "hello"
@@ -3362,6 +3491,7 @@ public class TxCascadeTest {
         let conn = CaptureConnection()
         conn.stmt.mockLastInsertId = 42
         let tx = Tx(conn)
+        tx.begin()
         let p = PostWithRel()
         let t1 = Tag()
         t1.id = 7
@@ -3410,6 +3540,7 @@ public class CascadeBoundaryTest {
         let conn = CaptureConnection()
         conn.stmt.mockRowCount = 1
         let tx = Tx(conn)
+        tx.begin()
         tx.update(e)
         @Expect(conn.stmt.capturedSqlHistory.size, 1)
         @Expect(conn.stmt.capturedSqlHistory[0], "UPDATE \"postWithRel\" SET \"title\" = ?, \"user_id\" = ?, \"post_id\" = ? WHERE \"id\" = ?")
@@ -3422,6 +3553,7 @@ public class CascadeBoundaryTest {
         let conn = CaptureConnection()
         conn.stmt.mockLastInsertId = 42
         let tx = Tx(conn)
+        tx.begin()
         let p = PostWithRel()
         let c1 = Comment()
         c1.body = "one"
@@ -3449,6 +3581,7 @@ public class CascadeBoundaryTest {
         let conn = CaptureConnection()
         conn.stmt.mockLastInsertId = 42
         let tx = Tx(conn)
+        tx.begin()
         let p = PostWithRel()
         p.comments = ArrayList<Comment>()
         tx.save(p)
@@ -3462,6 +3595,7 @@ public class CascadeBoundaryTest {
         let conn = CaptureConnection()
         conn.stmt.mockRowCount = 1
         let tx = Tx(conn)
+        tx.begin()
         let p = PostWithRel()
         p.id = 5
         p.comments = ArrayList<Comment>()
@@ -3476,6 +3610,7 @@ public class CascadeBoundaryTest {
         let conn = CaptureConnection()
         conn.stmt.mockLastInsertId = 42
         let tx = Tx(conn)
+        tx.begin()
         let p = PostWithRel()
         p.tags = ArrayList<Tag>()
         tx.save(p)
@@ -3491,6 +3626,7 @@ public class CascadeBoundaryTest {
         let conn = CaptureConnection()
         conn.stmt.mockRowCount = 1
         let tx = Tx(conn)
+        tx.begin()
         let p = PostWithRel()
         p.id = 5
         p.tags = ArrayList<Tag>()
@@ -3509,6 +3645,7 @@ public class CascadeBoundaryTest {
         conn.stmt.mockLastInsertIdQueue.add(11)
         conn.stmt.mockLastInsertIdQueue.add(12)
         let tx = Tx(conn)
+        tx.begin()
         let root = CategoryWithRel()
         root.name = "root"
         let l2 = CategoryWithRel()
@@ -3541,6 +3678,7 @@ public class CascadeBoundaryTest {
         let conn = CaptureConnection()
         conn.stmt.mockRowCount = 1
         let tx = Tx(conn)
+        tx.begin()
         let order = VersionedOrder()
         order.id = 1
         order.name = "o"
@@ -3568,6 +3706,7 @@ public class CascadeBoundaryTest {
         conn.stmt.mockRowCountQueue.add(1)
         conn.stmt.mockRowCountQueue.add(0)
         let tx = Tx(conn)
+        tx.begin()
         let order = VersionedOrder()
         order.id = 1
         order.version = 1
@@ -3598,6 +3737,7 @@ public class CascadeBoundaryTest {
         conn.stmt.mockLastInsertIdQueue.add(1)
         conn.stmt.mockLastInsertIdQueue.add(2)
         let tx = Tx(conn)
+        tx.begin()
         let order = VersionedOrder()
         order.name = "o"
         let item = VersionedOrderItem()
@@ -3628,6 +3768,7 @@ public class TxDeleteHookAbortTest {
         let conn = CaptureConnection()
         let rf = Refine(RMockDS(), SQLiteDialect(), 0)
         let tx = Tx(conn, rf, 0)
+        tx.begin()
         let p = PostWithRel()
         p.id = 5
         let cols: Array<ColumnInfo> = [MapperMockColumnInfo("id", false), MapperMockColumnInfo("body", false), MapperMockColumnInfo("post_id", false)]
@@ -3656,6 +3797,7 @@ public class TxPhysicalDeleteCascadeTest {
     public func testTxPhysicalDeleteCascadesChildren(): Unit {
         let conn = CaptureConnection()
         let tx = Tx(conn)
+        tx.begin()
         let p = SoftDeleteParent()
         p.id = 1
         let cols: Array<ColumnInfo> = [MapperMockColumnInfo("id", false), MapperMockColumnInfo("name", false), MapperMockColumnInfo("deleted_at", false), MapperMockColumnInfo("parent_id", false)]
@@ -3688,6 +3830,7 @@ public class WritePathDialectQuotingTest {
     private func txWith(dialect: Dialect): (CaptureConnection, Tx) {
         let conn = CaptureConnection()
         let tx = Tx(conn, 0, dialect)
+        tx.begin()
         (conn, tx)
     }
 
@@ -3990,6 +4133,7 @@ public class C2IncludePreloadTest {
         // Task 3 批量协议：主查询 + 批量查询两次，String-pk 目标按 fk 回填全列
         let conn = CaptureConnection()
         let tx = Tx(conn)
+        tx.begin()
         let mainCols: Array<ColumnInfo> = [
             MapperMockColumnInfo("id", false),
             MapperMockColumnInfo("body", false),
@@ -4024,6 +4168,7 @@ public class C2IncludePreloadTest {
         // 缺列字段保持默认值（content 缺列 → ""），不缺行不抛异常
         let conn = CaptureConnection()
         let tx = Tx(conn)
+        tx.begin()
         let mainCols: Array<ColumnInfo> = [
             MapperMockColumnInfo("id", false),
             MapperMockColumnInfo("body", false),
@@ -4059,6 +4204,7 @@ public class C2IncludePreloadTest {
         // Task 3 批量协议：fk 指向已删除目标 → 批量查询空结果，主实体保留、目标不挂载
         let conn = CaptureConnection()
         let tx = Tx(conn)
+        tx.begin()
         let mainCols: Array<ColumnInfo> = [
             MapperMockColumnInfo("id", false),
             MapperMockColumnInfo("body", false),
@@ -4090,6 +4236,7 @@ public class C2IncludePreloadTest {
         // SELECT 强制 fk 列 + 子集列并集，RowMapper 对未选字段保持宽容（不抛异常）。
         let conn = CaptureConnection()
         let tx = Tx(conn)
+        tx.begin()
         let mainCols: Array<ColumnInfo> = [
             MapperMockColumnInfo("id", false),
             MapperMockColumnInfo("title", false),
@@ -4131,6 +4278,7 @@ public class C2IncludePreloadTest {
     public func testRefManyIncludeSubsetFieldsNoThrow(): Unit {
         let conn = CaptureConnection()
         let tx = Tx(conn)
+        tx.begin()
         let mainCols: Array<ColumnInfo> = [
             MapperMockColumnInfo("id", false),
             MapperMockColumnInfo("title", false),
@@ -4213,6 +4361,7 @@ public class RelationMutationTest {
     public func testAddCommentsNewChildInserts(): Unit {
         let conn = CaptureConnection()
         let tx = Tx(conn)
+        tx.begin()
         let post = PostWithRel()
         post.id = 1
         let c = Comment()
@@ -4226,6 +4375,7 @@ public class RelationMutationTest {
     public func testAddCommentsPersistedChildUpdates(): Unit {
         let conn = CaptureConnection()
         let tx = Tx(conn)
+        tx.begin()
         let post = PostWithRel()
         post.id = 1
         let c = Comment()
@@ -4240,6 +4390,7 @@ public class RelationMutationTest {
     public func testSetProfileNewChildInserts(): Unit {
         let conn = CaptureConnection()
         let tx = Tx(conn)
+        tx.begin()
         let user = UserWithRel()
         user.id = 1
         let p = ProfileWithRel()
@@ -4255,6 +4406,7 @@ public class RelationMutationTest {
         let conn = CaptureConnection()
         conn.stmt.queryResult = profileResult(5, "old", 1)
         let tx = Tx(conn)
+        tx.begin()
         let user = UserWithRel()
         user.id = 1
         let p = ProfileWithRel()
@@ -4273,6 +4425,7 @@ public class RelationMutationTest {
         let conn = CaptureConnection()
         conn.stmt.queryResult = profileResult(5, "old", 1)
         let tx = Tx(conn)
+        tx.begin()
         let user = UserWithRel()
         user.id = 1
         let p = ProfileWithRel()
@@ -4292,6 +4445,7 @@ public class RelationMutationTest {
         let conn = CaptureConnection()
         conn.stmt.queryResult = profileResult(5, "old", 1)
         let tx = Tx(conn)
+        tx.begin()
         let user = UserWithRel()
         user.id = 1
         let p = ProfileWithRel()
@@ -4307,6 +4461,7 @@ public class RelationMutationTest {
     public func testAddCommentsStringPkNewChildInserts(): Unit {
         let conn = CaptureConnection()
         let tx = Tx(conn)
+        tx.begin()
         let post = UuidPostWithRel()
         post.id = 1
         let c = UuidComment()
@@ -4321,6 +4476,7 @@ public class RelationMutationTest {
     public func testAddCommentsStringPkPersistedChildUpdates(): Unit {
         let conn = CaptureConnection()
         let tx = Tx(conn)
+        tx.begin()
         let post = UuidPostWithRel()
         post.id = 1
         let c = UuidComment()
@@ -4399,6 +4555,7 @@ public class DocSyncSyntaxTest {
     public func testDocSyntaxHasManyMethodsWork(): Unit {
         let conn = CaptureConnection()
         let tx = Tx(conn)
+        tx.begin()
         let post = DocRelPost()
         post.id = 1
         let c = DocRelComment()
@@ -4415,6 +4572,7 @@ public class DocSyncSyntaxTest {
     public func testDocSyntaxIncludeTwoArg(): Unit {
         let conn = CaptureConnection()
         let tx = Tx(conn)
+        tx.begin()
         let q = DocRelBook.query()
             .select([Column("id")])
             .from("docRelBook")

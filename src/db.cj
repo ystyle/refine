@@ -5,6 +5,17 @@ import std.database.sql.Statement as SqlStatement
 import std.collection.{ArrayList, HashMap}
 import std.time.DateTime
 
+// M19: Tx 生命周期状态机。初始 Unbegun；begin → Active；commit → Committed；
+// rollback → RolledBack。非 Active 状态下的 execute/query/savepoint/commit/rollback
+// 一律抛 RefineException，杜绝「已提交/已回滚事务继续执行 SQL」的静默坏数据路径。
+// 注意：setIsolation 在 begin 之前被 Refine.transaction(level:) 调用，故不加状态守卫。
+internal enum TxState {
+    | Unbegun
+    | Active
+    | Committed
+    | RolledBack
+}
+
 public class DB {
     private var datasource: Datasource
     private var paramOffset: Int64 = 0
@@ -161,6 +172,7 @@ public class Tx {
     private var connection: Connection
     private var transaction: Transaction
     private var paramOffset: Int64 = 0
+    private var state: TxState = TxState.Unbegun
     public var ref: Option<Refine> = None
     var dialectOpt: Option<Dialect> = None
 
@@ -189,23 +201,44 @@ public class Tx {
         this.dialectOpt = Some(dialect)
     }
 
+    // M19: 状态守卫。execute/query/savepoint/commit/rollback 仅在 Active 状态合法。
+    // commit/rollback 失败（底层驱动抛异常）时状态保持 Active，事务包装器仍可回滚。
+    // 用 match 而非 !=/==：仓颉枚举默认不实现 Equatable（见 StorageType 手写模式）。
+    private func assertActive(): Unit {
+        match (state) {
+            case TxState.Active => ()
+            case _ => throw RefineException("transaction is not active")
+        }
+    }
+
     public func begin(): Unit {
+        match (state) {
+            case TxState.Unbegun => ()
+            case _ => throw RefineException("transaction already begun")
+        }
         transaction.begin()
+        state = TxState.Active
     }
 
     public func commit(): Unit {
+        assertActive()
         transaction.commit()
+        state = TxState.Committed
     }
 
     public func rollback(): Unit {
+        assertActive()
         transaction.rollback()
+        state = TxState.RolledBack
     }
 
     public func save(name: String): Unit {
+        assertActive()
         transaction.save(name)
     }
 
     public func rollbackTo(name: String): Unit {
+        assertActive()
         transaction.rollback(name)
     }
 
@@ -214,6 +247,7 @@ public class Tx {
     }
 
     public func execute(sql: String, params: Array<Any>): UpdateResult {
+        assertActive()
         let stmt = connection.prepareStatement(sql)
         for (i in 0..params.size) {
             dispatchSet(stmt, i + paramOffset, params[i])
@@ -222,6 +256,7 @@ public class Tx {
     }
 
     public func query(sql: String, params: Array<Any>): QueryResult {
+        assertActive()
         let stmt = connection.prepareStatement(sql)
         for (i in 0..params.size) {
             dispatchSet(stmt, i + paramOffset, params[i])

@@ -201,6 +201,7 @@ public class DbTest {
     public func testTxConstruct(): Unit {
         let conn = MockConnection()
         let tx = Tx(conn)
+        tx.begin()
         @Expect(true, true)
     }
 
@@ -231,6 +232,161 @@ public class DbTest {
         tx.rollbackTo("sp1")
         tx.commit()
         @Expect(true, true)
+    }
+
+    // ─── M19: Tx 状态防护 ──────────────────────────────
+    // 未 begin / 已 commit / 已 rollback 的 Tx 上执行 SQL、savepoint、重复 begin、
+    // 状态外 commit/rollback 都必须抛 RefineException；正常 begin→commit 流程不抛。
+
+    @TestCase
+    public func testTxExecuteWithoutBeginThrows(): Unit {
+        let conn = MockConnection()
+        let tx = Tx(conn)
+        try {
+            tx.execute("UPDATE t SET x = ?", [1])
+            @Fail("expected RefineException")
+        } catch (e: RefineException) {
+            @Expect(e.message, "transaction is not active")
+        }
+    }
+
+    @TestCase
+    public func testTxQueryWithoutBeginThrows(): Unit {
+        let conn = MockConnection()
+        let tx = Tx(conn)
+        try {
+            tx.query("SELECT * FROM t", [])
+            @Fail("expected RefineException")
+        } catch (e: RefineException) {
+            @Expect(e.message, "transaction is not active")
+        }
+    }
+
+    @TestCase
+    public func testTxCommitWithoutBeginThrows(): Unit {
+        let conn = MockConnection()
+        let tx = Tx(conn)
+        try {
+            tx.commit()
+            @Fail("expected RefineException")
+        } catch (e: RefineException) {
+            @Expect(e.message, "transaction is not active")
+        }
+    }
+
+    @TestCase
+    public func testTxRollbackWithoutBeginThrows(): Unit {
+        let conn = MockConnection()
+        let tx = Tx(conn)
+        try {
+            tx.rollback()
+            @Fail("expected RefineException")
+        } catch (e: RefineException) {
+            @Expect(e.message, "transaction is not active")
+        }
+    }
+
+    @TestCase
+    public func testTxRepeatedBeginThrows(): Unit {
+        let conn = MockConnection()
+        let tx = Tx(conn)
+        tx.begin()
+        try {
+            tx.begin()
+            @Fail("expected RefineException")
+        } catch (e: RefineException) {
+            @Expect(e.message, "transaction already begun")
+        }
+    }
+
+    @TestCase
+    public func testTxExecuteAfterCommitThrows(): Unit {
+        let conn = MockConnection()
+        let tx = Tx(conn)
+        tx.begin()
+        tx.commit()
+        try {
+            tx.execute("UPDATE t SET x = ?", [1])
+            @Fail("expected RefineException")
+        } catch (e: RefineException) {
+            @Expect(e.message, "transaction is not active")
+        }
+    }
+
+    @TestCase
+    public func testTxExecuteAfterRollbackThrows(): Unit {
+        let conn = MockConnection()
+        let tx = Tx(conn)
+        tx.begin()
+        tx.rollback()
+        try {
+            tx.execute("UPDATE t SET x = ?", [1])
+            @Fail("expected RefineException")
+        } catch (e: RefineException) {
+            @Expect(e.message, "transaction is not active")
+        }
+    }
+
+    @TestCase
+    public func testTxRollbackAfterCommitThrows(): Unit {
+        let conn = MockConnection()
+        let tx = Tx(conn)
+        tx.begin()
+        tx.commit()
+        try {
+            tx.rollback()
+            @Fail("expected RefineException")
+        } catch (e: RefineException) {
+            @Expect(e.message, "transaction is not active")
+        }
+    }
+
+    @TestCase
+    public func testTxCommitAfterRollbackThrows(): Unit {
+        let conn = MockConnection()
+        let tx = Tx(conn)
+        tx.begin()
+        tx.rollback()
+        try {
+            tx.commit()
+            @Fail("expected RefineException")
+        } catch (e: RefineException) {
+            @Expect(e.message, "transaction is not active")
+        }
+    }
+
+    @TestCase
+    public func testTxSavepointWithoutBeginThrows(): Unit {
+        let conn = MockConnection()
+        let tx = Tx(conn)
+        try {
+            tx.save("sp1")
+            @Fail("expected RefineException")
+        } catch (e: RefineException) {
+            @Expect(e.message, "transaction is not active")
+        }
+    }
+
+    @TestCase
+    public func testTxRollbackToWithoutBeginThrows(): Unit {
+        let conn = MockConnection()
+        let tx = Tx(conn)
+        try {
+            tx.rollbackTo("sp1")
+            @Fail("expected RefineException")
+        } catch (e: RefineException) {
+            @Expect(e.message, "transaction is not active")
+        }
+    }
+
+    @TestCase
+    public func testTxBeginCommitExecuteNormalFlow(): Unit {
+        let conn = MockConnection()
+        let tx = Tx(conn)
+        tx.begin()
+        let result = tx.execute("UPDATE t SET x = ?", [1])
+        tx.commit()
+        @Expect(result.rowCount, 0)
     }
 
     @TestCase
@@ -310,6 +466,7 @@ public class DbTest {
     public func testTxPrepareStatement(): Unit {
         let conn = MockConnection()
         let tx = Tx(conn)
+        tx.begin()
         let stmt = tx.prepareStatement("SELECT 1")
         @Expect(stmt.parameterColumnInfos.size, 0)
     }
@@ -318,6 +475,7 @@ public class DbTest {
     public func testTxExecute(): Unit {
         let conn = MockConnection()
         let tx = Tx(conn)
+        tx.begin()
         let result = tx.execute("UPDATE t SET x = ?", [1])
         @Expect(result.rowCount, 0)
     }
@@ -326,6 +484,7 @@ public class DbTest {
     public func testTxQuery(): Unit {
         let conn = MockConnection()
         let tx = Tx(conn)
+        tx.begin()
         let result = tx.query("SELECT * FROM t WHERE id = ?", [1])
         @Expect(result.columnInfos.size, 0)
     }
@@ -432,6 +591,7 @@ public class DbTest {
         let rf = Refine(MockDatasource(), SQLiteDialect(), 0)
         let conn = MockConnection()
         let tx = Tx(conn, rf, 0)
+        tx.begin()
         let result = tx.queryAll("SELECT * FROM t", [],
             { r: QueryResult, cm: HashMap<String, Int64> => 42 })
         @Expect(result.size, 0)
@@ -442,6 +602,7 @@ public class DbTest {
         let rf = Refine(MockDatasource(), SQLiteDialect(), 0)
         let conn = MockConnection()
         let tx = Tx(conn, rf, 0)
+        tx.begin()
         let result = tx.queryOne("SELECT * FROM t WHERE id = ?", [1 as Any],
             { r: QueryResult, cm: HashMap<String, Int64> => 42 })
         @Expect(result.isNone(), true)
@@ -451,6 +612,7 @@ public class DbTest {
     public func testTxQueryAllWithoutRef(): Unit {
         let conn = MockConnection()
         let tx = Tx(conn)
+        tx.begin()
         let result = tx.queryAll("SELECT * FROM t", [],
             { r: QueryResult, cm: HashMap<String, Int64> => 42 })
         @Expect(result.size, 0)
@@ -460,6 +622,7 @@ public class DbTest {
     public func testTxQueryOneWithoutRef(): Unit {
         let conn = MockConnection()
         let tx = Tx(conn)
+        tx.begin()
         let result = tx.queryOne("SELECT * FROM t WHERE id = ?", [1 as Any],
             { r: QueryResult, cm: HashMap<String, Int64> => 42 })
         @Expect(result.isNone(), true)
@@ -540,6 +703,7 @@ public class DbTest {
     @TestCase
     public func testTxWithDialect(): Unit {
         let tx = Tx(MockConnection(), 0, PostgreSQLDialect())
+        tx.begin()
         @Expect(tx.getDialect().name(), "postgresql")
     }
 
@@ -641,6 +805,7 @@ public class DbTest {
         conn.queryColumnInfos = [MockColumnInfo("id"), MockColumnInfo("name")]
         conn.queryRow = true
         let tx = Tx(conn, 1, PostgreSQLDialect())
+        tx.begin()
         let seen = ArrayList<HashMap<String, Int64>>()
         tx.queryOne("SELECT * FROM t", [],
             { r: QueryResult, cm: HashMap<String, Int64> => seen.add(cm); 0 })
