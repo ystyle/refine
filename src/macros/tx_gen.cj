@@ -267,7 +267,7 @@ func buildTxBatchUpdateExtend(className: String, fields: ArrayList<FieldInfo>): 
                     let (sql, params) = $(batchUpdateSQLFuncName)(entities, this.getDialect())
                     let result = this.execute(sql, params)
                     if (result.rowCount != entities.size) {
-                        throw OptimisticLockException($(nameLit), "batch", 0, -1)
+                        throw OptimisticLockException.createWithStringPk($(nameLit), "batch", 0, -1)
                     }
                     for (_bi_ in 0..entities.size) {
                         entities[_bi_].$(vIdent) = entities[_bi_].$(vIdent) + 1
@@ -388,6 +388,14 @@ func buildTxUpdateExtend(className: String, fields: ArrayList<FieldInfo>, tableN
         let pkWhereTok = buildQuotedPkWhereTokens(pkFields)
         let pkParams = buildDeleteEntityParamsToken(pkFields)
         let pkValueExpr = buildPkValueExprTokens(pkFields)
+        // M10: 按主键类型选择工厂方法——单 Int64 主键走 createWithInt64Pk，
+        // 单 String 主键与复合主键（":" 拼接字符串）走 createWithStringPk，
+        // 避免依赖 init 重载的隐式匹配。
+        let pkIsInt64 = pkFields.size == 1 && pkFields.get(0).getOrThrow().typeName == "Int64"
+        var pkFactory = Tokens()
+        pkFactory = pkFactory + Token(TokenKind.IDENTIFIER, "OptimisticLockException")
+        pkFactory = pkFactory + Token(TokenKind.DOT)
+        pkFactory = pkFactory + Token(TokenKind.IDENTIFIER, if (pkIsInt64) { "createWithInt64Pk" } else { "createWithStringPk" })
         quote(
             extend Tx {
                 public func update(entity: $(cn)): Unit {
@@ -409,7 +417,7 @@ func buildTxUpdateExtend(className: String, fields: ArrayList<FieldInfo>, tableN
                         var actual: Int64 = -1
                         if (qr.next()) { actual = qr.get<Int64>(0 + this.getParamOffset()) }
                         qr.close()
-                        throw OptimisticLockException($(nameLit), $(pkValueExpr), entity.$(versionIdent), actual)
+                        throw $(pkFactory)($(nameLit), $(pkValueExpr), entity.$(versionIdent), actual)
                     }
                     entity.$(versionIdent) = entity.$(versionIdent) + 1
                     $(cascadePost)

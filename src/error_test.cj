@@ -168,9 +168,11 @@ public class RefineExceptionTest {
         @Expect(e.message, "chain test")
     }
 
+    // M10: 构造改工厂方法 createWithInt64Pk/createWithStringPk，消除双重载混淆。
+    // 工厂方法保持公开字段 entityType/pk/expected/actual 语义不变。
     @TestCase
     public func testCreateOptimisticLockException(): Unit {
-        let e = OptimisticLockException("User", 42, 3, 5)
+        let e = OptimisticLockException.createWithInt64Pk("User", 42, 3, 5)
         @Expect(e.entityType, "User")
         @Expect(e.pk, "42")
         @Expect(e.expected, 3)
@@ -180,7 +182,7 @@ public class RefineExceptionTest {
 
     @TestCase
     public func testCreateOptimisticLockExceptionStringPk(): Unit {
-        let e = OptimisticLockException("Event", "abc-123", 7, 8)
+        let e = OptimisticLockException.createWithStringPk("Event", "abc-123", 7, 8)
         @Expect(e.entityType, "Event")
         @Expect(e.pk, "abc-123")
         @Expect(e.message.contains("abc-123"), true)
@@ -188,9 +190,26 @@ public class RefineExceptionTest {
     }
 
     @TestCase
+    public func testCreateOptimisticLockExceptionInt64PkKeepsNumericContext(): Unit {
+        // createWithInt64Pk 是数值语义：pk 以字符串存储，但构造入口明确区分数值/字符串
+        let e = OptimisticLockException.createWithInt64Pk("Order", 99, 1, 2)
+        @Expect(e.pk, "99")
+        @Expect(e.entityType, "Order")
+        @Expect(e.expected, 1)
+        @Expect(e.actual, 2)
+    }
+
+    @TestCase
+    public func testCreateOptimisticLockExceptionStringPkKeepsRaw(): Unit {
+        let e = OptimisticLockException.createWithStringPk("Event", "uuid-9", 4, 6)
+        @Expect(e.pk, "uuid-9")
+        @Expect(e.message.contains("uuid-9"), true)
+    }
+
+    @TestCase
     public func testCatchOptimisticLockExceptionAsRefineException(): Unit {
         try {
-            throw OptimisticLockException("User", 42, 3, 5)
+            throw OptimisticLockException.createWithInt64Pk("User", 42, 3, 5)
         } catch (e: RefineException) {
             @Expect(e.message.contains("optimistic lock conflict"), true)
         }
