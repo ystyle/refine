@@ -37,11 +37,16 @@ public class RandomIdGenerator <: IdGenerator {
 public class SonyflakeIdGenerator <: IdGenerator {
     private let sf: Sonyflake
 
+    // M3: machineId 可配置。默认随机；多进程共享同一数据库时，必须为每个进程显式
+    // 配置不同的 machineId，否则不同进程的随机 machineId 可能撞车导致 ID 冲突。
     public init() {
         let rng = Random()
         let machineId = UInt16(rng.nextUInt64() % 65536)
-        let st = Setting(machineId)
-        this.sf = Sonyflake(st)
+        this.sf = Sonyflake(Setting(machineId))
+    }
+
+    public init(machineId: UInt16) {
+        this.sf = Sonyflake(Setting(machineId))
     }
 
     public func generate(): String {
