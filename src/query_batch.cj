@@ -26,14 +26,39 @@ extend<T> Query<T> {
     // （Expr.Value 数组渲染为单个参数，无法展开为 ?,?,...），且在 scope 内不允许改动
     // 三方言 renderExpr 为 IN 列表新增变体，故 SELECT/FROM 走 Statement 机器，
     // WHERE 的 IN 部分由 buildInClause 手写占位符生成。
+    // R-I2：sourceColumnMap 是产生当前 entities 的查询结果列映射（顶层为主查询 columnMap，
+    // 嵌套层为父关系批量查询 columnMap）。ref_to 批量装配需要从主实体读 fk 值，若主查询
+    // SELECT 省略 fk 列（如 select([id, title]) include author），宏层 mapper 对缺失列宽容
+    // （列缺失字段留默认值 0/""），isEmptyFk 会把整批 fk 误判为空而静默跳过批量查询，
+    // author 恒为 None 且无任何错误。故每个 ref_to 关系的 fk 列必须出现在 sourceColumnMap
+    // 中，否则抛带关系名与列名的 QueryException（fail-fast，风格同 has_many 的 rawIdExtractor
+    // 主键守卫；只守卫 ref_to——has_many/has_one 用主实体主键，已由 requireCollectionIdSupport/
+    // rawIdExtractor 守卫）。守卫与行数无关：空行集下配置错误同样抛错。
+    // Task 6 递归需要把各关系装配到的目标实体（targets）对应的批量查询 columnMap 一并返回
+    // （三元组第三位），供下一层递归对嵌套 ref_to 做同样的 fk 列守卫。
     private func assembleRefTo<E>(
         exec: ExecutionContext,
         dialect: Dialect,
         entities: Array<E>,
-        rels: Array<IRelation>
-    ): ArrayList<(IRelation, Array<Any>)> {
-        let result = ArrayList<(IRelation, Array<Any>)>()
-        if (rels.size == 0 || entities.size == 0) { return result }
+        rels: Array<IRelation>,
+        sourceColumnMap: HashMap<String, Int64>
+    ): ArrayList<(IRelation, Array<Any>, HashMap<String, Int64>)> {
+        let result = ArrayList<(IRelation, Array<Any>, HashMap<String, Int64>)>()
+        if (rels.size == 0) { return result }
+
+        // R-I2 守卫：所有 ref_to 关系的 fk 列必须出现在源结果列映射中。
+        // sourceColumnMap.size == 0（驱动/mock 返回空列元信息，如 RMockDS 空结果集）时
+        // 无法验证，fail-open 保持旧行为（真实驱动的 SELECT 结果恒带列元信息，可验证）。
+        for (rel in rels) {
+            let (kind, relName, _, fkName, _, _) = rel.resolve()
+            if (kind != RelationKind.RefToRel) { continue }
+            if (sourceColumnMap.size > 0 && !sourceColumnMap.contains(fkName)) {
+                throw QueryException("include ref_to '" + relName + "' requires fk column '" + fkName +
+                    "' in the SELECT (batch include needs the foreign key value)")
+            }
+        }
+
+        if (entities.size == 0) { return result }
 
         var groups = ArrayList<(String, ArrayList<IRelation>)>()
         for (inc in rels) {
@@ -116,7 +141,7 @@ extend<T> Query<T> {
                         case None => ()
                     }
                 }
-                result.add((rel, targets.toArray()))
+                result.add((rel, targets.toArray(), columnMap))
             }
         }
         result
@@ -220,13 +245,16 @@ extend<T> Query<T> {
     // 与嵌套 include 共用同一条递归路径，见 assembleRecursive）。顶层 rels = included，
     // depth = 0，sourceTable = 顶层主查询 FROM 表（getSourceTable）；rawIds 与 entities
     // 按索引对齐，仅在 needsCollectionAssembly() 时有意义。
+    // R-I2：mainColumnMap 是主查询结果列映射，供顶层 ref_to 的 fk 列守卫使用
+    // （嵌套层由 assembleRecursive 逐层传入父批量查询的 columnMap）。
     func assembleIncludes(
         exec: ExecutionContext,
         dialect: Dialect,
         entities: Array<T>,
-        rawIds: Array<Any>
+        rawIds: Array<Any>,
+        mainColumnMap: HashMap<String, Int64>
     ): Unit {
-        assembleRecursive(exec, dialect, entities, included.toArray(), rawIds, getSourceTable(), 0)
+        assembleRecursive(exec, dialect, entities, included.toArray(), rawIds, mainColumnMap, getSourceTable(), 0)
     }
 
     // Task 6: 嵌套 include 统一装配引擎（递归）。对 entities（E 泛型：顶层为 Array<T>
@@ -248,6 +276,7 @@ extend<T> Query<T> {
         entities: Array<E>,
         rels: Array<IRelation>,
         mainIds: Array<Any>,
+        sourceColumnMap: HashMap<String, Int64>,
         sourceTable: String,
         depth: Int64
     ): Unit {
@@ -255,7 +284,11 @@ extend<T> Query<T> {
             throw QueryException("nested include exceeds max depth " + MaxNestedDepth.toString() +
                 "; check for include cycles")
         }
-        if (rels.size == 0 || entities.size == 0) { return }
+        if (rels.size == 0) { return }
+        // 不因 entities.size == 0 提前返回：assembleRefTo 的 R-I2 fk 列守卫与行数无关，
+        // 空结果集下 SELECT 缺 fk 列同样是配置错误，必须 fail-fast（对齐
+        // requireCollectionIdSupport 与行数无关的守卫语义）。各装配协议内部仍有
+        // entities.size == 0 早退，不会对空集发批量查询。
 
         // 1. 按 kind 分组（保持各组内 rels 顺序；ref_to → 集合 → ref_many 三条协议依次执行）
         var refToRels = ArrayList<IRelation>()
@@ -270,9 +303,10 @@ extend<T> Query<T> {
             }
         }
 
-        // 2. 三条协议依次装配，收集各关系装配到的目标实体
-        var pairs = ArrayList<(IRelation, Array<Any>)>()
-        let refToPairs = assembleRefTo(exec, dialect, entities, refToRels.toArray())
+        // 2. 三条协议依次装配，收集各关系装配到的目标实体（三元组第三位为产生 targets 的
+        //    批量查询 columnMap，供下一层递归对嵌套 ref_to 做 fk 列守卫，见 assembleRefTo 注释）。
+        var pairs = ArrayList<(IRelation, Array<Any>, HashMap<String, Int64>)>()
+        let refToPairs = assembleRefTo(exec, dialect, entities, refToRels.toArray(), sourceColumnMap)
         for (p in refToPairs) { pairs.add(p) }
         if (collRels.size > 0 || refManyRels.size > 0) {
             let collPairs = assembleCollections(exec, dialect, entities, mainIds, collRels.toArray())
@@ -283,19 +317,20 @@ extend<T> Query<T> {
 
         // 3. 递归装配各关系的嵌套 include（目标实体为空时下一层早退，不产生额外查询）。
         //    下一层 sourceTable = 父关系的 targetTable（当前层实体的表），供嵌套 ref_many
-        //    推导 junction 源列 `<当前层表>_id`。
+        //    推导 junction 源列 `<当前层表>_id`；下一层 sourceColumnMap = 父批量查询的
+        //    columnMap（targetColumnMap），供嵌套 ref_to 的 fk 列守卫使用。
         //    已知限制（diamond include，Task 6 batch-include 记档延期）：同一层两条关系
         //    指向同一目标表且带相同嵌套 include（如 author.withInclude(profile) +
         //    editor.withInclude(profile)，两个用户目标相同时）会对该表发两条冗余批量
         //    查询、嵌套 has_many 可能重复装配。按「目标表」去重的朴素守卫会把目标不同
         //    （author≠editor）时第二条递归整体跳过造成漏数据，正确做法需按目标表合并
         //    pairs 的目标与嵌套关系并去重，改动大，故记档延期。
-        for ((rel, targets) in pairs) {
+        for ((rel, targets, targetColumnMap) in pairs) {
             let nested = rel.getNested()
             if (nested.size == 0) { continue }
             let targetIds = collectTargetIds(rel, targets)
             let (_, _, nextSourceTable, _, _, _) = rel.resolve()
-            assembleRecursive(exec, dialect, targets, nested, targetIds, nextSourceTable, depth + 1)
+            assembleRecursive(exec, dialect, targets, nested, targetIds, targetColumnMap, nextSourceTable, depth + 1)
         }
     }
 
@@ -377,14 +412,15 @@ extend<T> Query<T> {
     // 跑两次、setter .add() 把子项追加成两份（同 assembleRefTo 的 targetSeen）。
     // rawIds 顶层来自 rawIdExtractor（主查询映射循环收集）、嵌套层来自父关系的
     // getTargetIdExtractor。
+    // R-I2：三元组第三位 = 产生 targets 的批量查询 columnMap（供嵌套 ref_to fk 列守卫）。
     private func assembleCollections<E>(
         exec: ExecutionContext,
         dialect: Dialect,
         entities: Array<E>,
         rawIds: Array<Any>,
         rels: Array<IRelation>
-    ): ArrayList<(IRelation, Array<Any>)> {
-        let result = ArrayList<(IRelation, Array<Any>)>()
+    ): ArrayList<(IRelation, Array<Any>, HashMap<String, Int64>)> {
+        let result = ArrayList<(IRelation, Array<Any>, HashMap<String, Int64>)>()
         if (rels.size == 0 || entities.size == 0) { return result }
         if (rawIds.size != entities.size) {
             throw QueryException("internal error: rawId collection size mismatch in assembleCollections")
@@ -508,7 +544,7 @@ extend<T> Query<T> {
                         case None => ()
                     }
                 }
-                result.add((rel, targets.toArray()))
+                result.add((rel, targets.toArray(), columnMap))
             }
         }
         result
@@ -533,6 +569,7 @@ extend<T> Query<T> {
     // Task 6 扩展：返回各关系实际装配到的目标实体数组（逐目标 add 时收集、按 target id
     // 去重），供嵌套 include 递归装配下一层关联——共享目标只装配一次，避免递归层把
     // 嵌套 has_many 的 setter .add() 对同一目标重复追加（assembleCollections 同样去重）。
+    // R-I2：三元组第三位 = 产生 targets 的批量查询 columnMap（供嵌套 ref_to fk 列守卫）。
     // 中间表列名与 buildJunctionSchema / relation_gen.cj 一致：
     //   源列 = <源表名>_id（sourceTable 由 assembleRecursive 传入：顶层为主查询 FROM 表，
     //     嵌套层为当前层级实体所在表 = 父关系 targetTable，见 assembleRecursive 注释），
@@ -548,8 +585,8 @@ extend<T> Query<T> {
         rawIds: Array<Any>,
         rels: Array<IRelation>,
         sourceTable: String
-    ): ArrayList<(IRelation, Array<Any>)> {
-        let result = ArrayList<(IRelation, Array<Any>)>()
+    ): ArrayList<(IRelation, Array<Any>, HashMap<String, Int64>)> {
+        let result = ArrayList<(IRelation, Array<Any>, HashMap<String, Int64>)>()
         if (rels.size == 0 || entities.size == 0) { return result }
         if (rawIds.size != entities.size) {
             throw QueryException("internal error: rawId collection size mismatch in assembleRefMany")
@@ -719,7 +756,7 @@ extend<T> Query<T> {
                         case None => ()
                     }
                 }
-                result.add((rel, targets.toArray()))
+                result.add((rel, targets.toArray(), columnMap))
             }
         }
         result

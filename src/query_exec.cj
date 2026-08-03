@@ -37,7 +37,7 @@ extend<T> Query<T> {
             let columnMap = buildColumnMap(result.columnInfos, columnOffset)
             let (entities, rawIds) = mapMainResult(result, columnMap, this.mapper.getOrThrow())
             // 批量装配在 AfterFind hook 之后执行（同 all()：hook 读关联字段为未装配状态）。
-            assembleIncludes(exec, dialect, entities, rawIds)
+            assembleIncludes(exec, dialect, entities, rawIds, columnMap)
             Page(entities, total, page, size)
         } finally {
             closeExecutor(exec)
@@ -68,7 +68,7 @@ extend<T> Query<T> {
             // 批量装配在 AfterFind hook 之后执行：主映射循环内先跑 runAfterFindHooks，
             // hook 内读取关联字段（如 entity.author）为未装配状态（None）——批量架构的固有取舍，
             // 旧 LEFT JOIN 方案在 hook 前已完成 ref_to 装配。
-            assembleIncludes(exec, dialect, entities, rawIds)
+            assembleIncludes(exec, dialect, entities, rawIds, columnMap)
             entities
         } finally {
             closeExecutor(exec)
@@ -111,7 +111,7 @@ extend<T> Query<T> {
             if (entities.size > 0) { res = Some(entities[0]) }
             // 批量装配在 AfterFind hook 之后执行（同 all()：hook 读关联字段为未装配状态）。
             match (res) {
-                case Some(_) => assembleIncludes(exec, dialect, entities, rawIds)
+                case Some(_) => assembleIncludes(exec, dialect, entities, rawIds, columnMap)
                 case None => ()
             }
             res

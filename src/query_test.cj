@@ -1619,6 +1619,123 @@ public class C4PageCollectionTest {
         @Expect(conn.stmt.capturedSqlHistory.size, 1)
     }
 
+    // R-I2 回归：主查询 SELECT 省略 ref_to 的 fk 列（如 select([id, title]) 不含 user_id）时，
+    // 宏层 mapper 对缺失列宽容（列缺失字段留默认值 0/""），isEmptyFk 会把整批 fk 误判为空
+    // 而静默跳过批量查询，author 恒为 None 且无任何错误。必须在装配入口抛带 fk 列名的
+    // QueryException（fail-fast，风格同 has_many 的 rawIdExtractor 主键守卫）。
+    @TestCase
+    public func testRefToIncludeMissingFkColumnThrows(): Unit {
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        tx.begin()
+        let cols: Array<SqlColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("title", false),
+        ]
+        let rows = [Array<Any>(2, {i => if (i == 0) { 5 } else { "p1" }})]
+        conn.stmt.queryResult = MapperMockQueryResult(cols, rows)
+        let q = PostWithRel.query().select([Expr.Column("id"), Expr.Column("title")])
+            .include(PostWithRelRel.author).using(tx)
+        try {
+            let _ = q.all()
+            @Fail("expected QueryException for missing fk column in select")
+        } catch (e: QueryException) {
+            @Expect(e.message.contains("user_id"), true)
+            @Expect(e.message.contains("author"), true)
+        }
+        // 守卫发生在主查询之后、批量查询之前：主查询已发、批量查询不发
+        @Expect(conn.stmt.capturedSqlHistory.size, 1)
+    }
+
+    // R-I2 回归：fk 列缺失时即使主查询返回空行集也必须抛错（配置错误 fail-fast，
+    // 与数据无关；has_many 主键守卫同样与行数无关）。
+    @TestCase
+    public func testRefToIncludeMissingFkColumnEmptyRowsStillThrows(): Unit {
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        tx.begin()
+        let cols: Array<SqlColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("title", false),
+        ]
+        conn.stmt.queryResult = MapperMockQueryResult(cols, [])
+        let q = PostWithRel.query().select([Expr.Column("id"), Expr.Column("title")])
+            .include(PostWithRelRel.author).using(tx)
+        try {
+            let _ = q.all()
+            @Fail("expected QueryException for missing fk column even with empty rows")
+        } catch (e: QueryException) {
+            @Expect(e.message.contains("user_id"), true)
+        }
+        @Expect(conn.stmt.capturedSqlHistory.size, 1)
+    }
+
+    // R-I2 正向路径：SELECT 显式包含 fk 列（user_id）时 ref_to include 正常批量装配。
+    @TestCase
+    public func testRefToIncludeFkSelectedStillWorks(): Unit {
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        tx.begin()
+        let mainCols: Array<SqlColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("title", false),
+            MapperMockColumnInfo("user_id", false),
+        ]
+        let mainRow = Array<Any>(3, {i =>
+            if (i == 0) { 5 } else if (i == 1) { "p1" } else { 10 }
+        })
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(mainCols, [mainRow]))
+        let userCols: Array<SqlColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("name", false),
+            MapperMockColumnInfo("email", false),
+        ]
+        let userRow = Array<Any>(3, {i =>
+            if (i == 0) { 10 } else if (i == 1) { "Alice" } else { "a@x.com" }
+        })
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(userCols, [userRow]))
+        let q = PostWithRel.query().select([Expr.Column("id"), Expr.Column("title"), Expr.Column("user_id")])
+            .include(PostWithRelRel.author).using(tx)
+        let entities = q.all()
+        @Expect(entities.size, 1)
+        @Expect(entities[0].author.isSome(), true)
+        @Expect(entities[0].author.getOrThrow().name, "Alice")
+        @Expect(conn.stmt.capturedSqlHistory.size, 2)
+    }
+
+    // R-I2 回归：嵌套层 ref_to 的 fk 列不在上层批量查询结果中（上层关系字段子集不含
+    // 该 fk）→ 递归装配同样抛带列名的 QueryException，而非静默丢关联。
+    @TestCase
+    public func testNestedRefToIncludeMissingFkColumnThrows(): Unit {
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        tx.begin()
+        let mainCols: Array<SqlColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("body", false),
+            MapperMockColumnInfo("author_id", false),
+        ]
+        let mainRow = Array<Any>(3, {i =>
+            if (i == 0) { 5 } else if (i == 1) { "c1" } else { 10 }
+        })
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(mainCols, [mainRow]))
+        // 上层 author 批量查询字段子集只有 id（FieldOverrideRelation），不含 team_id fk
+        let authorCols: Array<SqlColumnInfo> = [MapperMockColumnInfo("id", false)]
+        let authorRow = Array<Any>(1, {i => 10})
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(authorCols, [authorRow]))
+        let q = NestedCommentPost.query()
+            .include(NestedCommentPostRel.author.withInclude(NestedUserRefRel.team), [Col<Any>("id")])
+            .using(tx)
+        try {
+            let _ = q.all()
+            @Fail("expected QueryException for missing nested fk column")
+        } catch (e: QueryException) {
+            @Expect(e.message.contains("team_id"), true)
+        }
+        // 主查询 + 上层 author 批量查询已发；嵌套 team 批量查询在守卫处被拦下
+        @Expect(conn.stmt.capturedSqlHistory.size, 2)
+    }
+
     // Task 3 批量协议：主查询返回空（无实体）→ assembleRefTo 的 entities.size==0
     // 早退分支生效，不触发批量查询，只发主查询。
     @TestCase
