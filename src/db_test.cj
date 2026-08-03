@@ -471,6 +471,35 @@ public class DbTest {
         @Expect(stmt.parameterColumnInfos.size, 0)
     }
 
+    // Fix 2 (M19 评审): prepareStatement 是最后一个未加状态守卫的 SQL 能力入口，
+    // 与 execute/query 一致要求 Active，否则 `tx.prepareStatement(sql).update()`
+    // 可在事务结束后绕过状态机继续发 SQL。
+    @TestCase
+    public func testTxPrepareStatementWithoutBeginThrows(): Unit {
+        let conn = MockConnection()
+        let tx = Tx(conn)
+        try {
+            tx.prepareStatement("SELECT 1")
+            @Fail("expected RefineException")
+        } catch (e: RefineException) {
+            @Expect(e.message, "transaction is not active")
+        }
+    }
+
+    @TestCase
+    public func testTxPrepareStatementAfterCommitThrows(): Unit {
+        let conn = MockConnection()
+        let tx = Tx(conn)
+        tx.begin()
+        tx.commit()
+        try {
+            tx.prepareStatement("SELECT 1")
+            @Fail("expected RefineException")
+        } catch (e: RefineException) {
+            @Expect(e.message, "transaction is not active")
+        }
+    }
+
     @TestCase
     public func testTxExecute(): Unit {
         let conn = MockConnection()
@@ -558,6 +587,21 @@ public class DbTest {
         if (ds.created.size > 0) {
             @Expect(ds.created.get(0).getOrThrow().isClosed(), true)
         }
+    }
+
+    // Fix 1 (M19 评审): action 内手动 commit 后又抛异常时，DB.transaction 的
+    // 回滚路径不得遮蔽原始异常（best-effort 回滚，始终抛原始异常）。
+    @TestCase
+    public func testDBTransactionActionCommitThenThrowKeepsOriginal(): Unit {
+        let ds = RMockTrackingDS()
+        let db = DB(ds)
+        try {
+            db.transaction({ tx: Tx => tx.commit(); throw Exception("original failure") })
+            @Fail("expected Exception")
+        } catch (e: Exception) {
+            @Expect(e.message, "original failure")
+        }
+        @Expect(ds.created.size, 1)
     }
 
     @TestCase

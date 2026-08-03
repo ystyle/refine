@@ -286,6 +286,39 @@ public class RefineTest {
         r.close()
     }
 
+    // Fix 1 (M19 评审): action 内手动 commit 后又抛异常时，包装器的回滚路径
+    // 不能把原始异常遮蔽成 "transaction is not active"。回滚改为 best-effort，
+    // 始终向上传播原始异常。
+    @TestCase
+    public func testTransactionActionCommitThenThrowKeepsOriginal(): Unit {
+        let ds = RMockTrackingDS()
+        let r = Refine(ds, SQLiteDialect(), 0)
+        try {
+            r.transaction { tx: Tx => tx.commit(); throw Exception("original failure") }
+            @Fail("expected Exception")
+        } catch (e: Exception) {
+            @Expect(e.message, "original failure")
+        }
+        r.close()
+    }
+
+    @TestCase
+    public func testTransactionActionCommitThenThrowClosesConnection(): Unit {
+        let ds = RMockTrackingDS()
+        let r = Refine(ds, SQLiteDialect(), 0)
+        try {
+            r.transaction { tx: Tx => tx.commit(); throw Exception("original failure") }
+            @Fail("expected Exception")
+        } catch (_: Exception) {
+            @Expect(true, true)
+        }
+        @Expect(ds.created.size, 1)
+        if (ds.created.size > 0) {
+            @Expect(ds.created.get(0).getOrThrow().isClosed(), true)
+        }
+        r.close()
+    }
+
     @TestCase
     public func testHookRegister(): Unit {
         let r = Refine(RMockDS(), SQLiteDialect(), 0)

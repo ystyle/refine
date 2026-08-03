@@ -78,7 +78,9 @@ public class DB {
                 tx.commit()
                 return result
             } catch (e: Exception) {
-                tx.rollback()
+                // Fix 1 (M19 评审): best-effort 回滚——action 内手动 commit 后回滚会抛
+                // "transaction is not active"，吞掉它，始终向上传播原始异常。
+                try { tx.rollback() } catch (_: Exception) { () }
                 throw e
             }
         } finally {
@@ -243,6 +245,9 @@ public class Tx {
     }
 
     public func prepareStatement(sql: String): SqlStatement {
+        // Fix 2 (M19 评审): 与 execute/query 一致加 Active 守卫——否则
+        // `tx.prepareStatement(sql).update()` 可在事务结束后绕过状态机发 SQL。
+        assertActive()
         connection.prepareStatement(sql)
     }
 

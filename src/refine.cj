@@ -55,7 +55,11 @@ public class Refine {
                 tx.commit()
                 return result
             } catch (e: Exception) {
-                tx.rollback()
+                // Fix 1 (M19 评审): 回滚为 best-effort——action 内手动 commit 后再抛
+                // 异常时，tx.rollback() 会因状态已非 Active 抛 "transaction is not active"，
+                // 若直接向上传播会把原始异常遮蔽掉。吞掉回滚错误，始终抛原始异常。
+                // （真实回滚失败也选择记录而非覆盖原始异常，属标准模式。）
+                try { tx.rollback() } catch (_: Exception) { () }
                 throw e
             }
         } finally {
@@ -74,7 +78,7 @@ public class Refine {
                 tx.commit()
                 return result
             } catch (e: Exception) {
-                tx.rollback()
+                try { tx.rollback() } catch (_: Exception) { () }
                 throw e
             }
         } finally {

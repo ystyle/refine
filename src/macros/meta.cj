@@ -237,6 +237,36 @@ func typeNameToStorageType(typeName: String): String {
     } else { "StorageType.Json" }
 }
 
+// M22 评审（Fix 3）: 字段落入 typeNameToStorageType 的 Json 兜底分支（未知 struct）
+// 时，在宏展开期发编译期 WARNING。宏层未接线 TypeAdapter——这类字段写路径经
+// dispatchSet 落 setNull、读路径 result.get<T> 抛错，编译期提示比运行时静默更友好。
+func isJsonFallbackType(typeName: String): Bool {
+    typeNameToStorageType(typeName) == "StorageType.Json"
+}
+
+func emitUnknownTypeWarnings(cd: ClassDecl, fields: ArrayList<FieldInfo>): Unit {
+    for (i in 0..cd.body.decls.size) {
+        match (cd.body.decls[i] as VarDecl) {
+            case Some(vd) =>
+                let fn = vd.identifier.value
+                let typeStr = vd.declType.toTokens().toString()
+                if (isRelationField(typeStr)) { continue }
+                var storageOverride = ""
+                for (f in fields) {
+                    if (f.name == fn) { storageOverride = f.storageOverride; break }
+                }
+                // 用户显式 @Field[...] 覆盖过存储类型 = 知情选择，不警告
+                if (storageOverride != "") { continue }
+                if (isJsonFallbackType(typeStr)) {
+                    diagReport(DiagReportLevel.WARNING, vd.toTokens(),
+                        "entity field '" + fn + "' of type '" + typeStr + "' maps to StorageType.Json but has no TypeAdapter",
+                        "writes become NULL and reads fail — implement refine.TypeAdapter<" + typeStr + "> or override with @Field[...]")
+                }
+            case _ => ()
+        }
+    }
+}
+
 func mergeFieldOverrides(fields: ArrayList<FieldInfo>, fieldMessages: ArrayList<MacroMessage>): ArrayList<FieldInfo> {
     var result = ArrayList<FieldInfo>()
     for (fi in 0..fields.size) {

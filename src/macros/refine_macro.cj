@@ -58,6 +58,8 @@ public macro Refine(input: Tokens): Tokens {
     mergedFields = applyIdAnnotations(mergedFields, idMessages)
     let versionMessages = getChildMessages("Version")
     mergedFields = applyAuditVersion(mergedFields, versionMessages)
+    // M22 评审（Fix 3）: 未知 struct → Json 兜底字段发编译期 WARNING（无 TypeAdapter）
+    emitUnknownTypeWarnings(classDecl, mergedFields)
     let pkFields = getPkFields(mergedFields)
     var hasClientPk = false
     for (i in 0..pkFields.size) {

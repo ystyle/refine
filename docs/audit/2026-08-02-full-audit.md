@@ -246,10 +246,12 @@
 - **M18** 三方言约 150 行逐字节重复代码（render 主循环、renderExpr 系列），应抽取共享基类。
 - **M19** `Tx` 无"已提交/已回滚"状态，commit 后仍可 execute（无防护）。
   - **✅ 已解决（2026-08-03）**: `Tx` 增加 `TxState` 状态机（Unbegun/Active/Committed/RolledBack）。begin 重复抛"transaction already begun"；非 Active 下 execute/query/save/rollbackTo/commit/rollback 抛"transaction is not active"；`setIsolation` 不加守卫（`Refine.transaction(level:)` 在 begin 前调用）。所有测试基建补 `tx.begin()`（macro_test 158 处、query_test 70 处、db_test 16 处），新增 12 例状态防护测试。**行为变更提示**：在事务 action 内手动 commit 后再返回会触发外层 commit 抛错（此前为驱动双 commit 错误），属防御性改进。
+  - **评审修复（2026-08-03）**: (a) **异常遮蔽**——action 内手动 commit 后再抛异常时，包装器 catch 里的 `tx.rollback()` 会抛 "transaction is not active" 遮蔽原始异常；`Refine.transaction`（两个重载）与 `DB.transaction` 的 catch 改为 best-effort 回滚（`try { tx.rollback() } catch (_) { () }`），始终抛原始异常。(b) **prepareStatement 补守卫**——与 execute/query 一致要求 Active，堵住 `tx.prepareStatement(sql).update()` 事务结束后发 SQL 的旁路。新增 5 例测试（提交后抛异常保留原始异常 ×3、prepareStatement 未 begin/已 commit 抛异常 ×2）。
 - **M20** `Query<T>` 过度膨胀（构建/执行/聚合/DML/分页/include 全在一个类），`db/ref/queryDialect/columnOffset/keyExtractor` 混存多种绑定态。
 - **M21** `Refine.migrator()` 内 `DB(datasource)` 与 `DB(datasource, paramOffset)` 双分支笨拙（`refine.cj:131-139`）。
 - **M22** `meta.cj:228-238` `typeNameToStorageType` 把未知 struct 一律映射为 Text 而非 design 的 Json——自定义类型适配未真正接线到宏。
   - **✅ 已解决（2026-08-03，schema 默认推断）**: `else` 分支改为 `StorageType.Json`，对齐 design §6.3「struct → Json」。三方言 dataTypeOf(Json) 已就绪（SQLite TEXT / MySQL JSON / PG JSONB），`@Field[Text]` 仍可覆盖。新增 ProfileDoc 实体 + 2 例 schema 断言（storageType=Json、列名含 struct 字段）。**遗留**：宏层 TypeAdapter 读写接线（toStored/fromStored）仍未实现——含未知 struct 字段的实体，写路径 `dispatchSet` 落到 `setNull`、读路径 `result.get<StructType>` 会抛错。本项仅修正 schema 推断，Json 端到端读写需 TypeAdapter 接线（列为后续排期项）。
+  - **评审修复（2026-08-03）**: 宏展开期对落入 Json 兜底且无 `@Field[...]` 覆盖的字段发编译期 **WARNING**（`diagReport(DiagReportLevel.WARNING, ...)`），提示"无 TypeAdapter：写为 NULL、读抛错，建议实现 TypeAdapter 或 @Field 覆盖"——把静默运行时失败前置到编译期。已用 ProfileDoc.profile 验证 warning 输出格式。
 - **M23** `db.cj:296-299` dispatchSet1 死代码（与 M11 重复，保留一个）。
   - **✅ 已解决（2026-08-03）**: 与 M11 同项（重复登记），`dispatchSet1` 已删除。
 - **M24** junction schema 无联合主键（post_tags 的 (src_id,tgt_id) 应为主键）。
