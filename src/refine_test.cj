@@ -319,6 +319,39 @@ public class RefineTest {
         r.close()
     }
 
+    // R-M12: action 内手动 commit 后，包装器不得再次 commit（否则 M19 守卫抛
+    // "transaction is not active"），应正常返回——手动 commit 被尊重。
+    @TestCase
+    public func testTransactionActionManualCommitReturnsNormally(): Unit {
+        let r = Refine(RMockDS(), SQLiteDialect(), 0)
+        let result = r.transaction { tx: Tx => tx.commit(); 42 }
+        @Expect(result, 42)
+        r.close()
+    }
+
+    // R-M12: 隔离级别重载同样尊重手动 commit。
+    @TestCase
+    public func testTransactionLevelActionManualCommitReturnsNormally(): Unit {
+        let r = Refine(RMockDS(), MySQLDialect(), 0)
+        let result = r.transaction(IsolationLevel.Serializable) { tx: Tx => tx.commit(); 42 }
+        @Expect(result, 42)
+        r.close()
+    }
+
+    // R-M12: 手动 commit 后连接仍被 finally 关闭（不泄漏）。
+    @TestCase
+    public func testTransactionActionManualCommitClosesConnection(): Unit {
+        let ds = RMockTrackingDS()
+        let r = Refine(ds, SQLiteDialect(), 0)
+        let result = r.transaction { tx: Tx => tx.commit(); 42 }
+        @Expect(result, 42)
+        @Expect(ds.created.size, 1)
+        if (ds.created.size > 0) {
+            @Expect(ds.created.get(0).getOrThrow().isClosed(), true)
+        }
+        r.close()
+    }
+
     @TestCase
     public func testHookRegister(): Unit {
         let r = Refine(RMockDS(), SQLiteDialect(), 0)
@@ -690,5 +723,90 @@ public class RefineTest {
             @Expect(c.closeCount, 1)
         }
         r.close()
+    }
+
+    // R-M11: q.using(rf1) 预绑定 Session，再 rf2.all(q)。修复前 copy.executor 保留 s1，
+    // copy.using(s2) 覆盖为 s2，s1 连接泄漏（永不关闭）；修复后预绑定 Session 被关闭。
+    @TestCase
+    public func testAllClosesPreboundSessionFromUsingRf(): Unit {
+        let ds = RMockCountDS()
+        let rf1 = Refine(ds, SQLiteDialect(), 0)
+        let rf2 = Refine(RMockDS(), SQLiteDialect(), 0)
+        let q = Query<Int64>()
+        q.select([Expr.Column("id")])
+        q.from("t")
+        q.setMapper({ result: QueryResult, cm: HashMap<String, Int64> => 0 })
+        q.using(rf1)
+        let result = rf2.all(q)
+        @Expect(result.size, 0)
+        @Expect(ds.created.size, 1)
+        if (ds.created.size > 0) {
+            let c = ds.created.get(0).getOrThrow()
+            @Expect(c.closeCount, 1)
+        }
+        rf1.close()
+        rf2.close()
+    }
+
+    // R-M11: 同 all，验证 one() 路径预绑定 Session 也被关闭。
+    @TestCase
+    public func testOneClosesPreboundSessionFromUsingRf(): Unit {
+        let ds = RMockCountDS()
+        let rf1 = Refine(ds, SQLiteDialect(), 0)
+        let rf2 = Refine(RMockDS(), SQLiteDialect(), 0)
+        let q = Query<Int64>()
+        q.select([Expr.Column("id")])
+        q.from("t")
+        q.setMapper({ result: QueryResult, cm: HashMap<String, Int64> => 0 })
+        q.using(rf1)
+        let result = rf2.one(q)
+        @Expect(result.isNone(), true)
+        @Expect(ds.created.size, 1)
+        if (ds.created.size > 0) {
+            let c = ds.created.get(0).getOrThrow()
+            @Expect(c.closeCount, 1)
+        }
+        rf1.close()
+        rf2.close()
+    }
+
+    // R-M11: q.using(db) 预绑定 Session（database.session()），rf.all(q) 时同样关闭。
+    @TestCase
+    public func testAllClosesPreboundSessionFromUsingDb(): Unit {
+        let ds = RMockCountDS()
+        let db = DB(ds)
+        let rf = Refine(RMockDS(), SQLiteDialect(), 0)
+        let q = Query<Int64>()
+        q.select([Expr.Column("id")])
+        q.from("t")
+        q.setMapper({ result: QueryResult, cm: HashMap<String, Int64> => 0 })
+        q.using(db)
+        let result = rf.all(q)
+        @Expect(result.size, 0)
+        @Expect(ds.created.size, 1)
+        if (ds.created.size > 0) {
+            let c = ds.created.get(0).getOrThrow()
+            @Expect(c.closeCount, 1)
+        }
+        rf.close()
+    }
+
+    // R-M11: 预绑定 Tx 不属于 Refine.all 的生命周期，不得关闭——执行改用新 session 后
+    // Tx 仍保持 Active，调用方继续 commit 不抛 "transaction is not active"。
+    @TestCase
+    public func testAllDoesNotClosePreboundTx(): Unit {
+        let rf = Refine(RMockDS(), SQLiteDialect(), 0)
+        let q = Query<Int64>()
+        q.select([Expr.Column("id")])
+        q.from("t")
+        q.setMapper({ result: QueryResult, cm: HashMap<String, Int64> => 0 })
+        let tx = Tx(RMockConn(), rf, 0)
+        tx.begin()
+        q.using(tx)
+        let result = rf.all(q)
+        @Expect(result.size, 0)
+        tx.commit()
+        @Expect(true, true)
+        rf.close()
     }
 }

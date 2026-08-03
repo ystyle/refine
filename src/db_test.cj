@@ -391,6 +391,35 @@ public class DbTest {
         @Expect(result.rowCount, 0)
     }
 
+    // ─── R-M12: Tx.isActive() 状态查询 ────────────────────────────────
+    // 事务包装器（Refine/DB.transaction）在 action 返回后靠 isActive() 决定是否
+    // 自动 commit：仅 Active 时 auto-commit，手动 commit 后为 false → 跳过。
+
+    @TestCase
+    public func testTxIsActiveStateTransitions(): Unit {
+        let conn = MockConnection()
+        let tx = Tx(conn)
+        // Unbegun → 非 Active
+        @Expect(tx.isActive(), false)
+        tx.begin()
+        // Active → true
+        @Expect(tx.isActive(), true)
+        tx.commit()
+        // Committed → false
+        @Expect(tx.isActive(), false)
+    }
+
+    @TestCase
+    public func testTxIsActiveAfterRollback(): Unit {
+        let conn = MockConnection()
+        let tx = Tx(conn)
+        tx.begin()
+        @Expect(tx.isActive(), true)
+        tx.rollback()
+        // RolledBack → false
+        @Expect(tx.isActive(), false)
+    }
+
     @TestCase
     public func testDispatchSetInt64(): Unit {
         let stmt = MockStatement()
@@ -684,6 +713,29 @@ public class DbTest {
             @Expect(e.message, "original failure")
         }
         @Expect(ds.created.size, 1)
+    }
+
+    // R-M12: action 内手动 commit 后，DB.transaction 包装器不得再次 commit 抛
+    // "transaction is not active"，应正常返回——手动 commit 被尊重。
+    @TestCase
+    public func testDBTransactionActionManualCommitReturnsNormally(): Unit {
+        let ds = MockDatasource()
+        let db = DB(ds)
+        let result = db.transaction({ tx: Tx => tx.commit(); "committed" })
+        @Expect(result, "committed")
+    }
+
+    // R-M12: DB.transaction 手动 commit 后连接仍被 finally 关闭（不泄漏）。
+    @TestCase
+    public func testDBTransactionActionManualCommitClosesConnection(): Unit {
+        let ds = RMockTrackingDS()
+        let db = DB(ds)
+        let result = db.transaction({ tx: Tx => tx.commit(); "committed" })
+        @Expect(result, "committed")
+        @Expect(ds.created.size, 1)
+        if (ds.created.size > 0) {
+            @Expect(ds.created.get(0).getOrThrow().isClosed(), true)
+        }
     }
 
     @TestCase

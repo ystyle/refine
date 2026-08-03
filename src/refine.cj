@@ -52,7 +52,10 @@ public class Refine {
             tx.begin()
             try {
                 let result = action(tx)
-                tx.commit()
+                // R-M12: action 内手动 commit 后状态为 Committed，isActive() = false，
+                // 外层跳过 auto-commit——否则 M19 守卫抛 "transaction is not active"，
+                // 把「成功返回」误转成异常。仅 Active 时才自动 commit。
+                if (tx.isActive()) { tx.commit() }
                 return result
             } catch (e: Exception) {
                 // Fix 1 (M19 评审): 回滚为 best-effort——action 内手动 commit 后再抛
@@ -75,7 +78,8 @@ public class Refine {
             tx.begin()
             try {
                 let result = action(tx)
-                tx.commit()
+                // R-M12: 同上——仅 Active 时自动 commit，尊重 action 内的手动 commit。
+                if (tx.isActive()) { tx.commit() }
                 return result
             } catch (e: Exception) {
                 try { tx.rollback() } catch (_: Exception) { () }
@@ -131,11 +135,19 @@ public class Refine {
     // R-I1: 副本必须绑定本 Refine 实例（copy.ref = Some(this)）。session() 创建的
     // Session 携带 ref = Some(this)，using(exec) 现也会自动传播；此处的显式赋值是
     // 双保险——即便未来 session 不携带 ref，Refine.all/one 仍保证触发本实例的 AfterFind。
+    // R-M11: 调用方可能已用 using(rf)/using(db)/using(session) 预绑定 Session；下面的
+    // using(s) 会覆盖 copy.executor，若先不关闭旧 Session，其底层连接将永远泄漏。
+    // 故在覆盖前按 closeExecutor 语义关闭预绑定的 Session（预绑定 Tx 属外部生命周期，
+    // 不在此关闭，执行只会改用本方法新建的 session）。
     public func all<T>(query: Query<T>): Array<T> {
         let s = session()
         try {
             let copy = query.copy()
             copy.ref = Some(this)
+            match (copy.executor) {
+                case Some(exec) => copy.closeExecutor(exec)
+                case None => ()
+            }
             return copy.using(s).all()
         } finally {
             s.close()
@@ -147,6 +159,10 @@ public class Refine {
         try {
             let copy = query.copy()
             copy.ref = Some(this)
+            match (copy.executor) {
+                case Some(exec) => copy.closeExecutor(exec)
+                case None => ()
+            }
             return copy.using(s).one()
         } finally {
             s.close()

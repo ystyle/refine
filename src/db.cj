@@ -75,7 +75,9 @@ public class DB {
             tx.begin()
             try {
                 let result = action(tx)
-                tx.commit()
+                // R-M12: 仅 Active 时自动 commit——action 内手动 commit 后外层跳过，
+                // 避免 M19 守卫抛 "transaction is not active" 把成功路径转成异常。
+                if (tx.isActive()) { tx.commit() }
                 return result
             } catch (e: Exception) {
                 // Fix 1 (M19 评审): best-effort 回滚——action 内手动 commit 后回滚会抛
@@ -232,6 +234,17 @@ public class Tx {
         assertActive()
         transaction.rollback()
         state = TxState.RolledBack
+    }
+
+    // R-M12: 事务当前是否处于 Active 状态。事务包装器（Refine/DB.transaction）在
+    // action 返回后据此决定是否自动 commit——action 内手动 commit 后状态为 Committed，
+    // 外层跳过 auto-commit，避免 M19 守卫抛 "transaction is not active" 把成功路径
+    // 变成异常。用 match 而非 ==（仓颉枚举默认不实现 Equatable）。
+    public func isActive(): Bool {
+        match (state) {
+            case TxState.Active => true
+            case _ => false
+        }
     }
 
     public func save(name: String): Unit {
