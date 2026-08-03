@@ -13,12 +13,15 @@ func buildRelationMethods(className: String, rels: ArrayList<RelInfo>, cd: Class
         let prefix = upperFirstLetter(r.fieldName)
         let schemaIdent = Token(TokenKind.IDENTIFIER, r.target + "Schema")
         let tableNameExpr = quote($(schemaIdent)().tableName())
-        // SQL 中的表名运行时求值（支持 @Table 覆盖），列名保持原样
-        let refToSQL = quote("SELECT * FROM " + $(tableNameExpr) + " WHERE id = ?")
-        let hasManyLoadSQL = quote("SELECT * FROM " + $(tableNameExpr) + " WHERE " + $(Token(TokenKind.STRING_LITERAL, r.by)) + " = ?")
-        let hasManyClearSQL = quote("DELETE FROM " + $(tableNameExpr) + " WHERE " + $(Token(TokenKind.STRING_LITERAL, r.by)) + " = ?")
-        let hasOneLoadSQL = quote("SELECT * FROM " + $(tableNameExpr) + " WHERE " + $(Token(TokenKind.STRING_LITERAL, r.by)) + " = ?")
-        let hasOneRemoveSQL = quote("DELETE FROM " + $(tableNameExpr) + " WHERE " + $(Token(TokenKind.STRING_LITERAL, r.by)) + " = ?")
+        // R-I6: 管理方法 SQL 标识符（目标表名、id、r.by fk 列）全部经
+        // tx.getDialect().quoteIdentifier 运行时引号化（与 I21 junction 引号化对齐）。
+        // 修复前裸标识符在 PG 下折叠小写，@Table["CamelCase"] 表名或驼峰 fk 无法命中。
+        // 各方法均带 tx: Tx 参数（loadX/clearX/setX/removeX），故可在此取 tx.getDialect()。
+        let refToSQL = quote("SELECT * FROM " + tx.getDialect().quoteIdentifier($(tableNameExpr)) + " WHERE " + tx.getDialect().quoteIdentifier("id") + " = ?")
+        let hasManyLoadSQL = quote("SELECT * FROM " + tx.getDialect().quoteIdentifier($(tableNameExpr)) + " WHERE " + tx.getDialect().quoteIdentifier($(Token(TokenKind.STRING_LITERAL, r.by))) + " = ?")
+        let hasManyClearSQL = quote("DELETE FROM " + tx.getDialect().quoteIdentifier($(tableNameExpr)) + " WHERE " + tx.getDialect().quoteIdentifier($(Token(TokenKind.STRING_LITERAL, r.by))) + " = ?")
+        let hasOneLoadSQL = quote("SELECT * FROM " + tx.getDialect().quoteIdentifier($(tableNameExpr)) + " WHERE " + tx.getDialect().quoteIdentifier($(Token(TokenKind.STRING_LITERAL, r.by))) + " = ?")
+        let hasOneRemoveSQL = quote("DELETE FROM " + tx.getDialect().quoteIdentifier($(tableNameExpr)) + " WHERE " + tx.getDialect().quoteIdentifier($(Token(TokenKind.STRING_LITERAL, r.by))) + " = ?")
 
         if (r.kind == "ref_to") {
             let fkField = Token(TokenKind.IDENTIFIER, r.by)
@@ -77,6 +80,8 @@ func buildRelationMethods(className: String, rels: ArrayList<RelInfo>, cd: Class
             let countName = Token(TokenKind.IDENTIFIER, "count" + prefix)
             let unsavedMsg = Token(TokenKind.STRING_LITERAL,
                 "ref_many " + r.fieldName + ": target " + r.target + " has empty id, save it first")
+            let stringPkMsg = Token(TokenKind.STRING_LITERAL,
+                "ref_many " + r.fieldName + ": target " + r.target + " uses String primary key but junction target column is Integer — unimplemented, see audit R-I9")
             let insertSQL = quote(
                 "INSERT INTO " + tx.getDialect().quoteIdentifier($(viaLit)) + " (" + tx.getDialect().quoteIdentifier($(sourceSchemaIdent)().tableName() + "_id") + ", " + tx.getDialect().quoteIdentifier($(targetColLit)) + ") VALUES (?, ?)"
             )
@@ -97,6 +102,15 @@ func buildRelationMethods(className: String, rels: ArrayList<RelInfo>, cd: Class
                     case _ => false
                 }
                 if (isEmpty) { throw Exception($(unsavedMsg)) }
+                // R-I9: junction 目标列硬编码 Integer（schema_gen.cj buildJunctionSchema，
+                // 宏层无法跨类内省目标主键类型），String-pk 目标会把 String id 绑进 INTEGER
+                // 列 → 真实 DB 类型错误。执行前抛明确 RefineException（fail-fast，替代
+                // DB 层报错）。Int64-pk 目标不受影响（case _ 分支）。has_many/has_one 走
+                // fk 回填不涉及 junction 目标列，无此限制。
+                match (anyId) {
+                    case _: String => throw RefineException($(stringPkMsg))
+                    case _ => ()
+                }
             )
             cd.body.decls.add(FuncDecl(quote(
                 public func $(appendName)(tx: Tx, $(targetParam): $(targetType)): $(cn) {

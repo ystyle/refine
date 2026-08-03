@@ -40,6 +40,11 @@ func detectRelations(fields: ArrayList<FieldInfo>): ArrayList<RelInfo> {
             relFields.add("id")
             result.add(RelInfo(f.name, "ref_many", targetType, "", relFields, f.name))
         } else if (tn.contains("Array<")) {
+            // R-I8: Array<UInt8> 是一等存储类型 Bytes（typeNameToStorageType → StorageType.Bytes），
+            // 不是 ref_many 集合。修复前被当作 ref_many → 生成 RefMany<UInt8> 引用
+            // 不存在的 UInt8Schema/UInt8Rel → Bytes 实体字段不可达。
+            // isBytesArrayType 归一化比较（toTokens().toString() 渲染泛型带空格）。
+            if (isBytesArrayType(tn)) { continue }
             let start = tn.indexOf("Array<").getOrThrow() + 6
             let end = tn.lastIndexOf(">").getOrThrow()
             let targetType = tn[start..end]
@@ -201,7 +206,19 @@ func upperFirstLetter(name: String): String {
     name[0..1].toAsciiUpper() + name[1..]
 }
 
+// R-I8: Array<UInt8> 是 Bytes 存储类型（一等标量），不是关系集合——关系检测白名单排除。
+// detectRelations 与 isRelationField 共享此判定，保证 schema/insert/select/mapper
+// 各路径把 Array<UInt8> 当普通字段处理（typeNameToStorageType → StorageType.Bytes）。
+//
+// 注意：`vd.declType.toTokens().toString()` 对泛型类型渲染带空格（实测 "Array < UInt8 >"、
+// "Option < X >"、"ArrayList < X >"），故比较前必须归一化（去空格），
+// 否则 "Array<UInt8>" 字面量永远匹配不上真实类型字符串。
+func isBytesArrayType(typeName: String): Bool {
+    typeName.replace(" ", "") == "Array<UInt8>"
+}
+
 func isRelationField(typeName: String): Bool {
+    if (isBytesArrayType(typeName)) { return false }
     typeName.contains("Option") || typeName.contains("ArrayList") || typeName.contains("Array")
 }
 
@@ -232,7 +249,7 @@ func typeNameToStorageType(typeName: String): String {
     } else if (typeName == "Float32" || typeName == "Float64") { "StorageType.Float"
     } else if (typeName == "Bool") { "StorageType.`Bool`"
     } else if (typeName == "String") { "StorageType.String"
-    } else if (typeName == "Array<UInt8>") { "StorageType.Bytes"
+    } else if (isBytesArrayType(typeName)) { "StorageType.Bytes"
     } else if (typeName == "DateTime") { "StorageType.Timestamp"
     } else { "StorageType.Json" }
 }

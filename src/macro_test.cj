@@ -118,6 +118,16 @@ public class PgEvent {
     var payload: String = ""
 }
 
+// R-I8 fixture: Array<UInt8> 是 Bytes 存储（一等存储类型），不是 ref_many 集合。
+// 修复前 detectRelations 把一切 Array<X> 当 ref_many → 生成 RefMany<UInt8> 引用
+// 不存在的 UInt8Schema/UInt8Rel → 难懂编译错误，Bytes 实体字段不可达。
+@Refine
+public class ByteBlobEntity {
+    var id: Int64 = 0
+    var name: String = ""
+    var data: Array<UInt8> = []
+}
+
 // I2 回归实体：驼峰表名/列名 + 驼峰关系名，验证 PG 标识符原样保留
 @Refine
 public class CamelUser {
@@ -237,6 +247,36 @@ public class CamelViaPost {
 
     @Ref[Tag, via: camelViaPostTags]
     var tags: ArrayList<Tag> = ArrayList<Tag>()
+}
+
+// R-I6 fixture：驼峰表名 + 驼峰 fk 的管理方法（loadX/clearX/setX/removeX）。
+// 修复前 refToSQL/hasManyLoadSQL/hasManyClearSQL/hasOneLoadSQL/hasOneRemoveSQL 把
+// 表名（TargetSchema().tableName() 未引号）、id、r.by fk 列裸写进 SQL，PG 下驼峰
+// 标识符折叠小写无法命中。修复后经 tx.getDialect().quoteIdentifier 运行时引号化。
+@Refine
+public class CamelComment {
+    var id: Int64 = 0
+    var body: String = ""
+    var camelPostId: Int64 = 0
+}
+
+@Refine
+public class CamelProfile {
+    var id: Int64 = 0
+    var bio: String = ""
+    var camelPostId: Int64 = 0
+}
+
+@Refine
+public class CamelPostWithRel {
+    var id: Int64 = 0
+    var title: String = ""
+
+    @Rel[has_many, CamelComment, camelPostId]
+    var comments: ArrayList<CamelComment> = ArrayList<CamelComment>()
+
+    @Rel[has_one, CamelProfile, camelPostId]
+    var profile: Option<CamelProfile> = None
 }
 
 // F1 fixture：String-pk 源实体 → Int64-pk 目标（Tag）。junction 源列类型跟随源主键
@@ -491,13 +531,10 @@ public class SoftDeleteChild {
     var parent_id: Int64 = 0
 }
 
-// M9: DateTime 声明的 deleted_at——软删除过滤应为 IS NULL，软删写值应为 DateTime.now()
-@Refine
-public class DateTimeSoftDeleteEntity {
-    var id: Int64 = 0
-    var name: String = ""
-    var deleted_at: DateTime = DateTime.now()
-}
+// R-I7: 曾在此处声明 `deleted_at: DateTime` 的软删实体（M9 fixture）。
+// 该配置生成的 IS NULL 过滤恒假（INSERT 写入 DateTime.now() 后列永非 NULL），
+// 修复后宏层在展开期直接抛编译错误（见 refine_macro.cj R-I7 守卫），因此该 fixture
+// 与 DateTimeSoftDeleteTest 一并移除——非 Option DateTime 软删字段不可用（F4 前）。
 
 class HookFlag {
     var called: Bool = false
@@ -628,6 +665,15 @@ class CaptureConnection <: Connection {
         stmt.capturedSqlHistory.add(sql)
         stmt
     }
+}
+
+// 共享测试助手：CaptureConnection + 指定方言 Tx（WritePathDialectQuotingTest 的
+// 私有 txWith 语义相同，多个测试类需要时提为顶层函数）。
+func makeTestTx(dialect: Dialect): (CaptureConnection, Tx) {
+    let conn = CaptureConnection()
+    let tx = Tx(conn, 0, dialect)
+    tx.begin()
+    (conn, tx)
 }
 
 class RowQueryResult <: QueryResult {
@@ -1703,62 +1749,10 @@ public class SoftDeleteTest {
     }
 }
 
-// M9: DateTime 版 deleted_at 的软删除行为——过滤走 IS NULL（而非 Int64 的 = 0），
-// 软删写值走 DateTime.now()（而非硬编码整数 1）。
-@Test
-public class DateTimeSoftDeleteTest {
-    @TestCase
-    public func testQueryAddsIsNullFilterForDateTimeDeletedAt(): Unit {
-        let q = DateTimeSoftDeleteEntity.query()
-        var hasIsNull = false
-        for (c in q.stmt.clauses) {
-            match (c) {
-                case Clause.WhereClause(predicates) =>
-                    for (p in predicates) {
-                        match (p) {
-                            case Expr.Unary(UnaryOp.IsNull, Expr.Column(name)) =>
-                                if (name == "deleted_at") { hasIsNull = true }
-                            case _ => ()
-                        }
-                    }
-                case _ => ()
-            }
-        }
-        @Expect(hasIsNull, true)
-    }
-
-    @TestCase
-    public func testTxDeleteWritesDateTimeValue(): Unit {
-        let conn = CaptureConnection()
-        let tx = Tx(conn)
-        tx.begin()
-        let e = DateTimeSoftDeleteEntity()
-        e.id = 1
-        tx.delete(e)
-        @Expect(conn.stmt.capturedSql.contains("UPDATE"), true)
-        @Expect(conn.stmt.capturedSql.contains("deleted_at"), true)
-        // 参数[0] 是 SET deleted_at 的值，必须是 DateTime（而非 Int64 1）
-        let first = conn.stmt.capturedSetValues[0]
-        var isDateTime = false
-        match (first) {
-            case _: DateTime => isDateTime = true
-            case _ => ()
-        }
-        @Expect(isDateTime, true)
-    }
-
-    @TestCase
-    public func testTxPhysicalDeleteIsDelete(): Unit {
-        let conn = CaptureConnection()
-        let tx = Tx(conn)
-        tx.begin()
-        let e = DateTimeSoftDeleteEntity()
-        e.id = 1
-        tx.physicalDelete(e)
-        @Expect(conn.stmt.capturedSql.contains("DELETE"), true)
-        @Expect(conn.stmt.capturedSql.contains("deleted_at"), false)
-    }
-}
+// R-I7: DateTime 版 deleted_at 的软删除行为测试已移除——非 Option DateTime 软删字段
+// 现在由宏层展开期守卫直接抛编译错误（恒假 IS NULL 过滤已不可能生成，见
+// refine_macro.cj R-I7 守卫 + docs/audit F4）。Int64 deleted_at 路径仍由上方
+// SoftDeleteTest 覆盖。Option<DateTime> 可空软删字段支持见 F4。
 
 // ─── Version + Audit Fields Tests ───────────────────────
 
@@ -2755,7 +2749,7 @@ public class CascadeTraversalTest {
         conn.stmt.queryResult = MapperMockQueryResult(cols, [Array<Any>(3, {i => if (i == 0) { 9 } else if (i == 1) { "hi" } else { 5 }})])
         p.cascadeDelete(tx, HashSet<String>())
         @Expect(conn.stmt.capturedSqlHistory.size, 3)
-        @Expect(conn.stmt.capturedSqlHistory[0], "SELECT * FROM comment WHERE post_id = ?")
+        @Expect(conn.stmt.capturedSqlHistory[0], "SELECT * FROM \"comment\" WHERE \"post_id\" = ?")
         @Expect(conn.stmt.capturedSqlHistory[1], "DELETE FROM \"comment\" WHERE \"id\" = ?")
         @Expect(conn.stmt.capturedSqlHistory[2], "DELETE FROM \"post_tags\" WHERE \"postWithRel_id\" = ?")
         @Expect(capturedInt64(conn.stmt.capturedSetValues, 0), 5)
@@ -2773,7 +2767,7 @@ public class CascadeTraversalTest {
         conn.stmt.queryResult = MapperMockQueryResult(cols, [Array<Any>(3, {i => if (i == 0) { 7 } else if (i == 1) { "b" } else { 3 }})])
         u.cascadeDelete(tx, HashSet<String>())
         @Expect(conn.stmt.capturedSqlHistory.size, 2)
-        @Expect(conn.stmt.capturedSqlHistory[0], "SELECT * FROM profileWithRel WHERE user_id = ?")
+        @Expect(conn.stmt.capturedSqlHistory[0], "SELECT * FROM \"profileWithRel\" WHERE \"user_id\" = ?")
         @Expect(conn.stmt.capturedSqlHistory[1], "DELETE FROM \"profileWithRel\" WHERE \"id\" = ?")
         @Expect(capturedInt64(conn.stmt.capturedSetValues, 0), 3)
         @Expect(capturedInt64(conn.stmt.capturedSetValues, 1), 7)
@@ -2792,9 +2786,9 @@ public class CascadeTraversalTest {
         root.id = 5
         root.cascadeDelete(tx, HashSet<String>())
         @Expect(conn.stmt.capturedSqlHistory.size, 5)
-        @Expect(conn.stmt.capturedSqlHistory[0], "SELECT * FROM categoryWithRel WHERE parent_id = ?")
-        @Expect(conn.stmt.capturedSqlHistory[1], "SELECT * FROM categoryWithRel WHERE parent_id = ?")
-        @Expect(conn.stmt.capturedSqlHistory[2], "SELECT * FROM categoryWithRel WHERE parent_id = ?")
+        @Expect(conn.stmt.capturedSqlHistory[0], "SELECT * FROM \"categoryWithRel\" WHERE \"parent_id\" = ?")
+        @Expect(conn.stmt.capturedSqlHistory[1], "SELECT * FROM \"categoryWithRel\" WHERE \"parent_id\" = ?")
+        @Expect(conn.stmt.capturedSqlHistory[2], "SELECT * FROM \"categoryWithRel\" WHERE \"parent_id\" = ?")
         @Expect(conn.stmt.capturedSqlHistory[3], "DELETE FROM \"categoryWithRel\" WHERE \"id\" = ?")
         @Expect(conn.stmt.capturedSqlHistory[4], "DELETE FROM \"categoryWithRel\" WHERE \"id\" = ?")
         @Expect(capturedInt64(conn.stmt.capturedSetValues, 3), 12)
@@ -2821,8 +2815,8 @@ public class CascadeTraversalTest {
         // 环在第二层被 "CategoryWithRel:5" 键命中即返回，且 deleteCascade 操作层守卫阻止对
         // A'(id=5)（与 root 同 (type,id) 的副本行）重复 DELETE：仅 2 次 SELECT + 1 次 DELETE(B)
         @Expect(conn.stmt.capturedSqlHistory.size, 3)
-        @Expect(conn.stmt.capturedSqlHistory[0], "SELECT * FROM categoryWithRel WHERE parent_id = ?")
-        @Expect(conn.stmt.capturedSqlHistory[1], "SELECT * FROM categoryWithRel WHERE parent_id = ?")
+        @Expect(conn.stmt.capturedSqlHistory[0], "SELECT * FROM \"categoryWithRel\" WHERE \"parent_id\" = ?")
+        @Expect(conn.stmt.capturedSqlHistory[1], "SELECT * FROM \"categoryWithRel\" WHERE \"parent_id\" = ?")
         @Expect(conn.stmt.capturedSqlHistory[2], "DELETE FROM \"categoryWithRel\" WHERE \"id\" = ?")
         @Expect(capturedInt64(conn.stmt.capturedSetValues, 0), 5)
         @Expect(capturedInt64(conn.stmt.capturedSetValues, 1), 9)
@@ -2927,7 +2921,7 @@ public class CascadeTraversalTest {
         order.cascadeDelete(tx, visited)
         // 父 cascadeDelete：SELECT 子对象 → 对每个子对象 tx.deleteCascade（DELETE）
         @Expect(conn.stmt.capturedSqlHistory.size, 2)
-        @Expect(conn.stmt.capturedSqlHistory[0], "SELECT * FROM orderLineItem WHERE order_id = ?")
+        @Expect(conn.stmt.capturedSqlHistory[0], "SELECT * FROM \"orderLineItem\" WHERE \"order_id\" = ?")
         @Expect(conn.stmt.capturedSqlHistory[1], "DELETE FROM \"orderLineItem\" WHERE \"tenant_id\" = ? AND \"line_no\" = ?")
         @Expect(capturedInt64(conn.stmt.capturedSetValues, 0), 5)
         @Expect(capturedInt64(conn.stmt.capturedSetValues, 1), 7)
@@ -3292,7 +3286,10 @@ public class RefManyStringPkTargetTest {
     }
 
     @TestCase
-    public func testAppendSavedStringPkTargetWritesId(): Unit {
+    public func testAppendSavedStringPkTargetThrowsUnimplemented(): Unit {
+        // R-I9: junction 目标列硬编码 Integer（宏层无法跨类内省目标主键类型），
+        // String-pk 目标会把 String id 绑进 INTEGER 列 → 真实 DB 类型错误。
+        // 修复后执行前抛明确 RefineException（而非 DB 层报错），Int64-pk 目标不受影响。
         let conn = CaptureConnection()
         let tx = Tx(conn)
         tx.begin()
@@ -3300,18 +3297,133 @@ public class RefManyStringPkTargetTest {
         p.id = 42
         let t = UuidTag()
         t.id = "uuid-tag-1"
-        p.appendTags(tx, t)
-        @Expect(conn.stmt.capturedSetValues.size, 2)
-        @Expect(capturedInt64(conn.stmt.capturedSetValues, 0), 42)
-        match (conn.stmt.capturedSetValues[1]) {
-            case v: String => @Expect(v, "uuid-tag-1")
-            case _ => @Fail("expected String tag id param")
+        try {
+            p.appendTags(tx, t)
+            @Fail("expected RefineException for String-pk target append")
+        } catch (e: RefineException) {
+            @Expect(e.message.contains("String primary key"), true)
+            @Expect(e.message.contains("Integer"), true)
+        }
+        // 守卫在 tx.execute 之前抛出：不允许触达 DB（capturedSql 保持空）
+        @Expect(conn.stmt.capturedSql, "")
+    }
+
+    @TestCase
+    public func testDeleteSavedStringPkTargetThrowsUnimplemented(): Unit {
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        tx.begin()
+        let p = UuidTagPost()
+        p.id = 42
+        let t = UuidTag()
+        t.id = "uuid-tag-1"
+        try {
+            p.deleteTags(tx, t)
+            @Fail("expected RefineException for String-pk target delete")
+        } catch (e: RefineException) {
+            @Expect(e.message.contains("String primary key"), true)
+        }
+        @Expect(conn.stmt.capturedSql, "")
+    }
+
+    @TestCase
+    public func testReplaceStringPkTargetThrowsUnimplemented(): Unit {
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        tx.begin()
+        let p = UuidTagPost()
+        p.id = 42
+        let t = UuidTag()
+        t.id = "uuid-tag-1"
+        let arr = [t]
+        try {
+            p.replaceTags(tx, arr)
+            @Fail("expected RefineException for String-pk target replace")
+        } catch (e: RefineException) {
+            @Expect(e.message.contains("String primary key"), true)
         }
     }
 }
 
-// ─── Tx.save/update/delete 级联接线 ───────────────────────
+// R-I8: Array<UInt8> 字段实体——Bytes 存储（非 ref_many）。
+// 修复前 detectRelations 把 Array<UInt8> 当 ref_many（RefMany<UInt8> 引用不存在的
+// UInt8Schema），Bytes 字段不可达。现在 Array<UInt8> 走 isRelationField 白名单排除，
+// 按普通标量字段处理：schema 列 Bytes + 写路径绑定 Array<UInt8> + 读路径 get<Array<UInt8>>。
+@Test
+public class ByteBlobFieldTest {
+    @TestCase
+    public func testSchemaMapsDataToBytes(): Unit {
+        let cols = ByteBlobEntitySchema().columns()
+        @Expect(cols.size, 3)
+        @Expect(cols[0].name, "id")
+        @Expect(cols[1].name, "name")
+        @Expect(cols[2].name, "data")
+        @Expect(cols[2].storageType, StorageType.Bytes)
+    }
 
+    @TestCase
+    public func testColumnNamesIncludeData(): Unit {
+        let cols = ByteBlobEntityColumnNames()
+        @Expect(cols.size, 3)
+        @Expect(cols[0].name, "id")
+        @Expect(cols[1].name, "name")
+        @Expect(cols[2].name, "data")
+    }
+
+    @TestCase
+    public func testSaveBindsArrayUInt8(): Unit {
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        tx.begin()
+        let e = ByteBlobEntity()
+        e.name = "blob"
+        e.data = [1, 2, 3, 254, 255]
+        tx.save(e)
+        @Expect(conn.stmt.capturedSql.contains("\"data\""), true)
+        @Expect(conn.stmt.capturedSetValues.size, 2)
+        match (conn.stmt.capturedSetValues[1]) {
+            case v: Array<UInt8> =>
+                @Expect(v.size, 5)
+                @Expect(v[0], 1)
+                @Expect(v[3], 254)
+                @Expect(v[4], 255)
+            case _ => @Fail("expected Array<UInt8> param for data field")
+        }
+    }
+
+    @TestCase
+    public func testRowMapperReadsArrayUInt8(): Unit {
+        let cols: Array<ColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("name", false),
+            MapperMockColumnInfo("data", false),
+        ]
+        let blob: Array<UInt8> = [9, 8, 7, 6]
+        let row = Array<Any>(3, { i => if (i == 0) { 1 } else if (i == 1) { "payload" } else { blob } })
+        let result = MapperMockQueryResult(cols, [row])
+        result.next()
+        let e = ByteBlobEntityRowMapper(result, buildColumnMap(cols, 0))
+        @Expect(e.id, 1)
+        @Expect(e.name, "payload")
+        @Expect(e.data.size, 4)
+        @Expect(e.data[0], 9)
+        @Expect(e.data[3], 6)
+    }
+
+    // R-I8 回归：Array<SomeEntity> 仍是 ref_many（白名单只排除 Array<UInt8>）。
+    // PostWithRel.tags（Array<Tag>）是既有 ref_many，appendTags 生成 junction INSERT
+    // 即证明 Array<Tag> 未被误判为标量字段。
+    @TestCase
+    public func testArrayOfEntityStillRefMany(): Unit {
+        let (conn, tx) = makeTestTx(SQLiteDialect())
+        let p = PostWithRel(); p.id = 42
+        let t = Tag(); t.id = 7
+        p.appendTags(tx, t)
+        @Expect(conn.stmt.capturedSql, "INSERT INTO \"post_tags\" (\"postWithRel_id\", \"tag_id\") VALUES (?, ?)")
+    }
+}
+
+// ─── Tx.save/update/delete 级联接线 ───────────────────────
 @Test
 public class TxCascadeTest {
     @TestCase
@@ -3390,7 +3502,7 @@ public class TxCascadeTest {
         conn.stmt.queryResult = MapperMockQueryResult(cols, [Array<Any>(3, {i => if (i == 0) { 9 } else if (i == 1) { "hi" } else { 5 }})])
         tx.delete(p)
         @Expect(conn.stmt.capturedSqlHistory.size, 4)
-        @Expect(conn.stmt.capturedSqlHistory[0], "SELECT * FROM comment WHERE post_id = ?")
+        @Expect(conn.stmt.capturedSqlHistory[0], "SELECT * FROM \"comment\" WHERE \"post_id\" = ?")
         @Expect(conn.stmt.capturedSqlHistory[1], "DELETE FROM \"comment\" WHERE \"id\" = ?")
         @Expect(conn.stmt.capturedSqlHistory[2], "DELETE FROM \"post_tags\" WHERE \"postWithRel_id\" = ?")
         @Expect(conn.stmt.capturedSqlHistory[3], "DELETE FROM \"postWithRel\" WHERE \"id\" = ?")
@@ -3409,7 +3521,7 @@ public class TxCascadeTest {
         conn.stmt.queryResult = MapperMockQueryResult(cols, [Array<Any>(4, {i => if (i == 0) { 2 } else if (i == 1) { "c" } else if (i == 2) { 0 } else { 1 }})])
         tx.delete(p)
         @Expect(conn.stmt.capturedSqlHistory.size, 3)
-        @Expect(conn.stmt.capturedSqlHistory[0], "SELECT * FROM softDeleteChild WHERE parent_id = ?")
+        @Expect(conn.stmt.capturedSqlHistory[0], "SELECT * FROM \"softDeleteChild\" WHERE \"parent_id\" = ?")
         @Expect(conn.stmt.capturedSqlHistory[1].contains("UPDATE \"softDeleteChild\" SET \"deleted_at\""), true)
         @Expect(conn.stmt.capturedSqlHistory[2].contains("UPDATE \"softDeleteParent\" SET \"deleted_at\""), true)
     }
@@ -3864,7 +3976,7 @@ public class TxPhysicalDeleteCascadeTest {
         conn.stmt.queryResult = MapperMockQueryResult(cols, [Array<Any>(4, {i => if (i == 0) { 2 } else if (i == 1) { "c" } else if (i == 2) { 0 } else { 1 }})])
         tx.physicalDelete(p)
         @Expect(conn.stmt.capturedSqlHistory.size, 3)
-        @Expect(conn.stmt.capturedSqlHistory[0], "SELECT * FROM softDeleteChild WHERE parent_id = ?")
+        @Expect(conn.stmt.capturedSqlHistory[0], "SELECT * FROM \"softDeleteChild\" WHERE \"parent_id\" = ?")
         @Expect(conn.stmt.capturedSqlHistory[1].contains("UPDATE \"softDeleteChild\" SET \"deleted_at\""), true)
         @Expect(conn.stmt.capturedSqlHistory[2], "DELETE FROM \"softDeleteParent\" WHERE \"id\" = ?")
         // 子对象只能被软删（UPDATE deleted_at=1，行保留），绝不能物理删（DELETE child 不应出现）
@@ -3887,16 +3999,9 @@ public class TxPhysicalDeleteCascadeTest {
 
 @Test
 public class WritePathDialectQuotingTest {
-    private func txWith(dialect: Dialect): (CaptureConnection, Tx) {
-        let conn = CaptureConnection()
-        let tx = Tx(conn, 0, dialect)
-        tx.begin()
-        (conn, tx)
-    }
-
     @TestCase
     public func testSaveSQLiteQuotesIdentifiers(): Unit {
-        let (conn, tx) = txWith(SQLiteDialect())
+        let (conn, tx) = makeTestTx(SQLiteDialect())
         let u = CamelUser()
         u.displayName = "Alice"
         tx.save(u)
@@ -3905,7 +4010,7 @@ public class WritePathDialectQuotingTest {
 
     @TestCase
     public func testSaveMySQLQuotesIdentifiers(): Unit {
-        let (conn, tx) = txWith(MySQLDialect())
+        let (conn, tx) = makeTestTx(MySQLDialect())
         let u = CamelUser()
         u.displayName = "Alice"
         tx.save(u)
@@ -3915,7 +4020,7 @@ public class WritePathDialectQuotingTest {
     @TestCase
     public func testSavePostgresQuotesIdentifiers(): Unit {
         // ManualIdPost 客户端主键：PG save 不触发 RETURNING，可断言整条 INSERT
-        let (conn, tx) = txWith(PostgreSQLDialect())
+        let (conn, tx) = makeTestTx(PostgreSQLDialect())
         let p = ManualIdPost()
         p.id = 1
         p.title = "T"
@@ -3925,7 +4030,7 @@ public class WritePathDialectQuotingTest {
 
     @TestCase
     public func testSavePostgresAutoPkReturningQuotesIdentifiers(): Unit {
-        let (conn, tx) = txWith(PostgreSQLDialect())
+        let (conn, tx) = makeTestTx(PostgreSQLDialect())
         conn.stmt.queryResult = RowQueryResult(7)
         let p = PgPost()
         p.title = "T"
@@ -3939,7 +4044,7 @@ public class WritePathDialectQuotingTest {
     @TestCase
     public func testSavePostgresCamelCaseAutoPkReturningQuotes(): Unit {
         // I20：驼峰自增主键列 postId 的 RETURNING 必须引号化（未引号 PG 折叠 postid）
-        let (conn, tx) = txWith(PostgreSQLDialect())
+        let (conn, tx) = makeTestTx(PostgreSQLDialect())
         conn.stmt.queryResult = RowQueryResult(9)
         let p = CamelAutoPkPost()
         p.title = "T"
@@ -3950,7 +4055,7 @@ public class WritePathDialectQuotingTest {
 
     @TestCase
     public func testBatchSaveSQLiteQuotesIdentifiers(): Unit {
-        let (conn, tx) = txWith(SQLiteDialect())
+        let (conn, tx) = makeTestTx(SQLiteDialect())
         let u1 = CamelUser(); u1.displayName = "A"
         let u2 = CamelUser(); u2.displayName = "B"
         tx.batchSave([u1, u2])
@@ -3959,7 +4064,7 @@ public class WritePathDialectQuotingTest {
 
     @TestCase
     public func testBatchSaveMySQLQuotesIdentifiers(): Unit {
-        let (conn, tx) = txWith(MySQLDialect())
+        let (conn, tx) = makeTestTx(MySQLDialect())
         let u1 = CamelUser(); u1.displayName = "A"
         let u2 = CamelUser(); u2.displayName = "B"
         tx.batchSave([u1, u2])
@@ -3968,7 +4073,7 @@ public class WritePathDialectQuotingTest {
 
     @TestCase
     public func testUpdateSQLiteQuotesIdentifiers(): Unit {
-        let (conn, tx) = txWith(SQLiteDialect())
+        let (conn, tx) = makeTestTx(SQLiteDialect())
         let u = CamelUser()
         u.id = 1
         u.displayName = "Updated"
@@ -3978,7 +4083,7 @@ public class WritePathDialectQuotingTest {
 
     @TestCase
     public func testUpdateMySQLQuotesIdentifiers(): Unit {
-        let (conn, tx) = txWith(MySQLDialect())
+        let (conn, tx) = makeTestTx(MySQLDialect())
         let u = CamelUser()
         u.id = 1
         u.displayName = "Updated"
@@ -3988,7 +4093,7 @@ public class WritePathDialectQuotingTest {
 
     @TestCase
     public func testUpdatePostgresQuotesIdentifiers(): Unit {
-        let (conn, tx) = txWith(PostgreSQLDialect())
+        let (conn, tx) = makeTestTx(PostgreSQLDialect())
         let u = CamelUser()
         u.id = 1
         u.displayName = "Updated"
@@ -3998,7 +4103,7 @@ public class WritePathDialectQuotingTest {
 
     @TestCase
     public func testUpdateCompoundPkQuotesIdentifiersSQLite(): Unit {
-        let (conn, tx) = txWith(SQLiteDialect())
+        let (conn, tx) = makeTestTx(SQLiteDialect())
         let ot = OrderItemTag()
         ot.order_id = 1
         ot.item_id = 2
@@ -4009,7 +4114,7 @@ public class WritePathDialectQuotingTest {
 
     @TestCase
     public func testUpdateOnlyPkAndVersionNoLeadingCommaSQLite(): Unit {
-        let (conn, tx) = txWith(SQLiteDialect())
+        let (conn, tx) = makeTestTx(SQLiteDialect())
         conn.stmt.mockRowCount = 1
         let e = VersionedOnly()
         e.id = 1
@@ -4022,7 +4127,7 @@ public class WritePathDialectQuotingTest {
 
     @TestCase
     public func testUpdateOnlyPkAndVersionNoLeadingCommaPostgres(): Unit {
-        let (conn, tx) = txWith(PostgreSQLDialect())
+        let (conn, tx) = makeTestTx(PostgreSQLDialect())
         conn.stmt.mockRowCount = 1
         let e = VersionedOnly()
         e.id = 1
@@ -4034,7 +4139,7 @@ public class WritePathDialectQuotingTest {
 
     @TestCase
     public func testDeleteSQLiteQuotesIdentifiers(): Unit {
-        let (conn, tx) = txWith(SQLiteDialect())
+        let (conn, tx) = makeTestTx(SQLiteDialect())
         let u = CamelUser()
         u.id = 1
         tx.delete(u)
@@ -4043,7 +4148,7 @@ public class WritePathDialectQuotingTest {
 
     @TestCase
     public func testDeleteCompoundPkSQLiteQuotesIdentifiers(): Unit {
-        let (conn, tx) = txWith(SQLiteDialect())
+        let (conn, tx) = makeTestTx(SQLiteDialect())
         let ot = OrderItemTag()
         ot.order_id = 1
         ot.item_id = 2
@@ -4053,7 +4158,7 @@ public class WritePathDialectQuotingTest {
 
     @TestCase
     public func testSoftDeleteSQLiteQuotesIdentifiers(): Unit {
-        let (conn, tx) = txWith(SQLiteDialect())
+        let (conn, tx) = makeTestTx(SQLiteDialect())
         let u = SoftUser()
         u.id = 1
         tx.delete(u)
@@ -4062,7 +4167,7 @@ public class WritePathDialectQuotingTest {
 
     @TestCase
     public func testSoftDeletePostgresQuotesIdentifiers(): Unit {
-        let (conn, tx) = txWith(PostgreSQLDialect())
+        let (conn, tx) = makeTestTx(PostgreSQLDialect())
         let u = SoftUser()
         u.id = 1
         tx.delete(u)
@@ -4071,7 +4176,7 @@ public class WritePathDialectQuotingTest {
 
     @TestCase
     public func testBatchUpdateSQLiteQuotesIdentifiers(): Unit {
-        let (conn, tx) = txWith(SQLiteDialect())
+        let (conn, tx) = makeTestTx(SQLiteDialect())
         let u1 = CamelUser(); u1.id = 1; u1.displayName = "A"
         let u2 = CamelUser(); u2.id = 2; u2.displayName = "B"
         tx.batchUpdate([u1, u2])
@@ -4080,7 +4185,7 @@ public class WritePathDialectQuotingTest {
 
     @TestCase
     public func testBatchUpdateMySQLQuotesIdentifiers(): Unit {
-        let (conn, tx) = txWith(MySQLDialect())
+        let (conn, tx) = makeTestTx(MySQLDialect())
         let u1 = CamelUser(); u1.id = 1; u1.displayName = "A"
         let u2 = CamelUser(); u2.id = 2; u2.displayName = "B"
         tx.batchUpdate([u1, u2])
@@ -4089,7 +4194,7 @@ public class WritePathDialectQuotingTest {
 
     @TestCase
     public func testBatchUpdatePostgresQuotesIdentifiers(): Unit {
-        let (conn, tx) = txWith(PostgreSQLDialect())
+        let (conn, tx) = makeTestTx(PostgreSQLDialect())
         let u1 = CamelUser(); u1.id = 1; u1.displayName = "A"
         let u2 = CamelUser(); u2.id = 2; u2.displayName = "B"
         tx.batchUpdate([u1, u2])
@@ -4099,7 +4204,7 @@ public class WritePathDialectQuotingTest {
 
     @TestCase
     public func testBatchUpdatePostgresCastSuffixQuotesIdentifiers(): Unit {
-        let (conn, tx) = txWith(PostgreSQLDialect())
+        let (conn, tx) = makeTestTx(PostgreSQLDialect())
         let p1 = PgPost(); p1.id = 1; p1.title = "A"; p1.content = "X"
         let p2 = PgPost(); p2.id = 2; p2.title = "B"; p2.content = "Y"
         tx.batchUpdate([p1, p2])
@@ -4108,7 +4213,7 @@ public class WritePathDialectQuotingTest {
 
     @TestCase
     public func testBatchUpdateCompoundPkSQLiteQuotesIdentifiers(): Unit {
-        let (conn, tx) = txWith(SQLiteDialect())
+        let (conn, tx) = makeTestTx(SQLiteDialect())
         let ot1 = OrderItemTag(); ot1.order_id = 1; ot1.item_id = 2; ot1.quantity = 5
         let ot2 = OrderItemTag(); ot2.order_id = 3; ot2.item_id = 4; ot2.quantity = 6
         tx.batchUpdate([ot1, ot2])
@@ -4122,7 +4227,7 @@ public class WritePathDialectQuotingTest {
 
     @TestCase
     public func testAppendTagsQuotesJunctionIdentifiersSQLite(): Unit {
-        let (conn, tx) = txWith(SQLiteDialect())
+        let (conn, tx) = makeTestTx(SQLiteDialect())
         let p = PostWithRel(); p.id = 42
         let t = Tag(); t.id = 7
         p.appendTags(tx, t)
@@ -4131,7 +4236,7 @@ public class WritePathDialectQuotingTest {
 
     @TestCase
     public func testAppendTagsQuotesJunctionIdentifiersPostgres(): Unit {
-        let (conn, tx) = txWith(PostgreSQLDialect())
+        let (conn, tx) = makeTestTx(PostgreSQLDialect())
         let p = PostWithRel(); p.id = 42
         let t = Tag(); t.id = 7
         p.appendTags(tx, t)
@@ -4140,7 +4245,7 @@ public class WritePathDialectQuotingTest {
 
     @TestCase
     public func testDeleteTagsQuotesJunctionIdentifiers(): Unit {
-        let (conn, tx) = txWith(PostgreSQLDialect())
+        let (conn, tx) = makeTestTx(PostgreSQLDialect())
         let p = PostWithRel(); p.id = 42
         let t = Tag(); t.id = 7
         p.deleteTags(tx, t)
@@ -4149,7 +4254,7 @@ public class WritePathDialectQuotingTest {
 
     @TestCase
     public func testClearTagsQuotesJunctionIdentifiers(): Unit {
-        let (conn, tx) = txWith(PostgreSQLDialect())
+        let (conn, tx) = makeTestTx(PostgreSQLDialect())
         let p = PostWithRel(); p.id = 42
         p.clearTags(tx)
         @Expect(conn.stmt.capturedSql, "DELETE FROM \"post_tags\" WHERE \"postWithRel_id\" = ?")
@@ -4157,7 +4262,7 @@ public class WritePathDialectQuotingTest {
 
     @TestCase
     public func testCountTagsQuotesJunctionIdentifiers(): Unit {
-        let (conn, tx) = txWith(PostgreSQLDialect())
+        let (conn, tx) = makeTestTx(PostgreSQLDialect())
         conn.stmt.queryResult = MapperMockQueryResult([MapperMockColumnInfo("COUNT(*)", false)], [Array<Any>(1, {i => 3})])
         let p = PostWithRel(); p.id = 42
         let n = p.countTags(tx)
@@ -4167,7 +4272,7 @@ public class WritePathDialectQuotingTest {
 
     @TestCase
     public func testLoadTagsQuotesJunctionIdentifiers(): Unit {
-        let (conn, tx) = txWith(PostgreSQLDialect())
+        let (conn, tx) = makeTestTx(PostgreSQLDialect())
         let p = PostWithRel(); p.id = 42
         p.loadTags(tx)
         @Expect(conn.stmt.capturedSql, "SELECT \"tag\".* FROM \"tag\" JOIN \"post_tags\" ON \"tag\".\"id\" = \"post_tags\".\"tag_id\" WHERE \"post_tags\".\"postWithRel_id\" = ?")
@@ -4176,11 +4281,87 @@ public class WritePathDialectQuotingTest {
     @TestCase
     public func testCamelViaPostJunctionQuotesIdentifiers(): Unit {
         // I21 驼峰 via 表名 + 驼峰源列（camelViaPostTags / camelViaPost_id）
-        let (conn, tx) = txWith(PostgreSQLDialect())
+        let (conn, tx) = makeTestTx(PostgreSQLDialect())
         let p = CamelViaPost(); p.id = 42
         let t = Tag(); t.id = 7
         p.appendTags(tx, t)
         @Expect(conn.stmt.capturedSql, "INSERT INTO \"camelViaPostTags\" (\"camelViaPost_id\", \"tag_id\") VALUES (?, ?)")
+    }
+}
+
+// ─── R-I6: 管理方法 SQL 标识符引号化 ────────────────────
+// ref_to/has_many/has_one 的管理方法（loadX/clearX/setX/removeX）SQL 的
+// 表名（TargetSchema().tableName()）、id、r.by fk 列全部经 tx.getDialect().quoteIdentifier
+// 运行时引号化（与 I21 junction 引号化对齐）。修复前裸标识符在 PG 下折叠小写，
+// @Table["CamelCase"] 表名或驼峰 fk 无法命中。
+@Test
+public class ManagementSQLQuotingTest {
+    // ref_to：CamelPost.authorProfile → CamelUser（表 camelUser），fk authorId
+    @TestCase
+    public func testRefToLoadQuotesIdentifiers(): Unit {
+        let (conn, tx) = makeTestTx(PostgreSQLDialect())
+        let p = CamelPost()
+        p.id = 42
+        p.authorId = 7
+        p.loadAuthorProfile(tx)
+        @Expect(conn.stmt.capturedSql, "SELECT * FROM \"camelUser\" WHERE \"id\" = ?")
+    }
+
+    @TestCase
+    public func testHasManyLoadQuotesIdentifiers(): Unit {
+        let (conn, tx) = makeTestTx(PostgreSQLDialect())
+        let p = CamelPostWithRel()
+        p.id = 42
+        p.loadComments(tx)
+        @Expect(conn.stmt.capturedSql, "SELECT * FROM \"camelComment\" WHERE \"camelPostId\" = ?")
+    }
+
+    @TestCase
+    public func testHasManyClearQuotesIdentifiers(): Unit {
+        let (conn, tx) = makeTestTx(PostgreSQLDialect())
+        let p = CamelPostWithRel()
+        p.id = 42
+        p.clearComments(tx)
+        @Expect(conn.stmt.capturedSql, "DELETE FROM \"camelComment\" WHERE \"camelPostId\" = ?")
+    }
+
+    @TestCase
+    public func testHasOneLoadQuotesIdentifiers(): Unit {
+        let (conn, tx) = makeTestTx(PostgreSQLDialect())
+        let p = CamelPostWithRel()
+        p.id = 42
+        p.loadProfile(tx)
+        @Expect(conn.stmt.capturedSql, "SELECT * FROM \"camelProfile\" WHERE \"camelPostId\" = ?")
+    }
+
+    @TestCase
+    public func testHasOneRemoveQuotesIdentifiers(): Unit {
+        let (conn, tx) = makeTestTx(PostgreSQLDialect())
+        let p = CamelPostWithRel()
+        p.id = 42
+        p.removeProfile(tx)
+        @Expect(conn.stmt.capturedSql, "DELETE FROM \"camelProfile\" WHERE \"camelPostId\" = ?")
+    }
+
+    // ref_to 在 SQLite/MySQL 下也用各自方言引号化
+    @TestCase
+    public func testRefToLoadQuotesIdentifiersSQLite(): Unit {
+        let (conn, tx) = makeTestTx(SQLiteDialect())
+        let p = CamelPost()
+        p.id = 42
+        p.authorId = 7
+        p.loadAuthorProfile(tx)
+        @Expect(conn.stmt.capturedSql, "SELECT * FROM \"camelUser\" WHERE \"id\" = ?")
+    }
+
+    @TestCase
+    public func testRefToLoadQuotesIdentifiersMySQL(): Unit {
+        let (conn, tx) = makeTestTx(MySQLDialect())
+        let p = CamelPost()
+        p.id = 42
+        p.authorId = 7
+        p.loadAuthorProfile(tx)
+        @Expect(conn.stmt.capturedSql, "SELECT * FROM `camelUser` WHERE `id` = ?")
     }
 }
 
@@ -4474,7 +4655,7 @@ public class RelationMutationTest {
         p.bio = "new"
         user.setProfile(tx, p)
         @Expect(conn.stmt.capturedSqlHistory.size >= 3, true)
-        @Expect(conn.stmt.capturedSqlHistory[1].contains("DELETE FROM profileWithRel"), true)
+        @Expect(conn.stmt.capturedSqlHistory[1].contains("DELETE FROM \"profileWithRel\""), true)
         @Expect(conn.stmt.capturedSqlHistory[2].contains("UPDATE \"profileWithRel\""), true)
         @Expect(p.user_id, 1)
     }
@@ -4511,7 +4692,7 @@ public class RelationMutationTest {
         let p = ProfileWithRel()
         p.bio = "replacement"
         user.setProfile(tx, p)
-        @Expect(conn.stmt.capturedSqlHistory[1].contains("DELETE FROM profileWithRel"), true)
+        @Expect(conn.stmt.capturedSqlHistory[1].contains("DELETE FROM \"profileWithRel\""), true)
         @Expect(conn.stmt.capturedSqlHistory[2].contains("INSERT INTO \"profileWithRel\""), true)
         @Expect(p.user_id, 1)
     }

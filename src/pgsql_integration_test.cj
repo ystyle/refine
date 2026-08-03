@@ -19,6 +19,12 @@ func tryPostgres(): Option<Refine> {
     }
 }
 
+// R-I9 真实 PG 探针：闭包内无法改外层局部 var（值捕获），用类字段记录守卫是否触发
+class R9ThrowProbe {
+    var threw: Bool = false
+    public init() {}
+}
+
 struct PgSchema <: TableSchema {
     var t: String
     var c: Array<ColumnDef>
@@ -931,6 +937,130 @@ public class PostgreSQLIntegrationTest {
                 rf.transaction { tx: Tx =>
                     tx.delete(t)
                     tx.delete(p)
+                }
+                rf.close()
+            case None => @Expect(true, true)
+        }
+    }
+
+    // ─── R-I6: 管理方法（loadX/clearX/setX/removeX）驼峰表名/fk 引号化（真实 PG） ─────
+    // 修复前 refToSQL/hasManyLoadSQL/hasManyClearSQL/hasOneLoadSQL/hasOneRemoveSQL 把
+    // 表名（TargetSchema().tableName()）与 r.by fk 列裸写进 SQL，PG 下折叠小写无法命中
+    // camelCase 表/列 → loadX/clearX/setX/removeX 在驼峰实体上全部报错。修复后经
+    // tx.getDialect().quoteIdentifier 引号化，camelCase 表名 + camelCase fk 真实可用。
+    @TestCase
+    public func testCamelCaseManagementMethods(): Unit {
+        match (tryPostgres()) {
+            case Some(rf) =>
+                rf.transaction { tx: Tx =>
+                    tx.execute("DROP TABLE IF EXISTS \"camelProfile\"", [])
+                    tx.execute("DROP TABLE IF EXISTS \"camelComment\"", [])
+                    tx.execute("DROP TABLE IF EXISTS \"camelPostWithRel\"", [])
+                }
+                let m = rf.migrator()
+                m.autoMigrate([CamelPostWithRelSchema(), CamelCommentSchema(), CamelProfileSchema()])
+                rf.transaction { tx: Tx =>
+                    tx.execute("INSERT INTO \"camelPostWithRel\" (\"title\") VALUES (?)", ["p1"])
+                    tx.execute("INSERT INTO \"camelComment\" (\"body\", \"camelPostId\") VALUES (?, ?)", ["hello", 1])
+                    tx.execute("INSERT INTO \"camelProfile\" (\"bio\", \"camelPostId\") VALUES (?, ?)", ["engineer", 1])
+                }
+                let post = CamelPostWithRel.query().using(rf).filter(CamelPostWithRel.col().title == "p1").one()
+                @Expect(post.isSome(), true)
+                let p = post.getOrThrow()
+                // has_many loadX
+                let comments = rf.transaction { tx: Tx => p.loadComments(tx) }
+                @Expect(comments.size, 1)
+                @Expect(comments[0].body, "hello")
+                // has_one loadX
+                let profile = rf.transaction { tx: Tx => p.loadProfile(tx) }
+                @Expect(profile.isSome(), true)
+                @Expect(profile.getOrThrow().bio, "engineer")
+                // has_many clearX
+                rf.transaction { tx: Tx => p.clearComments(tx) }
+                let after = rf.transaction { tx: Tx => p.loadComments(tx) }
+                @Expect(after.size, 0)
+                // has_one setX（内部 loadProfile + removeProfile + save）
+                let np = CamelProfile()
+                np.bio = "manager"
+                rf.transaction { tx: Tx => p.setProfile(tx, np) }
+                let np2 = rf.transaction { tx: Tx => p.loadProfile(tx) }
+                @Expect(np2.isSome(), true)
+                @Expect(np2.getOrThrow().bio, "manager")
+                // has_one removeX
+                rf.transaction { tx: Tx => p.removeProfile(tx) }
+                let none = rf.transaction { tx: Tx => p.loadProfile(tx) }
+                @Expect(none.isNone(), true)
+                rf.close()
+            case None => @Expect(true, true)
+        }
+    }
+
+    // ─── R-I8: Array<UInt8> Bytes 字段端到端（真实 PG） ──────────────────────────
+    // 修复前 isRelationField 把 "Array < UInt8 >"（toTokens 渲染带空格）当作关系集合，
+    // schema/insert/select 全跳过该字段（Bytes 不可达）；typeNameToStorageType 的
+    // "Array<UInt8>" 字面量也永远匹配不上带空格形式。修复后归一化比较，
+    // data 列映射 BYTEA，save 绑定 Array<UInt8>、读回 get<Array<UInt8>>。
+    @TestCase
+    public func testBytesFieldRoundtrip(): Unit {
+        match (tryPostgres()) {
+            case Some(rf) =>
+                rf.transaction { tx: Tx =>
+                    tx.execute("DROP TABLE IF EXISTS \"byteBlobEntity\"", [])
+                }
+                let m = rf.migrator()
+                m.autoMigrate([ByteBlobEntitySchema()])
+                let e = ByteBlobEntity()
+                e.name = "blob-1"
+                e.data = [1, 2, 3, 250, 255]
+                rf.transaction { tx: Tx => tx.save(e) }
+                @Expect(e.id > 0, true)
+                let found = ByteBlobEntity.query().using(rf).filter(ByteBlobEntity.col().name == "blob-1").one()
+                @Expect(found.isSome(), true)
+                let f = found.getOrThrow()
+                @Expect(f.data.size, 5)
+                @Expect(f.data[0], 1)
+                @Expect(f.data[3], 250)
+                @Expect(f.data[4], 255)
+                rf.transaction { tx: Tx => tx.execute("DROP TABLE IF EXISTS \"byteBlobEntity\"", []) }
+                rf.close()
+            case None => @Expect(true, true)
+        }
+    }
+
+    // ─── R-I9: String-pk 目标 junction append 执行前抛 RefineException（真实 PG） ──
+    // 修复前 appendTags 把 String id 绑进 INTEGER 目标列 → 真实 DB 类型错误。修复后
+    // 宏生成守卫在 tx.execute 之前抛明确 RefineException，junction 表保持 0 行。
+    // Int64-pk 目标（Tag）不受影响，由既有 testRefManyIncludeAssembles 等覆盖。
+    @TestCase
+    public func testStringPkTargetAppendThrowsBeforeDb(): Unit {
+        match (tryPostgres()) {
+            case Some(rf) =>
+                rf.transaction { tx: Tx =>
+                    tx.execute("DROP TABLE IF EXISTS \"uuid_tag_post_tags\"", [])
+                    tx.execute("DROP TABLE IF EXISTS \"uuidTagPost\"", [])
+                    tx.execute("DROP TABLE IF EXISTS \"uuidTag\"", [])
+                }
+                let m = rf.migrator()
+                m.autoMigrate([UuidTagPostSchema(), UuidTagSchema(), UuidTagPost_TagsJunctionSchema()])
+                let p = UuidTagPost(); p.id = 42; p.title = "t"
+                let t = UuidTag(); t.id = "ut-1"; t.name = "n"
+                rf.transaction { tx: Tx => tx.save(p) }
+                rf.transaction { tx: Tx => tx.save(t) }
+                let probe = R9ThrowProbe()
+                rf.transaction { tx: Tx =>
+                    try {
+                        p.appendTags(tx, t)
+                    } catch (e: RefineException) {
+                        @Expect(e.message.contains("String primary key"), true)
+                        probe.threw = true
+                    }
+                }
+                @Expect(probe.threw, true)
+                // 守卫在执行前抛出，junction 表必须保持 0 行
+                rf.transaction { tx: Tx =>
+                    let r = tx.query("SELECT COUNT(*) FROM \"uuid_tag_post_tags\"", [])
+                    r.next()
+                    @Expect(r.get<Int64>(0), 0)
                 }
                 rf.close()
             case None => @Expect(true, true)

@@ -261,6 +261,79 @@ public class MySQLIntegrationTest {
             case None => @Expect(true, true)
         }
     }
+
+    // ─── R-I6: 管理方法驼峰表名/fk 引号化（真实 MySQL） ──────────────────────────
+    // 与 PG 版同构：loadX/clearX/setX/removeX 的 SQL 标识符经 dialect.quoteIdentifier
+    // 引号化（MySQL 反引号），camelCase 表名 + camelCase fk 在 MySQL 下可命中。
+    @TestCase
+    public func testCamelCaseManagementMethods(): Unit {
+        match (tryMySQL()) {
+            case Some(rf) =>
+                rf.transaction { tx: Tx =>
+                    tx.execute("DROP TABLE IF EXISTS `camelProfile`", [])
+                    tx.execute("DROP TABLE IF EXISTS `camelComment`", [])
+                    tx.execute("DROP TABLE IF EXISTS `camelPostWithRel`", [])
+                }
+                let m = rf.migrator()
+                m.autoMigrate([CamelPostWithRelSchema(), CamelCommentSchema(), CamelProfileSchema()])
+                rf.transaction { tx: Tx =>
+                    tx.execute("INSERT INTO `camelPostWithRel` (`title`) VALUES (?)", ["p1"])
+                    tx.execute("INSERT INTO `camelComment` (`body`, `camelPostId`) VALUES (?, ?)", ["hello", 1])
+                    tx.execute("INSERT INTO `camelProfile` (`bio`, `camelPostId`) VALUES (?, ?)", ["engineer", 1])
+                }
+                let post = CamelPostWithRel.query().using(rf).filter(CamelPostWithRel.col().title == "p1").one()
+                @Expect(post.isSome(), true)
+                let p = post.getOrThrow()
+                let comments = rf.transaction { tx: Tx => p.loadComments(tx) }
+                @Expect(comments.size, 1)
+                @Expect(comments[0].body, "hello")
+                let profile = rf.transaction { tx: Tx => p.loadProfile(tx) }
+                @Expect(profile.isSome(), true)
+                @Expect(profile.getOrThrow().bio, "engineer")
+                rf.transaction { tx: Tx => p.clearComments(tx) }
+                let after = rf.transaction { tx: Tx => p.loadComments(tx) }
+                @Expect(after.size, 0)
+                let np = CamelProfile()
+                np.bio = "manager"
+                rf.transaction { tx: Tx => p.setProfile(tx, np) }
+                let np2 = rf.transaction { tx: Tx => p.loadProfile(tx) }
+                @Expect(np2.isSome(), true)
+                @Expect(np2.getOrThrow().bio, "manager")
+                rf.transaction { tx: Tx => p.removeProfile(tx) }
+                let none = rf.transaction { tx: Tx => p.loadProfile(tx) }
+                @Expect(none.isNone(), true)
+                rf.close()
+            case None => @Expect(true, true)
+        }
+    }
+
+    // ─── R-I8: Array<UInt8> Bytes 字段端到端（真实 MySQL） ──────────────────────
+    @TestCase
+    public func testBytesFieldRoundtrip(): Unit {
+        match (tryMySQL()) {
+            case Some(rf) =>
+                rf.transaction { tx: Tx =>
+                    tx.execute("DROP TABLE IF EXISTS `byteBlobEntity`", [])
+                }
+                let m = rf.migrator()
+                m.autoMigrate([ByteBlobEntitySchema()])
+                let e = ByteBlobEntity()
+                e.name = "blob-1"
+                e.data = [1, 2, 3, 250, 255]
+                rf.transaction { tx: Tx => tx.save(e) }
+                @Expect(e.id > 0, true)
+                let found = ByteBlobEntity.query().using(rf).filter(ByteBlobEntity.col().name == "blob-1").one()
+                @Expect(found.isSome(), true)
+                let f = found.getOrThrow()
+                @Expect(f.data.size, 5)
+                @Expect(f.data[0], 1)
+                @Expect(f.data[3], 250)
+                @Expect(f.data[4], 255)
+                rf.transaction { tx: Tx => tx.execute("DROP TABLE IF EXISTS `byteBlobEntity`", []) }
+                rf.close()
+            case None => @Expect(true, true)
+        }
+    }
 }
 
 // ─── Query 集成测试 ────────────────────────────────────

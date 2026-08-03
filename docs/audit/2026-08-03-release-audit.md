@@ -3,7 +3,7 @@
 > 审查日期：2026-08-03
 > 审查范围：0.5.0 版本全部改动（3 天、~140 提交）——batch include 重构、C/I 系列 Critical/Important、M 系列修复、M18 方言基类抽取、M20 Query 拆分
 > 审查方式：三路并行深度审查（核心运行时 / 方言+迁移器 / 宏生成层），真实 PG/MySQL 容器验证 + 逐行核对
-> 状态：**Not ready for release** — 存在 2 个 Critical + 9 个 Important + 若干 Minor，修复后需补测试沉淀
+> 状态：**Not ready for release** — 存在 2 个 Critical + 9 个 Important + 若干 Minor，修复后需补测试沉淀。进度：**R-C1/R-C2 已修复（2026-08-03）**；**R-I1~R-I9 已修复（2026-08-03）**（R-I7 按 controller 裁决落地宏错误守卫、Option<DateTime> 完整支持延后 F4；R-I9 落地运行时预检 + 文档）；Minor 记录待处理。
 
 ---
 
@@ -65,21 +65,25 @@
 - **位置**：`src/macros/relation_gen.cj:17-21`（refToSQL/hasManyLoadSQL/hasManyClearSQL/hasOneLoadSQL/hasOneRemoveSQL）
 - **问题**：表名经 `TargetSchema().tableName()` 未引号拼接，`id` 与 `r.by` fk 列裸写。`@Table["CamelCase"]` 表名或驼峰 fk 在 PG 下折叠小写必然报错。用户可见 API（loadX/setX/clearX/removeX），非死路径。文档记录为 I23，本次质检确认为真实故障。
 - **修法**：与 I21 相同，改 `tx.getDialect().quoteIdentifier`（方法均带 `tx: Tx`）。
+- **✅ 已解决（2026-08-03）**：`relation_gen.cj` refToSQL/hasManyLoadSQL/hasManyClearSQL/hasOneLoadSQL/hasOneRemoveSQL 的目标表名、`id`、`r.by` fk 列全部经 `tx.getDialect().quoteIdentifier` 运行时引号化（与 I21 junction 引号化对齐）。既有级联/soft-delete/setProfile 测试的 SQL 断言同步更新为引号形式。新增 `ManagementSQLQuotingTest` 7 例（PG/SQLite/MySQL 三方言断言生成 SQL 引号化）+ 真实 PG/MySQL 集成测试 `testCamelCaseManagementMethods`（camelCase 表 + camelCase fk 的 loadX/clearX/setX/removeX 全链路）。
 
 ### R-I7. DateTime 软删端到端不可用 —— IS NULL 对非 Option 列恒假，静默查不到数据
 - **位置**：`src/macros/refine_macro.cj:119-127` + `macro_test.cj:479`
 - **问题**：唯一可编译的软删模型是非 Option DateTime（有默认值非 NULL），而生成过滤 `IS NULL` 恒假：INSERT 写入 `DateTime.now()` 后 `query()` 永远过滤所有行。正确 `Option<DateTime>` 被 `isRelationField` 当 ref_to 阻断（meta.cj:204-206）。F4 记录准确。
 - **修法**：按 F4 修法落地（isRelationField 排除可空时间戳 + nullable schema 列 + None/Some 绑定）；在此之前宏层对非 Option DateTime 的 deleted_at 直接抛宏错误而非静默生成恒假过滤。
+- **✅ 已解决（2026-08-03，controller 裁决：仅宏错误守卫，F4 完整支持延后）**：`refine_macro.cj` 软删检测在 isSoftDelete 成立且 `deleted_at` 为非 Option DateTime 时抛编译期宏错误 `"soft delete field 'deleted_at' of type DateTime requires Option<DateTime> (unimplemented, see F4); use Int64 deleted_at instead"`——消除静默恒假过滤。Int64 deleted_at 路径不变。原 `DateTimeSoftDeleteEntity` fixture 与 `DateTimeSoftDeleteTest`（3 例）随守卫移除。守卫经 example 项目 probe 验证：非 Option DateTime 实体编译失败并输出明确错误；Int64 软删路径（SoftDeleteTest）全绿。Option<DateTime> 可空软删字段支持仍记 F4。
 
 ### R-I8. `Array<UInt8>`（Bytes）被误判为 ref_many —— Bytes 类型不可达
 - **位置**：`src/macros/meta.cj:42-49`（detectRelations 把一切 `Array<X>` 当 ref_many）+ `meta.cj:204-206`（isRelationField）
 - **问题**：`var data: Array<UInt8>` 生成 `RefMany<UInt8>` 并引用不存在的 `UInt8Schema`/`UInt8Rel` → 难懂编译错误。Bytes 是一等存储类型（meta.cj:235、sql_gen.cj BYTEA、db.cj:370 绑定）但**不可通过实体 DSL 触达**。根因与 F4 同源：关系检测未对已知标量存储类型做白名单。
 - **修法**：关系检测加已知标量类型白名单（Array<UInt8> → Bytes 而非 ref_many）。补 `Array<UInt8>` 实体测试。
+- **✅ 已解决（2026-08-03）**：白名单函数 `isBytesArrayType`（归一化去空格比较，实测 `vd.declType.toTokens().toString()` 对泛型渲染为 `Array < UInt8 >`——带空格，修复前 `typeNameToStorageType` 的 `"Array<UInt8>"` 字面量与 `isRelationField` 子串匹配全部对不上/误中）。`detectRelations` 与 `isRelationField` 排除 Bytes；`typeNameToStorageType` 改用归一化判定 → Bytes。新增 `ByteBlobFieldTest` 5 例（schema 映射 Bytes / 列名含 data / save 绑定 Array<UInt8> / RowMapper 读回 / Array<Tag> 仍是 ref_many 回归）+ 真实 PG/MySQL 集成 `testBytesFieldRoundtrip`。
 
 ### R-I9. ref_many 目标列恒 Integer —— String-pk 目标端到端运行期类型错误
 - **位置**：`src/macros/schema_gen.cj:86` + `relation_gen.cj:105,126`
 - **问题**：junction 目标列硬编码 Integer，String-pk 目标时绑定 String id → 真实 DB 插入 String 进 INTEGER 列报错。已文档化（schema_gen.cj:66-69）+ schema 级测试，但失败模式是运行期 SQL 类型错误而非编译期拦截，无端到端测试。
 - **修法**：宏层无法内省目标类时，对 String-pk 目标场景加文档红线或运行时预检。
+- **✅ 已解决（2026-08-03，controller 裁决：运行时预检 + 文档）**：`relation_gen.cj` 的 ref_many append/delete 生成代码在 `targetIdCheck` 内追加 String-pk 守卫——目标 id 为 String 时在 `tx.execute` 之前抛明确 `RefineException("ref_many <field>: target <Target> uses String primary key but junction target column is Integer — unimplemented, see audit R-I9")`（把 DB 类型错误转成清晰 ORM 错误；Int64-pk 目标 `case _` 分支不受影响）。`RefManyStringPkTargetTest` 新增 3 例（append/delete/replace 抛 RefineException 且 `capturedSql` 为空证明未触达 DB）+ 真实 PG 集成 `testStringPkTargetAppendThrowsBeforeDb`（守卫执行前抛出，junction 表保持 0 行）。`buildJunctionSchema` 注释同步更新。Int64 目标回归由既有 I21 junction 测试覆盖。
 
 ---
 
@@ -112,19 +116,19 @@
 
 ```
 第一优先级（发布阻塞，Critical）：
-  R-C1  PG versioned upsert 非法 SQL（真实 PG 实测炸）
-  R-C2  dispatchSet 静默写 NULL（Int8/UInt8/Float32 等）
+  R-C1  PG versioned upsert 非法 SQL（真实 PG 实测炸）        ✅ 已修复
+  R-C2  dispatchSet 静默写 NULL（Int8/UInt8/Float32 等）       ✅ 已修复
 
 第二优先级（Important，行为正确性）：
-  R-I1  Refine.all/one 不触发 AfterFind
-  R-I2  ref_to 缺 fk 列静默跳过
-  R-I3  one() 重复 LIMIT
-  R-I4  共享 dialect render 非线程安全
-  R-I5  page/count 丢 GROUP BY/HAVING
-  R-I6  I23 管理方法裸标识符（PG 驼峰）
-  R-I7  DateTime 软删恒假过滤
-  R-I8  Array<UInt8> 误判 ref_many（Bytes 不可达）
-  R-I9  ref_many String-pk 目标运行期类型错误
+  R-I1  Refine.all/one 不触发 AfterFind                          ✅ 已修复
+  R-I2  ref_to 缺 fk 列静默跳过                                  ✅ 已修复
+  R-I3  one() 重复 LIMIT                                        ✅ 已修复
+  R-I4  共享 dialect render 非线程安全                           ✅ 已修复
+  R-I5  page/count 丢 GROUP BY/HAVING                            ✅ 已修复
+  R-I6  I23 管理方法裸标识符（PG 驼峰）                          ✅ 已修复
+  R-I7  DateTime 软删恒假过滤（宏守卫，F4 支持延后）              ✅ 已修复
+  R-I8  Array<UInt8> 误判 ref_many（Bytes 不可达）               ✅ 已修复
+  R-I9  ref_many String-pk 目标运行期类型错误（运行时预检）      ✅ 已修复
 
 第三优先级（Minor）：
   R-M1 ~ R-M20（记录，择机处理）

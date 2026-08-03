@@ -287,6 +287,7 @@
 - **问题**：M9 修复后软删过滤/写值已按 `deleted_at` 声明类型生成（DateTime → `IS NULL` + `DateTime.now()`），但**端到端仍不可用**：非 Option 的 `DateTime deleted_at` 字段实体默认值 `DateTime.now()` 会在 INSERT 时写入非 NULL，`IS NULL` 过滤隐藏所有行；而正确的 `Option<DateTime>` 模型被 `isRelationField` 阻断——`Option<DateTime>` 会被当作 ref_to 关系，跳过列处理（schema/insert/filter 全不识别该字段）。
 - **修法**：宏层支持 `Option<DateTime>` 可空软删字段——`isRelationField` 排除可空时间戳，软删列 schema 标 `nullable=true`，INSERT 对 `None` 绑 NULL（未删行），软删写 `Some(DateTime.now())`。
 - **备注**：由 M9 修复后暴露（2026-08-03），列为后续排期项。
+- **更新（2026-08-03，R-I7）**：非 Option `deleted_at: DateTime` 的软删配置现已被宏层展开期守卫直接拦截（`refine_macro.cj` 抛编译错误，提示改用 `Option<DateTime>`（F4 未落地）或 Int64）——不再静默生成恒假 `IS NULL` 过滤。`Option<DateTime>` 可空软删字段的完整支持（本 F4 条目）仍未落地，为其后续实现保留。
 
 ---
 

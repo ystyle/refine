@@ -368,6 +368,7 @@ rf.transaction { tx: Tx =>
 ## 已知限制
 
 - **目标实体必须有单列 `id` 主键**：批量 IN 以目标 `id` 为键，嵌套 include 的目标主键读取也硬编码 `id`（`@Id` 自定义主键名目标、复合主键目标不支持）
+- **`ref_many` 目标为 String 主键时不支持写路径（R-I9）**：中间表目标列恒为 `Integer`（宏层无法跨类内省目标主键类型）。`append` / `delete` / `replace` 会在执行前抛明确 `RefineException`（消息形如 `"ref_many tags: target UuidTag uses String primary key but junction target column is Integer — unimplemented, see audit R-I9"`），而非把 String 写进 INTEGER 列报 DB 错误；`loadX` / `countX` / include 读路径不受影响。请改用 Int64 主键目标。
 - **复合主键主实体的集合 include 不支持**：`has_many` / `has_one` / `ref_many` 需要主实体单列主键的原始值，复合主键主实体执行前抛带说明的 `QueryException`
 - **字符串路径 `includeAll` 不支持字段子集**：路径只能由纯点号关系名组成（如 `"author.profile"`），不能携带字段；需要字段子集请用 `include(rel, fields)` 或 `withInclude` 链手写
 - **`batchSave` / `batchUpdate` 不级联**：批量操作只处理传入的实体数组本身，不沿关联字段递归

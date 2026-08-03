@@ -107,6 +107,14 @@ public macro Refine(input: Tokens): Tokens {
     }
     let hardDeleteMessages = getChildMessages("HardDelete")
     let isSoftDelete = hasDeletedAt && hardDeleteMessages.size == 0
+    // R-I7: 非 Option DateTime 的 deleted_at 会生成恒假 IS NULL 过滤——INSERT 写入
+    // DateTime.now()（默认值）后该列永非 NULL，query() 永远过滤所有行（静默数据不可见）。
+    // 宏层在此抛编译期错误拦截（fail-fast，替代静默恒假行为）；正确模型是可空软删字段
+    // Option<DateTime>（过滤 IS NULL + INSERT None 绑 NULL），支持落地见 F4。
+    // 在此之前用户用 Int64 deleted_at（`= 0` 语义，历史行为）。
+    if (isSoftDelete && deletedAtIsDateTime) {
+        throw Exception("soft delete field 'deleted_at' of type DateTime requires Option<DateTime> (unimplemented, see F4); use Int64 deleted_at instead")
+    }
 
     let mapperFuncName = Token(TokenKind.IDENTIFIER, className + "RowMapper")
     let selectCols = buildSelectColumnTokens(mergedFields)

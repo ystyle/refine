@@ -67,6 +67,9 @@ func buildSchemaClass(className: String, fields: ArrayList<FieldInfo>, tableName
 // 目标列类型 = 目标实体主键类型，但宏层无法跨类内省目标类字段（同 has_one→String-pk
 // 目标的既有限制），故目标列保持 Integer：Int64-pk 目标正确；String-pk 目标时
 // junction 目标列需 TEXT 而宏层无法推导，属已文档化限制（需手工迁移或用 Int64-pk 目标）。
+// R-I9: 该限制的失败模式已收敛——relation_gen.cj 的 ref_many append/delete 生成守卫，
+// 目标 id 为 String 时在 tx.execute 之前抛明确 RefineException（而非 String 绑进
+// INTEGER 列的真实 DB 类型错误）。读路径（loadX/countX/include 批量装配）不受影响。
 func buildJunctionSchema(className: String, rel: RelInfo, tableName: String, sourcePkStorage: String): Tokens {
     let sourceTable = tableName
     let viaLit = Token(TokenKind.STRING_LITERAL, rel.via)
