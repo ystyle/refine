@@ -320,6 +320,45 @@ public class QueryTest {
         @Expect(hasOffset, true)
     }
 
+    // R-I3: one() 必须剥离已存在的 LIMIT/OFFSET 再追加 LIMIT 1。
+    // 修复前 one() 复制全部子句（含 LimitClause(5)/OffsetClause(3)）再追加
+    // LimitClause(1) → "LIMIT 5 LIMIT 1"（或 LIMIT/OFFSET 混排）三方言均语法错误。
+    @TestCase
+    public func testOneStripsExistingLimitAndOffset(): Unit {
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        tx.begin()
+        conn.stmt.queryResult = MapperMockQueryResult([], [])
+        let q = Query<Int64>()
+            .select([Expr.Column("id")])
+            .from("t")
+            .limit(5)
+            .offset(3)
+            .using(tx)
+        q.setMapper({ r: QueryResult, cm: HashMap<String, Int64> => 0 })
+        let res = q.one()
+        @Expect(res.isNone(), true)
+        @Expect(conn.stmt.capturedSqlHistory.size, 1)
+        @Expect(conn.stmt.capturedSqlHistory[0], "SELECT \"id\" FROM \"t\" LIMIT 1")
+    }
+
+    @TestCase
+    public func testOneWithOnlyOffsetStillLimitsOne(): Unit {
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        tx.begin()
+        conn.stmt.queryResult = MapperMockQueryResult([], [])
+        let q = Query<Int64>()
+            .select([Expr.Column("id")])
+            .from("t")
+            .offset(3)
+            .using(tx)
+        q.setMapper({ r: QueryResult, cm: HashMap<String, Int64> => 0 })
+        let res = q.one()
+        @Expect(res.isNone(), true)
+        @Expect(conn.stmt.capturedSqlHistory[0], "SELECT \"id\" FROM \"t\" LIMIT 1")
+    }
+
     @TestCase
     public func testIncludeWithFieldsOverride(): Unit {
         let q = Query<Int64>()

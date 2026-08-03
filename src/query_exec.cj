@@ -90,7 +90,13 @@ extend<T> Query<T> {
             requireCollectionIdSupport()
             let oneStmt = Statement()
             for (clause in stmt.clauses) {
-                oneStmt.addClause(clause)
+                // R-I3: 剥离已存在的 LIMIT/OFFSET（对齐 page()）。修复前 one() 复制全部
+                // 子句再追加 LimitClause(1)，已有 limit/offset 的查询产生 "LIMIT 5 LIMIT 1"
+                // 或 "OFFSET 3 LIMIT 1" 双子句，三方言均语法错误。
+                match (clause) {
+                    case LimitClause(_) | OffsetClause(_) => ()
+                    case _ => oneStmt.addClause(clause)
+                }
             }
             oneStmt.addClause(LimitClause(1))
             let (sql, params) = dialect.render(oneStmt)
