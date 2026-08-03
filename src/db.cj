@@ -380,9 +380,9 @@ func dispatchSet(stmt: SqlStatement, index: Int, value: Any): Unit {
         case v: Float32  => stmt.set<Float64>(index, Float64(v))
         case v: DateTime => stmt.set<DateTime>(index, v)
         case v: Array<UInt8> => stmt.set<Array<UInt8>>(index, v)
-        // R-C2: 未知类型不再静默 setNull。Option 字段被宏层当关系字段跳过写路径、
-        // None 也无法装箱进 Array<Any>，故不存在合法 NULL 路径依赖 setNull——
-        // 落到这里是用户传了非标量类型，抛错比静默写 NULL（数据损坏）安全。
+        // R-C2: 未知类型不再静默 setNull。Option 字段被宏层当关系字段跳过写路径
+        // （不进入此函数），故写路径不存在合法 NULL 依赖 setNull——落到这里是
+        // 用户传了非标量类型，抛错比静默写 NULL（数据损坏）安全。
         case _           => throw RefineException(
             "unsupported param type for dispatchSet: " + paramTypeName(value) +
             " (supported: Int8/Int16/Int32/Int64/UInt8/UInt16/UInt32/UInt64/" +
