@@ -239,7 +239,8 @@ func typeNameToStorageType(typeName: String): String {
 
 // M22 评审（Fix 3）: 字段落入 typeNameToStorageType 的 Json 兜底分支（未知 struct）
 // 时，在宏展开期发编译期 WARNING。宏层未接线 TypeAdapter——这类字段写路径经
-// dispatchSet 落 setNull、读路径 result.get<T> 抛错，编译期提示比运行时静默更友好。
+// dispatchSet 抛 RefineException（R-C2 起不再静默写 NULL）、读路径 result.get<T> 抛错，
+// 编译期提示比运行时才暴露更友好。
 func isJsonFallbackType(typeName: String): Bool {
     typeNameToStorageType(typeName) == "StorageType.Json"
 }
@@ -260,7 +261,7 @@ func emitUnknownTypeWarnings(cd: ClassDecl, fields: ArrayList<FieldInfo>): Unit 
                 if (isJsonFallbackType(typeStr)) {
                     diagReport(DiagReportLevel.WARNING, vd.toTokens(),
                         "entity field '" + fn + "' of type '" + typeStr + "' maps to StorageType.Json but has no TypeAdapter",
-                        "writes become NULL and reads fail — implement refine.TypeAdapter<" + typeStr + "> or override with @Field[...]")
+                        "writes throw RefineException and reads fail — implement refine.TypeAdapter<" + typeStr + "> or override with @Field[...]")
                 }
             case _ => ()
         }

@@ -93,6 +93,23 @@ public class PgPost {
     var content: String = ""
 }
 
+// R-C2 fixture: 窄整数/单精度浮点字段实体——宏层接受这些类型并映射
+// StorageType.Integer（BIGINT 列）/ StorageType.Float（DOUBLE 列），但修复前
+// dispatchSet 只认 Int32/Int64/Float64，其余落 setNull 静默写 NULL。此实体供
+// 真实 PG/MySQL 集成测试验证写路径绑定正确（save 后列值非空且等于字段值）。
+@Refine
+@Table["narrowfield"]
+public class NarrowField {
+    var id: Int64 = 0
+    var u8: UInt8 = 0
+    var u16: UInt16 = 0
+    var u32: UInt32 = 0
+    var u64: UInt64 = 0
+    var i8: Int8 = 0
+    var i16: Int16 = 0
+    var f32: Float32 = 0.0
+}
+
 @Refine
 @Table["pgevent"]
 public class PgEvent {

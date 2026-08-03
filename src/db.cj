@@ -363,11 +363,41 @@ func dispatchSet(stmt: SqlStatement, index: Int, value: Any): Unit {
     match (value) {
         case v: Int64    => stmt.set<Int64>(index, v)
         case v: Int32    => stmt.set<Int32>(index, v)
+        // R-C2: 宏层接受 Int8/Int16/UInt8/UInt16/UInt32/UInt64 作实体字段并映射
+        // StorageType.Integer（BIGINT 列），Float32 映射 StorageType.Float（DOUBLE 列）。
+        // 修复前这些类型落 `case _ => setNull`，可空列静默写 NULL、NOT NULL 列报错——
+        // 统一换算为存储表示后绑定：整数列存 Int64、单精度存 Float64。
+        // UInt64 值超过 Int64.max 时转换抛运行时异常（BIGINT 有符号列本就存不下）。
+        case v: Int8     => stmt.set<Int64>(index, Int64(v))
+        case v: Int16    => stmt.set<Int64>(index, Int64(v))
+        case v: UInt8    => stmt.set<Int64>(index, Int64(v))
+        case v: UInt16   => stmt.set<Int64>(index, Int64(v))
+        case v: UInt32   => stmt.set<Int64>(index, Int64(v))
+        case v: UInt64   => stmt.set<Int64>(index, Int64(v))
         case v: String   => stmt.set<String>(index, v)
         case v: Bool     => stmt.set<Bool>(index, v)
         case v: Float64  => stmt.set<Float64>(index, v)
+        case v: Float32  => stmt.set<Float64>(index, Float64(v))
         case v: DateTime => stmt.set<DateTime>(index, v)
         case v: Array<UInt8> => stmt.set<Array<UInt8>>(index, v)
-        case _           => stmt.setNull(index)
+        // R-C2: 未知类型不再静默 setNull。Option 字段被宏层当关系字段跳过写路径、
+        // None 也无法装箱进 Array<Any>，故不存在合法 NULL 路径依赖 setNull——
+        // 落到这里是用户传了非标量类型，抛错比静默写 NULL（数据损坏）安全。
+        case _           => throw RefineException(
+            "unsupported param type for dispatchSet: " + paramTypeName(value) +
+            " (supported: Int8/Int16/Int32/Int64/UInt8/UInt16/UInt32/UInt64/" +
+            "Float32/Float64/Bool/String/DateTime/Array<UInt8>)")
+    }
+}
+
+// R-C2: dispatchSet 兜底分支的错误信息辅助——命名未被 dispatchSet 处理的仓颉标量类型，
+// 其余未知类型给 <unknown> 占位（类实例等无平台无关的运行时类型名获取方式）。
+func paramTypeName(value: Any): String {
+    match (value) {
+        case _: Rune       => "Rune"
+        case _: Float16    => "Float16"
+        case _: IntNative  => "IntNative"
+        case _: UIntNative => "UIntNative"
+        case _             => "<unknown>"
     }
 }

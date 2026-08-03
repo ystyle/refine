@@ -96,6 +96,7 @@ class MockTransaction <: Transaction {
 class MockStatement <: SqlStatement {
     public var lastSetType: String = ""
     public var lastSetIndex: Int = -1
+    public var lastSetValue: Any = 0
     public var queryColumnInfos: Array<ColumnInfo> = []
     public var queryRow: Bool = false
 
@@ -114,6 +115,7 @@ class MockStatement <: SqlStatement {
     public func set<T>(index: Int, value: T): Unit {
         lastSetType = "set"
         lastSetIndex = index
+        lastSetValue = value
     }
     public func setNull(index: Int): Unit {
         lastSetType = "setNull"
@@ -406,6 +408,68 @@ public class DbTest {
         @Expect(stmt.lastSetIndex, 1)
     }
 
+    // ─── R-C2: 窄整数/单精度浮点绑定回归 ────────────────────────────────
+    // 宏层接受这些类型作实体字段（映射 BIGINT/DOUBLE），修复前 dispatchSet 无对应
+    // 分支落 setNull（可空列静默写 NULL）。修复后按存储表示换算：整数列绑定 Int64、
+    // Float32 绑定 Float64，断言 mock 收到的绑定值与换算结果一致。
+
+    @TestCase
+    public func testDispatchSetInt8(): Unit {
+        let stmt = MockStatement()
+        dispatchSet(stmt, 0, Int8(-5))
+        @Expect(stmt.lastSetType, "set")
+        @Expect(stmt.lastSetIndex, 0)
+        @Expect((stmt.lastSetValue as Int64).getOrThrow(), -5)
+    }
+
+    @TestCase
+    public func testDispatchSetInt16(): Unit {
+        let stmt = MockStatement()
+        dispatchSet(stmt, 0, Int16(-1000))
+        @Expect(stmt.lastSetType, "set")
+        @Expect((stmt.lastSetValue as Int64).getOrThrow(), -1000)
+    }
+
+    @TestCase
+    public func testDispatchSetUInt8(): Unit {
+        let stmt = MockStatement()
+        dispatchSet(stmt, 0, UInt8(200))
+        @Expect(stmt.lastSetType, "set")
+        @Expect((stmt.lastSetValue as Int64).getOrThrow(), 200)
+    }
+
+    @TestCase
+    public func testDispatchSetUInt16(): Unit {
+        let stmt = MockStatement()
+        dispatchSet(stmt, 0, UInt16(60000))
+        @Expect(stmt.lastSetType, "set")
+        @Expect((stmt.lastSetValue as Int64).getOrThrow(), 60000)
+    }
+
+    @TestCase
+    public func testDispatchSetUInt32(): Unit {
+        let stmt = MockStatement()
+        dispatchSet(stmt, 0, UInt32(4000000000))
+        @Expect(stmt.lastSetType, "set")
+        @Expect((stmt.lastSetValue as Int64).getOrThrow(), 4000000000)
+    }
+
+    @TestCase
+    public func testDispatchSetUInt64(): Unit {
+        let stmt = MockStatement()
+        dispatchSet(stmt, 0, UInt64(9000000000))
+        @Expect(stmt.lastSetType, "set")
+        @Expect((stmt.lastSetValue as Int64).getOrThrow(), 9000000000)
+    }
+
+    @TestCase
+    public func testDispatchSetFloat32(): Unit {
+        let stmt = MockStatement()
+        dispatchSet(stmt, 0, Float32(1.5))
+        @Expect(stmt.lastSetType, "set")
+        @Expect((stmt.lastSetValue as Float64).getOrThrow(), 1.5)
+    }
+
     @TestCase
     public func testDispatchSetString(): Unit {
         let stmt = MockStatement()
@@ -430,12 +494,30 @@ public class DbTest {
         @Expect(stmt.lastSetIndex, 4)
     }
 
+    // R-C2: 未知类型不再静默 setNull——抛 RefineException 并提示支持的参数类型，
+    // 杜绝「合法字段类型保存成 NULL」这类静默数据损坏的根源（修复前是 setNull）。
     @TestCase
-    public func testDispatchSetNull(): Unit {
+    public func testDispatchSetUnknownTypeThrows(): Unit {
         let stmt = MockStatement()
-        dispatchSet(stmt, 5, (1, 2))
-        @Expect(stmt.lastSetType, "setNull")
-        @Expect(stmt.lastSetIndex, 5)
+        try {
+            dispatchSet(stmt, 5, (1, 2))
+            @Fail("expected RefineException")
+        } catch (e: RefineException) {
+            @Expect(e.message.contains("unsupported param type for dispatchSet"), true)
+        }
+    }
+
+    // R-C2: 窄整数经换算后若超 Int64 表示范围（UInt64 > Int64.max），转换抛运行时
+    // 异常而非静默写错值——BIGINT 有符号列本就存不下该值，显式报错优于数据损坏。
+    @TestCase
+    public func testDispatchSetUInt64OverflowThrows(): Unit {
+        let stmt = MockStatement()
+        try {
+            dispatchSet(stmt, 5, UInt64.Max)
+            @Fail("expected exception")
+        } catch (_: Exception) {
+            @Expect(true, true)
+        }
     }
 
     @TestCase
@@ -625,7 +707,10 @@ public class DbTest {
     public func testSessionQueryOneEmpty(): Unit {
         let conn = MockConnection()
         let session = Session(conn)
-        let result = session.queryOne("SELECT * FROM t WHERE id = ?", [1 as Any],
+        // R-C2: 参数显式 Array<Any> 传 Int64——修复前 `[1 as Any]` 是 Some(1)
+        //（Option），靠 dispatchSet 落 setNull 兜底；未知类型改抛错后该写法不可用。
+        let params: Array<Any> = [1]
+        let result = session.queryOne("SELECT * FROM t WHERE id = ?", params,
             { r: QueryResult, cm: HashMap<String, Int64> => 42 })
         @Expect(result.isNone(), true)
     }
@@ -647,7 +732,8 @@ public class DbTest {
         let conn = MockConnection()
         let tx = Tx(conn, rf, 0)
         tx.begin()
-        let result = tx.queryOne("SELECT * FROM t WHERE id = ?", [1 as Any],
+        let params: Array<Any> = [1]
+        let result = tx.queryOne("SELECT * FROM t WHERE id = ?", params,
             { r: QueryResult, cm: HashMap<String, Int64> => 42 })
         @Expect(result.isNone(), true)
     }
@@ -667,7 +753,8 @@ public class DbTest {
         let conn = MockConnection()
         let tx = Tx(conn)
         tx.begin()
-        let result = tx.queryOne("SELECT * FROM t WHERE id = ?", [1 as Any],
+        let params: Array<Any> = [1]
+        let result = tx.queryOne("SELECT * FROM t WHERE id = ?", params,
             { r: QueryResult, cm: HashMap<String, Int64> => 42 })
         @Expect(result.isNone(), true)
     }

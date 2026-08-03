@@ -998,4 +998,49 @@ public class PostgreSQLIntegrationTest {
             case None => @Expect(true, true)
         }
     }
+
+    // ─── R-C2: 窄整数/单精度浮点字段真实 PG 写路径回归 ────────────────────────
+    // 修复前 dispatchSet 对 UInt8/UInt16/UInt32/UInt64/Int8/Int16/Float32 落 setNull：
+    // 可空列静默写 NULL、NOT NULL 列报错——静默数据损坏。修复后按存储表示换算
+    // （整数 → set<Int64>、Float32 → set<Float64>）。真实 PG 链路 save 后直查列值，
+    // 验证绑定类型与换算结果都正确（而非 NULL 或类型错位）。
+    @TestCase
+    public func testNarrowNumericFieldsSaveCorrectly(): Unit {
+        match (tryPostgres()) {
+            case Some(rf) =>
+                rf.transaction { tx: Tx =>
+                    tx.execute("DROP TABLE IF EXISTS \"narrowfield\"", [])
+                }
+                rf.migrator().autoMigrate([NarrowFieldSchema()])
+                let e = NarrowField()
+                e.u8 = 200
+                e.u16 = 60000
+                e.u32 = 4000000000
+                e.u64 = 9000000000
+                e.i8 = -5
+                e.i16 = -1000
+                e.f32 = 1.5
+                rf.transaction { tx: Tx => tx.save(e) }
+                @Expect(e.id > 0, true)
+                rf.transaction { tx: Tx =>
+                    let r = tx.query("SELECT \"u8\", \"u16\", \"u32\", \"u64\", \"i8\", \"i16\", \"f32\" FROM \"narrowfield\" WHERE \"id\" = ?", [e.id])
+                    if (r.next()) {
+                        // 用 ORM 的列映射（含 paramOffset）取列索引，PG/MariaDB 驱动索引基数不同
+                        let cm = buildColumnMap(r.columnInfos, tx.getParamOffset())
+                        @Expect(r.get<Int64>(cm.get("u8").getOrThrow()), 200)
+                        @Expect(r.get<Int64>(cm.get("u16").getOrThrow()), 60000)
+                        @Expect(r.get<Int64>(cm.get("u32").getOrThrow()), 4000000000)
+                        @Expect(r.get<Int64>(cm.get("u64").getOrThrow()), 9000000000)
+                        @Expect(r.get<Int64>(cm.get("i8").getOrThrow()), -5)
+                        @Expect(r.get<Int64>(cm.get("i16").getOrThrow()), -1000)
+                        @Expect(r.get<Float64>(cm.get("f32").getOrThrow()), 1.5)
+                    } else {
+                        @Expect(true, false)
+                    }
+                }
+                rf.transaction { tx: Tx => tx.execute("DROP TABLE IF EXISTS \"narrowfield\"", []) }
+                rf.close()
+            case None => @Expect(true, true)
+        }
+    }
 }
