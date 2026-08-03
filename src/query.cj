@@ -736,6 +736,9 @@ public class Query<T> {
     public func avg(col: Col<Float64>): Float64 { aggregateFloat("AVG", col) }
     public func min(col: Col<Int64>): Int64 { aggregateInt("MIN", col) }
     public func max(col: Col<Int64>): Int64 { aggregateInt("MAX", col) }
+    // M8: min/max 对 String 列合法（字典序），String 聚合读取器返回空串作零值
+    public func min(col: Col<String>): String { aggregateString("MIN", col) }
+    public func max(col: Col<String>): String { aggregateString("MAX", col) }
 
     private func aggregateInt(fn: String, col: Col<Int64>): Int64 {
         aggregate(fn, col.name, 0, { r, o => r.getOrNull<Int64>(0 + o) })
@@ -749,13 +752,19 @@ public class Query<T> {
         aggregate(fn, col.name, 0.0, { r, o => r.getOrNull<Float64>(0 + o) })
     }
 
+    private func aggregateString(fn: String, col: Col<String>): String {
+        aggregate(fn, col.name, "", { r, o => r.getOrNull<String>(0 + o) })
+    }
+
     private func aggregate<R>(fn: String, colName: String, zero: R, read: (QueryResult, Int64) -> ?R): R {
         let exec = requireExecutor()
         try {
             let aggStmt = Statement()
-            aggStmt.addClause(SelectClause([Raw(fn + "(" + colName + ")")]))
-            copyDataClauses(stmt, aggStmt)
+            // M8: 聚合列名经方言 quoteIdentifier 引号化（修复前 Raw(fn + "(" + colName + ")")
+            // 拼裸列名，与 C9 标识符通道同源——列名含特殊字符时会被拼进 SQL 文本）
             let dialect = getDialect()
+            aggStmt.addClause(SelectClause([Raw(fn + "(" + dialect.quoteIdentifier(colName) + ")")]))
+            copyDataClauses(stmt, aggStmt)
             let (sql, params) = dialect.render(aggStmt)
             Logger.logSQL(sql, params)
             let result = exec.query(sql, params)

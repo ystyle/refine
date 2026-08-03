@@ -2,6 +2,57 @@ package refine
 
 import std.unittest.*
 import std.unittest.testmacro.*
+import std.time.{DateTime, Month}
+
+@Test
+public class LoggerFormatAnyTest {
+    // M6: formatAny 对 DateTime/Array 等常见参数类型补齐格式化，不再输出 <unknown>
+    @TestCase
+    public func testFormatDateTimeIsIso(): Unit {
+        let dt = DateTime.of(year: 2024, month: May, dayOfMonth: 22, hour: 12, minute: 34, second: 56)
+        let s = Logger.formatAny(dt)
+        @Expect(s.startsWith("2024-05-22T12:34:56"), true)
+        @Expect(s.contains("<unknown>"), false)
+    }
+
+    @TestCase
+    public func testFormatArrayAnyJoinsElements(): Unit {
+        let arr: Array<Any> = [1, "a", true]
+        @Expect(Logger.formatAny(arr), "[1, a, true]")
+    }
+
+    @TestCase
+    public func testFormatArrayUInt8IsHex(): Unit {
+        let bytes: Array<UInt8> = [1, 2, 3, 10, 255, 16]
+        @Expect(Logger.formatAny(bytes), "bytes[0102030aff10]")
+    }
+
+    @TestCase
+    public func testFormatEmptyArrayUInt8(): Unit {
+        let bytes: Array<UInt8> = []
+        @Expect(Logger.formatAny(bytes), "bytes[]")
+    }
+
+    @TestCase
+    public func testFormatNestedArray(): Unit {
+        // 内层数组需显式 Array<Any>：仓颉泛型不变性使 Array<Int64> 不匹配 Array<Any>（formatAny 里为 <unknown>）
+        let inner: Array<Any> = [1, 2]
+        let arr: Array<Any> = [inner, "x"]
+        @Expect(Logger.formatAny(arr), "[[1, 2], x]")
+    }
+
+    @TestCase
+    public func testFormatInt32(): Unit {
+        let v: Int32 = 42
+        @Expect(Logger.formatAny(v), "42")
+    }
+
+    @TestCase
+    public func testFormatFloat32(): Unit {
+        let v: Float32 = 1.5
+        @Expect(Logger.formatAny(v), "1.500000")
+    }
+}
 
 @Test
 public class LoggerTest {

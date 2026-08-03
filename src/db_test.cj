@@ -613,7 +613,8 @@ public class DbTest {
             db.transaction({ tx => tx.setIsolation(IsolationLevel.Serializable) })
             @Expect(false, true)
         } catch (e: RefineException) {
-            @Expect(e.message, "SQLite does not support transaction isolation levels")
+            // M5: 错误信息方言感知（dialect.name() 小写 sqlite），不再硬编码 "SQLite"
+            @Expect(e.message, "sqlite does not support transaction isolation levels")
         }
     }
 

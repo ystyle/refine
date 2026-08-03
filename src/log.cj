@@ -76,14 +76,36 @@ public class Logger {
         }
     }
 
-    private static func formatAny(val: Any): String {
+    // M6: formatAny 对 DateTime/Array 等常见参数类型补齐格式化，不再一律输出 <unknown>。
+    // internal（非 private）：同包测试直接断言格式化结果（宏生成代码不依赖此函数，无需 public）。
+    static func formatAny(val: Any): String {
         match (val) {
             case s: String => s
             case i: Int64 => i.toString()
+            case i: Int32 => i.toString()
             case b: Bool => if (b) { "true" } else { "false" }
             case f: Float64 => f.toString()
+            case f: Float32 => f.toString()
+            // DateTime 实现 ToString，输出 ISO 8601（如 2024-05-22T12:34:56+08:00）
+            case dt: DateTime => dt.toString()
+            case bytes: Array<UInt8> =>
+                var hexParts = ArrayList<String>()
+                for (byte in bytes) { hexParts.add(hexByte(byte)) }
+                if (hexParts.size == 0) { "bytes[]" } else { "bytes[" + String.join(hexParts.toArray(), delimiter: "") + "]" }
+            case arr: Array<Any> =>
+                var parts = ArrayList<String>()
+                for (v in arr) { parts.add(formatAny(v)) }
+                "[" + String.join(parts.toArray(), delimiter: ", ") + "]"
             case _ => "<unknown>"
         }
+    }
+
+    private static func hexByte(b: UInt8): String {
+        let hex = "0123456789abcdef"
+        let hi = Int64(b) >> 4
+        let lo = Int64(b) & 0xF
+        // String 下标 hex[i] 返回 UInt8（单字节），用 fromUtf8 还原为单字符 String
+        String.fromUtf8([hex[hi]]) + String.fromUtf8([hex[lo]])
     }
 
     private static func levelPriority(lvl: LogLevel): Int64 {

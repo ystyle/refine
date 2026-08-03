@@ -13,7 +13,10 @@ public struct Page<T> {
         this.size = size
     }
 
+    // M7: size<=0 除零守卫。page() 校验 size>=1，size=0 只可能来自手工构造 Page；
+    // 抛 RefineException 而非静默返回 0/1，让调用方立即发现非法状态。
     public func totalPages(): Int64 {
+        if (size <= 0) { throw RefineException("invalid page size: " + size.toString() + "; size must be >= 1") }
         if (total == 0) { return 0 }
         (total + size - 1) / size
     }

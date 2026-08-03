@@ -33,7 +33,12 @@ public class Refine {
         let ds = drv.open(url, opts)
         let d = detectDialect(driverName)
         let offset = detectParamOffset(driverName)
-        Refine(PooledDatasource(ds), d, offset)
+        let pooled = PooledDatasource(ds)
+        // M1: 接通 Dialect.initialize(db) 钩子。所有方言当前为空实现（SQLite/MySQL/PG），
+        // 此调用为未来方言初始化（建表前环境准备、连接级配置等）提供挂载点；DB 包装
+        // 只承载 datasource/dialect，不额外占用连接。
+        d.initialize(DB(pooled, offset, d))
+        Refine(pooled, d, offset)
     }
 
     public func session(): Session {

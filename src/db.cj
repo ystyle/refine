@@ -243,8 +243,9 @@ public class Tx {
     public func getParamOffset(): Int64 { paramOffset }
 
     public func setIsolation(level: IsolationLevel): Unit {
+        // M5: 错误信息方言感知（dialect.name()），避免非 SQLite 方言报错信息张冠李戴
         if (!this.getDialect().hasIsolationSupport()) {
-            throw RefineException("SQLite does not support transaction isolation levels")
+            throw RefineException(this.getDialect().name() + " does not support transaction isolation levels")
         }
         let mapped = match (level) {
             case ReadUncommitted => TransactionIsoLevel.ReadUncommitted
@@ -329,9 +330,4 @@ func dispatchSet(stmt: SqlStatement, index: Int, value: Any): Unit {
         case v: Array<UInt8> => stmt.set<Array<UInt8>>(index, v)
         case _           => stmt.setNull(index)
     }
-}
-
-// For drivers with 1-based parameter indices (e.g. MariaDB)
-public func dispatchSet1(stmt: SqlStatement, index: Int, value: Any): Unit {
-    dispatchSet(stmt, index + 1, value)
 }

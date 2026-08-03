@@ -2939,3 +2939,58 @@ public class StringPathIncludeTest {
         @Expect(q.included.size, 1)
     }
 }
+
+// ─── M8: 聚合列名方言引号化 + String min/max ───────────────
+
+@Test
+public class AggregateQueryTest {
+    @TestCase
+    public func testSumRendersQuotedColumnAndReadsValue(): Unit {
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult([], [Array<Any>(1, {i => 42})]))
+        let q = Query<Int64>().from("posts").using(tx)
+        @Expect(q.sum(Col<Int64>("id")), 42)
+        // M8: 列名经 dialect.quoteIdentifier（SQLite 双引号），不再 Raw 拼接裸列名
+        @Expect(conn.stmt.capturedSql, "SELECT SUM(\"id\") FROM \"posts\"")
+    }
+
+    @TestCase
+    public func testAvgReadsFloatValue(): Unit {
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult([], [Array<Any>(1, {i => 2.5})]))
+        let q = Query<Int64>().from("posts").using(tx)
+        @Expect(q.avg(Col<Int64>("score")), 2.5)
+        @Expect(conn.stmt.capturedSql, "SELECT AVG(\"score\") FROM \"posts\"")
+    }
+
+    @TestCase
+    public func testMinStringReturnsString(): Unit {
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult([], [Array<Any>(1, {i => "abc"})]))
+        let q = Query<Int64>().from("posts").using(tx)
+        @Expect(q.min(Col<String>("name")), "abc")
+        @Expect(conn.stmt.capturedSql, "SELECT MIN(\"name\") FROM \"posts\"")
+    }
+
+    @TestCase
+    public func testMaxStringEmptyResultReturnsEmptyString(): Unit {
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult([], []))
+        let q = Query<Int64>().from("posts").using(tx)
+        @Expect(q.max(Col<String>("name")), "")
+        @Expect(conn.stmt.capturedSql, "SELECT MAX(\"name\") FROM \"posts\"")
+    }
+
+    @TestCase
+    public func testMaxInt64EmptyResultReturnsZero(): Unit {
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult([], []))
+        let q = Query<Int64>().from("posts").using(tx)
+        @Expect(q.max(Col<Int64>("id")), 0)
+    }
+}
