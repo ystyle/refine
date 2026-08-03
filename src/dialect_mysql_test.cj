@@ -320,6 +320,36 @@ public class MySQLDialectTest {
         @Expect(c5, 0)
     }
 
+    // M14: 主键/冲突列不进入 DO UPDATE SET（pk 冲突时不会变化，写入纯噪音）
+    @TestCase
+    public func testUpsertSkipsPrimaryKeyInUpdateSet(): Unit {
+        let dialect = MySQLDialect()
+        let (sql, _) = dialect.upsertSQL("users", ["id", "name", "email"], ["id"], [], [], "")
+        @Expect(sql.contains("`id` = VALUES(`id`)"), false)
+        @Expect(sql.contains("`name` = VALUES(`name`)"), true)
+        @Expect(sql.contains("`email` = VALUES(`email`)"), true)
+    }
+
+    // 复合主键：两个冲突列都不应进入 DO UPDATE SET
+    @TestCase
+    public func testUpsertSkipsAllConflictColumnsInUpdateSet(): Unit {
+        let dialect = MySQLDialect()
+        let (sql, _) = dialect.upsertSQL("order_tags", ["order_id", "tag_id", "quantity"], ["order_id", "tag_id"], [], [], "")
+        @Expect(sql.contains("`order_id` = VALUES(`order_id`)"), false)
+        @Expect(sql.contains("`tag_id` = VALUES(`tag_id`)"), false)
+        @Expect(sql.contains("`quantity` = VALUES(`quantity`)"), true)
+    }
+
+    // 全部列都是冲突列（纯关联表直接 upsert）时 UPDATE SET 为空：
+    // MySQL 的 ON DUPLICATE KEY UPDATE 必须至少一条赋值，用首列无操作更新保语法合法
+    @TestCase
+    public func testUpsertAllColumnsAreConflictProducesValidNoop(): Unit {
+        let dialect = MySQLDialect()
+        let (sql, extraCount) = dialect.upsertSQL("junc", ["a_id", "b_id"], ["a_id", "b_id"], [], [], "")
+        @Expect(sql.contains("ON DUPLICATE KEY UPDATE `a_id` = `a_id`"), true)
+        @Expect(extraCount, 0)
+    }
+
     @TestCase
     public func testRenderSubQuery(): Unit {
         let dialect = MySQLDialect()

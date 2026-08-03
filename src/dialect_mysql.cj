@@ -171,7 +171,7 @@ public class MySQLDialect <: Dialect {
 
     public func hasUpsertSupport(): Bool { true }
 
-    public func upsertSQL(table: String, columns: Array<String>, _conflictColumns: Array<String>, auditCreateCols: Array<String>, auditUpdateCols: Array<String>, versionCol: String): (String, Int64) {
+    public func upsertSQL(table: String, columns: Array<String>, conflictColumns: Array<String>, auditCreateCols: Array<String>, auditUpdateCols: Array<String>, versionCol: String): (String, Int64) {
         var cols = ArrayList<String>()
         var placeholders = ArrayList<String>()
         var updates = ArrayList<String>()
@@ -182,6 +182,9 @@ public class MySQLDialect <: Dialect {
             placeholders.add("?")
         }
         for (c in columns) {
+            // M14: 主键/冲突列不进入 DO UPDATE SET——冲突行匹配的就是这些列，更新它们恒为
+            // 原值（VALUES(col) 即 col），纯噪音且无任何语义（SQLite 保留原行为，见 M14 决策）
+            if (conflictColumns.contains(c)) { continue }
             if (auditCreateCols.contains(c)) { continue }
             if (c == versionCol) {
                 updates.add(quoteIdentifier(c) + " = " + quoteIdentifier(c) + " + 1")
@@ -192,7 +195,15 @@ public class MySQLDialect <: Dialect {
                 updates.add(quoteIdentifier(c) + " = VALUES(" + quoteIdentifier(c) + ")")
             }
         }
-        ("INSERT INTO " + quoteIdentifier(table) + " (" + String.join(cols.toArray(), delimiter: ", ") + ") VALUES (" + String.join(placeholders.toArray(), delimiter: ", ") + ") ON DUPLICATE KEY UPDATE " + String.join(updates.toArray(), delimiter: ", "), extraParamCount)
+        // M14 防御：全部列都是冲突列（纯关联表直接 upsert）时 UPDATE SET 为空，MySQL 的
+        // ON DUPLICATE KEY UPDATE 必须至少一条赋值，用首列无操作更新（col = col）保语法合法
+        var updateClause: String
+        if (updates.size == 0) {
+            updateClause = " ON DUPLICATE KEY UPDATE " + quoteIdentifier(columns[0]) + " = " + quoteIdentifier(columns[0])
+        } else {
+            updateClause = " ON DUPLICATE KEY UPDATE " + String.join(updates.toArray(), delimiter: ", ")
+        }
+        ("INSERT INTO " + quoteIdentifier(table) + " (" + String.join(cols.toArray(), delimiter: ", ") + ") VALUES (" + String.join(placeholders.toArray(), delimiter: ", ") + ")" + updateClause, extraParamCount)
     }
 
     public func dataTypeOf(st: StorageType): String {

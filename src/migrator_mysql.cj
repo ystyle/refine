@@ -22,9 +22,39 @@ public class MySQLMigrator <: Migrator {
     }
 
     public static func createTableSQL(schema: TableSchema, d: MySQLDialect): String {
+        let cols = schema.columns()
+        var pkNames = ArrayList<String>()
+        for (col in cols) { if (col.primaryKey) { pkNames.add(col.name) } }
+        // M24: ≥2 主键列（junction 复合主键）时列级不追加 PRIMARY KEY，改表级约束
+        let composite = pkNames.size > 1
         var colDefs = ArrayList<String>()
-        for (col in schema.columns()) { colDefs.add(columnDefSQL(col, d)) }
-        "CREATE TABLE IF NOT EXISTS `" + schema.tableName() + "` (" + String.join(colDefs.toArray(), delimiter: ", ") + ")"
+        for (col in cols) {
+            if (composite && col.primaryKey) { colDefs.add(compositePkColumnDefSQL(col, d)) }
+            else { colDefs.add(columnDefSQL(col, d)) }
+        }
+        var parts = ArrayList<String>()
+        parts.add("CREATE TABLE IF NOT EXISTS `" + schema.tableName() + "` (")
+        let colDefsSQL = String.join(colDefs.toArray(), delimiter: ", ")
+        if (composite) {
+            var pkParts = ArrayList<String>()
+            for (name in pkNames) { pkParts.add("`" + name + "`") }
+            parts.add(colDefsSQL + ", PRIMARY KEY (" + String.join(pkParts.toArray(), delimiter: ", ") + ")")
+        } else {
+            parts.add(colDefsSQL)
+        }
+        parts.add(")")
+        String.join(parts.toArray(), delimiter: "")
+    }
+
+    // M24 复合主键列定义：列级不追加 PRIMARY KEY；autoIncrement 列保留（MySQL 复合主键
+    // 允许自增列作前缀列），可空性按列声明输出（junction 列 nullable=false → NOT NULL）。
+    private static func compositePkColumnDefSQL(col: ColumnDef, d: MySQLDialect): String {
+        var parts = ArrayList<String>()
+        parts.add("`" + col.name + "`")
+        parts.add(d.dataTypeOf(col.storageType))
+        if (col.autoIncrement) { parts.add("AUTO_INCREMENT") }
+        if (!col.nullable) { parts.add("NOT NULL") }
+        String.join(parts.toArray(), delimiter: " ")
     }
 
     // I6: session 一律 try/finally 关闭，query/execute 抛异常时不得泄漏池化连接
@@ -147,10 +177,12 @@ public class MySQLMigrator <: Migrator {
         }
     }
 
+    // M15: 复合索引在 STATISTICS 中每列占一行（同名重复出现），须 DISTINCT 去重；
+    // 主键索引行名恒为 'PRIMARY'，不得混入普通索引集合（否则 PRIMARY 会被当作可重复创建的索引名）
     private func getExistingIndexNames(tableName: String): ArrayList<String> {
         let s = db.session()
         try {
-            let r = s.query("SELECT INDEX_NAME FROM information_schema.STATISTICS WHERE table_schema = DATABASE() AND table_name = ?", [tableName])
+            let r = s.query("SELECT DISTINCT INDEX_NAME FROM information_schema.STATISTICS WHERE table_schema = DATABASE() AND table_name = ? AND INDEX_NAME != 'PRIMARY'", [tableName])
             let off = s.getParamOffset()
             var names = ArrayList<String>()
             while (r.next()) { names.add(r.get<String>(0 + off)) }

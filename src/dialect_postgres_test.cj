@@ -443,6 +443,36 @@ public class PostgreSQLDialectTest {
         @Expect(c2, 0)
     }
 
+    // M14: 主键/冲突列不进入 DO UPDATE SET（pk 冲突时不会变化，写入纯噪音）
+    @TestCase
+    public func testUpsertSkipsPrimaryKeyInUpdateSet(): Unit {
+        let dialect = PostgreSQLDialect()
+        let (sql, _) = dialect.upsertSQL("users", ["id", "name", "email"], ["id"], [], [], "")
+        @Expect(sql.contains("\"id\" = EXCLUDED.\"id\""), false)
+        @Expect(sql.contains("\"name\" = EXCLUDED.\"name\""), true)
+        @Expect(sql.contains("\"email\" = EXCLUDED.\"email\""), true)
+    }
+
+    // 复合主键：两个冲突列都不应进入 DO UPDATE SET
+    @TestCase
+    public func testUpsertSkipsAllConflictColumnsInUpdateSet(): Unit {
+        let dialect = PostgreSQLDialect()
+        let (sql, _) = dialect.upsertSQL("order_tags", ["order_id", "tag_id", "quantity"], ["order_id", "tag_id"], [], [], "")
+        @Expect(sql.contains("\"order_id\" = EXCLUDED.\"order_id\""), false)
+        @Expect(sql.contains("\"tag_id\" = EXCLUDED.\"tag_id\""), false)
+        @Expect(sql.contains("\"quantity\" = EXCLUDED.\"quantity\""), true)
+    }
+
+    // 全部列都是冲突列（纯关联表直接 upsert）时 DO UPDATE SET 为空 → 退化为 DO NOTHING
+    @TestCase
+    public func testUpsertAllColumnsAreConflictProducesDoNothing(): Unit {
+        let dialect = PostgreSQLDialect()
+        let (sql, extraCount) = dialect.upsertSQL("junc", ["a_id", "b_id"], ["a_id", "b_id"], [], [], "")
+        @Expect(sql.contains("DO NOTHING"), true)
+        @Expect(sql.contains("DO UPDATE"), false)
+        @Expect(extraCount, 0)
+    }
+
     @TestCase
     public func testRenderBinOpsNe(): Unit {
         let dialect = PostgreSQLDialect()

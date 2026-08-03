@@ -179,11 +179,12 @@ public class PostgreSQLDialect <: Dialect {
             cols.add(quoteIdentifier(c))
             placeholders.add("$" + idx.toString())
             idx++
+            // M14: 主键/冲突列不进入 DO UPDATE SET——冲突行匹配的就是这些列，EXCLUDED.col
+            // 即原值，纯噪音且无任何语义（SQLite 保留原行为，见 M14 决策）
+            if (conflictColumns.contains(c)) { continue }
             if (auditCreateCols.contains(c)) { continue }
             if (c == versionCol) {
                 updates.add(quoteIdentifier(table) + "." + quoteIdentifier(c) + " = " + quoteIdentifier(table) + "." + quoteIdentifier(c) + " + 1")
-            } else if (auditUpdateCols.contains(c)) {
-                updates.add(quoteIdentifier(c) + " = EXCLUDED." + quoteIdentifier(c))
             } else {
                 updates.add(quoteIdentifier(c) + " = EXCLUDED." + quoteIdentifier(c))
             }
@@ -192,8 +193,16 @@ public class PostgreSQLDialect <: Dialect {
         for (c in conflictColumns) {
             conflictCols.add(quoteIdentifier(c))
         }
+        // M14 防御：全部列都是冲突列（纯关联表直接 upsert）时 DO UPDATE SET 为空，
+        // 退化为 DO NOTHING（无列可更新，语义正确且语法合法）
+        var conflictAction: String
+        if (updates.size == 0) {
+            conflictAction = " DO NOTHING"
+        } else {
+            conflictAction = " DO UPDATE SET " + String.join(updates.toArray(), delimiter: ", ")
+        }
         // PostgreSQL 用 EXCLUDED.col 更新冲突行，不需要额外参数
-        ("INSERT INTO " + quoteIdentifier(table) + " (" + String.join(cols.toArray(), delimiter: ", ") + ") VALUES (" + String.join(placeholders.toArray(), delimiter: ", ") + ") ON CONFLICT (" + String.join(conflictCols.toArray(), delimiter: ", ") + ") DO UPDATE SET " + String.join(updates.toArray(), delimiter: ", "), 0)
+        ("INSERT INTO " + quoteIdentifier(table) + " (" + String.join(cols.toArray(), delimiter: ", ") + ") VALUES (" + String.join(placeholders.toArray(), delimiter: ", ") + ") ON CONFLICT (" + String.join(conflictCols.toArray(), delimiter: ", ") + ")" + conflictAction, 0)
     }
 
     public func dataTypeOf(st: StorageType): String {

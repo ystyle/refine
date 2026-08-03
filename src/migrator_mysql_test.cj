@@ -36,6 +36,17 @@ class IndexedDiffSchema <: TableSchema {
     }
 }
 
+// M15: 复合索引（STATISTICS 每列一行，同名多行）+ PRIMARY 混入的场景
+class CompositeIdxSchema <: TableSchema {
+    public func tableName(): String { "t10_composite" }
+    public func columns(): Array<ColumnDef> {
+        [ ColumnDef("id", StorageType.Integer, true, true, false) ]
+    }
+    public func indexes(): Array<IndexDef> {
+        [ IndexDef("idx_multi", ["a", "b"]) ]
+    }
+}
+
 @Test
 public class MySQLMigratorTest {
     @TestCase
@@ -57,6 +68,17 @@ public class MySQLMigratorTest {
             "`age` BIGINT, " +
             "`score` DOUBLE)"
         @Expect(sql, expected)
+    }
+
+    // M24: 复合主键（junction 表）渲染表级 PRIMARY KEY，列级不再重复 PRIMARY KEY
+    @TestCase
+    public func testCreateTableSQLCompositePk(): Unit {
+        let d = MySQLDialect()
+        let sql = MySQLMigrator.createTableSQL(PostWithRel_TagsJunctionSchema(), d)
+        @Expect(sql, "CREATE TABLE IF NOT EXISTS `post_tags` (" +
+            "`postWithRel_id` BIGINT NOT NULL, " +
+            "`tag_id` BIGINT NOT NULL, " +
+            "PRIMARY KEY (`postWithRel_id`, `tag_id`))")
     }
 
     @TestCase
@@ -191,6 +213,52 @@ public class MySQLMigratorTest {
                 @Expect(true, false)
             }
         }
+    }
+
+    // M15: 复合索引在 STATISTICS 中每列占一行（同名重复）且 PRIMARY 混入，autoMigrate
+    // 必须去重 + 排除 PRIMARY，不得把已声明的 idx_multi 误判缺失而重复 CREATE INDEX
+    @TestCase
+    public func testAutoMigrateDedupsCompositeIndexAndSkipsPrimary(): Unit {
+        let ds = CaptureDatasource()
+        let conn = ds.conn
+        conn.stmt.queryResultQueue.add(RowQueryResult(1))
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult([], []))
+        let r1 = Array<Any>(1, {i => "idx_multi"})
+        let r2 = Array<Any>(1, {i => "idx_multi"})
+        let r3 = Array<Any>(1, {i => "PRIMARY"})
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult([], [r1, r2, r3]))
+
+        let db = DB(ds)
+        let migrator = MySQLMigrator(db)
+        migrator.autoMigrate([CompositeIdxSchema()])
+
+        for (i in 0..conn.stmt.capturedSqlHistory.size) {
+            if (conn.stmt.capturedSqlHistory[i].contains("CREATE INDEX")) {
+                @Expect(true, false)
+            }
+        }
+    }
+
+    // M15: getExistingIndexNames 的查询本身必须 DISTINCT 去重 + 排除 PRIMARY
+    @TestCase
+    public func testGetExistingIndexNamesSQLUsesDistinctAndExcludesPrimary(): Unit {
+        let ds = CaptureDatasource()
+        let conn = ds.conn
+        conn.stmt.queryResultQueue.add(RowQueryResult(1))
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult([], []))
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult([], []))
+        let db = DB(ds)
+        let migrator = MySQLMigrator(db)
+        migrator.autoMigrate([CompositeIdxSchema()])
+        var foundStats = false
+        for (sql in conn.stmt.capturedSqlHistory) {
+            if (sql.contains("information_schema.STATISTICS")) {
+                foundStats = true
+                @Expect(sql.contains("SELECT DISTINCT INDEX_NAME"), true)
+                @Expect(sql.contains("INDEX_NAME != 'PRIMARY'"), true)
+            }
+        }
+        @Expect(foundStats, true)
     }
 
     // C6: tinyint(1) unsigned 也是 Bool 列，不能只精确匹配 "tinyint(1)"
