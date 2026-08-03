@@ -130,14 +130,28 @@ extend<T> Query<T> {
         }
     }
 
-    // countWith/exists()/aggregate 复用的数据子句拷贝：仅保留 FROM/WHERE/JOIN。
+    // countWith/exists()/aggregate 复用的数据子句拷贝：保留 FROM/WHERE/JOIN/GROUP BY/HAVING。
+    // R-I5: 修复前只留 From/Where/Join，count/exists/聚合对分组查询静默丢失 GROUP BY/HAVING，
+    // 导致 page().total 与 items 不一致（total 数未分组行、items 是分组）。
     private func copyDataClauses(source: Statement, target: Statement): Unit {
         for (clause in source.clauses) {
             match (clause) {
-                case FromClause(_) | WhereClause(_) | JoinClause(_, _, _) => target.addClause(clause)
+                case FromClause(_) | WhereClause(_) | JoinClause(_, _, _) |
+                     GroupByClause(_) | HavingClause(_) => target.addClause(clause)
                 case _ => ()
             }
         }
+    }
+
+    // R-I5: 查询是否携带 GROUP BY（countWith 需据此区分「取首行值」与「数结果行」）。
+    private func hasGroupByClause(): Bool {
+        for (clause in stmt.clauses) {
+            match (clause) {
+                case GroupByClause(_) => return true
+                case _ => ()
+            }
+        }
+        false
     }
 
     private func countWith(exec: ExecutionContext, dialect: Dialect): Int64 {
@@ -153,7 +167,12 @@ extend<T> Query<T> {
         let elapsed = MonoTime.now() - start
         Logger.logSlowQuery(sql, elapsed)
         var cnt: Int64 = 0
-        if (result.next()) {
+        if (hasGroupByClause()) {
+            // R-I5: 分组查询下 SELECT COUNT(*) ... GROUP BY x 每组返回一行，取首行是「首个分组
+            // 的行数」而非总数。语义约定：count()/page().total 对分组查询返回「分组数」
+            // （与 page 数据端每组一条对齐），故遍历计数结果行数。
+            while (result.next()) { cnt++ }
+        } else if (result.next()) {
             cnt = result.get<Int64>(0 + columnOffset)
         }
         cnt
@@ -210,6 +229,9 @@ extend<T> Query<T> {
             // 拼裸列名，与 C9 标识符通道同源——列名含特殊字符时会被拼进 SQL 文本）
             let dialect = getDialect()
             aggStmt.addClause(SelectClause([Raw(fn + "(" + dialect.quoteIdentifier(colName) + ")")]))
+            // R-I5: copyDataClauses 现已携带 GROUP BY/HAVING。对分组查询，聚合语句形如
+            // SELECT SUM("x") FROM t GROUP BY dept HAVING ...，每组一行；标量聚合只取
+            // 结果首行（首个分组）的值——SQL 行序不保证，分组聚合请改用行查询而非标量聚合。
             copyDataClauses(stmt, aggStmt)
             let (sql, params) = dialect.render(aggStmt)
             Logger.logSQL(sql, params)

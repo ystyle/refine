@@ -3103,3 +3103,143 @@ public class AggregateQueryTest {
         @Expect(q.max(Col<Int64>("id")), 0)
     }
 }
+
+// ─── R-I5: 分组查询 count/page/exists/聚合携带 GROUP BY/HAVING ──────────
+// 修复前 copyDataClauses 只保留 From/Where/Join，count/exists/聚合对分组查询
+// 静默返回未分组结果，page().total 与 items 不一致。修复后：
+//   - count()  对分组查询返回「分组数」（每组一行 COUNT(*)，数行数），与 page 数据端对齐；
+//   - exists() 按组判断是否存在；
+//   - 聚合     携带 GroupBy/Having，取结果首行（首个分组）的值（见 aggregate 注释）。
+
+@Test
+public class R5GroupedQueryTest {
+
+    @TestCase
+    public func testCountWithGroupByCountsGroups(): Unit {
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        tx.begin()
+        // 3 个分组 → COUNT(*) 每组一行，3 行
+        conn.stmt.queryResult = MapperMockQueryResult(
+            [MapperMockColumnInfo("COUNT(*)", false)],
+            [Array<Any>(1, {i => 2}), Array<Any>(1, {i => 5}), Array<Any>(1, {i => 3})]
+        )
+        let q = Query<Int64>()
+            .select([Expr.Column("id")])
+            .from("t")
+            .groupBy([Expr.Column("dept")])
+            .using(tx)
+        let cnt = q.count()
+        @Expect(cnt, 3)
+        @Expect(conn.stmt.capturedSql, "SELECT COUNT(*) FROM \"t\" GROUP BY \"dept\"")
+    }
+
+    @TestCase
+    public func testCountWithGroupByAndHavingRendersBoth(): Unit {
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        tx.begin()
+        conn.stmt.queryResult = MapperMockQueryResult(
+            [MapperMockColumnInfo("COUNT(*)", false)],
+            [Array<Any>(1, {i => 7})]
+        )
+        let q = Query<Int64>()
+            .select([Expr.Column("id")])
+            .from("t")
+            .groupBy([Expr.Column("dept")])
+            .having([Expr.Binary(Expr.FuncCall("COUNT", [Expr.Column("id")]), BinOp.Gt, Expr.Value(5))])
+            .using(tx)
+        let cnt = q.count()
+        @Expect(cnt, 1)
+        @Expect(conn.stmt.capturedSql, "SELECT COUNT(*) FROM \"t\" GROUP BY \"dept\" HAVING COUNT(\"id\") > ?")
+    }
+
+    // R-I5 核心：分组 page 的 total = 分组数（COUNT(*) 行数），与分页数据（每组一条）对齐。
+    @TestCase
+    public func testPageWithGroupByTotalCountsGroups(): Unit {
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        tx.begin()
+        // 分组 count：4 行 = 4 个分组
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(
+            [MapperMockColumnInfo("COUNT(*)", false)],
+            [Array<Any>(1, {i => 1}), Array<Any>(1, {i => 1}), Array<Any>(1, {i => 1}), Array<Any>(1, {i => 1})]
+        ))
+        let cols: Array<SqlColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("dept", false),
+        ]
+        let rows = [
+            Array<Any>(2, {i => if (i == 0) { 1 } else { "a" }}),
+            Array<Any>(2, {i => if (i == 0) { 2 } else { "b" }}),
+        ]
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(cols, rows))
+        let q = Query<Int64>()
+            .select([Expr.Column("id"), Expr.Column("dept")])
+            .from("t")
+            .groupBy([Expr.Column("dept")])
+            .using(tx)
+        q.setMapper({ r: QueryResult, cm: HashMap<String, Int64> => 0 })
+        let pg = q.page(1, 10)
+        @Expect(pg.total, 4)
+        @Expect(pg.items.size, 2)
+        @Expect(conn.stmt.capturedSqlHistory[0].contains("GROUP BY"), true)
+        @Expect(conn.stmt.capturedSqlHistory[1].contains("GROUP BY"), true)
+    }
+
+    // exists() 携带 GROUP BY：SQL 应含 GROUP BY，且按组判断存在性。
+    @TestCase
+    public func testExistsWithGroupByCarriesGroupBy(): Unit {
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        tx.begin()
+        conn.stmt.queryResult = RowQueryResult(1)
+        let q = Query<Int64>()
+            .select([Expr.Column("id")])
+            .from("t")
+            .groupBy([Expr.Column("dept")])
+            .using(tx)
+        let exists = q.exists()
+        @Expect(exists, true)
+        @Expect(conn.stmt.capturedSql, "SELECT 1 FROM \"t\" GROUP BY \"dept\" LIMIT 1")
+    }
+
+    // 聚合携带 GROUP BY/HAVING：取结果首行（首个分组）的值。
+    @TestCase
+    public func testAggregateWithGroupByCarriesGroupBy(): Unit {
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        tx.begin()
+        conn.stmt.queryResult = MapperMockQueryResult(
+            [MapperMockColumnInfo("SUM(\"salary\")", false)],
+            [Array<Any>(1, {i => 42})]
+        )
+        let q = Query<Int64>()
+            .select([Expr.Column("id")])
+            .from("t")
+            .groupBy([Expr.Column("dept")])
+            .using(tx)
+        let s = q.sum(Col<Int64>("salary"))
+        @Expect(s, 42)
+        @Expect(conn.stmt.capturedSql, "SELECT SUM(\"salary\") FROM \"t\" GROUP BY \"dept\"")
+    }
+
+    // 非分组查询的 count 语义保持不变（取首行值）。
+    @TestCase
+    public func testCountWithoutGroupByStillReadsFirstRowValue(): Unit {
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        tx.begin()
+        conn.stmt.queryResult = MapperMockQueryResult(
+            [MapperMockColumnInfo("COUNT(*)", false)],
+            [Array<Any>(1, {i => 7})]
+        )
+        let q = Query<Int64>()
+            .select([Expr.Column("id")])
+            .from("t")
+            .using(tx)
+        let cnt = q.count()
+        @Expect(cnt, 7)
+        @Expect(conn.stmt.capturedSql, "SELECT COUNT(*) FROM \"t\"")
+    }
+}
