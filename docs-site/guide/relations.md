@@ -4,12 +4,12 @@
 
 Refine 的关联体系按 **拥有** 和 **引用** 二分：
 
-| 类型 | 语义 | Cangjie 字段 | SQL |
+| 类型 | 语义 | Cangjie 字段 | include 批量查询 |
 |---|---|---|---|
-| `@Ref[Target, fk]` | 引用一个 | `Option<Target>` | `LEFT JOIN target ON source.fk = target.id` |
-| `@Rel[has_one, Target, fk]` | 拥有一个 | `Option<Target>` | `LEFT JOIN target ON source.id = target.fk` |
-| `@Rel[has_many, Target, fk]` | 拥有多个 | `ArrayList<Target>` | LEFT JOIN + 结果去重 |
-| `@Ref[Target, via: ...]` | 引用多个 | `ArrayList<Target>` | 两次 LEFT JOIN（via 中间表） |
+| `@Ref[Target, fk]` | 引用一个 | `Option<Target>` | `SELECT target.* WHERE target.id IN (fk 集合)` |
+| `@Rel[has_one, Target, fk]` | 拥有一个 | `Option<Target>` | `SELECT target.* WHERE target.fk IN (父 id 集合)` |
+| `@Rel[has_many, Target, fk]` | 拥有多个 | `ArrayList<Target>` | `SELECT target.* WHERE target.fk IN (父 id 集合)` |
+| `@Ref[Target, via: ...]` | 引用多个 | `ArrayList<Target>` | junction 中间表 JOIN 目标表 + IN（源 id 集合） |
 
 ### 拥有 vs 引用
 
@@ -105,24 +105,41 @@ let orders = Order.query().using(rf)
 
 ## 预加载关联的关联
 
-只支持一层 include。关联结构是编译期从 `@Ref` / `@Rel` 注解推断的。
+`include()` 支持嵌套预加载，关联的关联同样批量装配：
+
+```cangjie
+// 预加载 order.creator 及其 profile（两级）
+let orders = Order.query().using(rf)
+    .include(OrderRel.creator.withInclude(UserRel.profile))
+    .all()
+
+// 字符串点号路径，与上方 withInclude 链完全等价
+let orders2 = Order.query().using(rf)
+    .includeAll(["creator.profile"])
+    .all()
+```
+
+`withInclude(sub)` 在关系上链式声明下一层关联，可多层嵌套；字符串路径 `includeAll(["a.b.c"])` 用点号分段，运行时逐段解析关系名（拼错的路径在运行时抛带清晰信息的 `QueryException`）。
 
 ## 如何工作的
 
-`include()` 在 SQL 层面生成 LEFT JOIN 并选择关联表的字段。对于 `has_many` 和 `ref_many`（集合关联），查询结果可能在多行中包含重复的主实体数据，Refine 使用 `aggregateWithCollections` 按主实体 ID 去重并聚合子实体。
+`include()` 采用**分步批量查询**（batch include）架构，不生成 LEFT JOIN：主查询只渲染源表自身，返回主实体后按目标表执行批量子查询，再按主键/外键回填关联。
 
 ```sql
--- has_many LEFT JOIN 示例
-SELECT o.*, oi.id AS items.id, oi.product AS items.product
-FROM orders o
-LEFT JOIN order_items oi ON o.id = oi.order_id
-
--- ref_many 两次 LEFT JOIN 示例
-SELECT o.*, t.id AS tags.id, t.name AS tags.name
-FROM orders o
-LEFT JOIN order_tags ot ON o.id = ot.order_id
-LEFT JOIN tags t ON ot.tag_id = t.id
+-- include(creator) + include(items)：2 条批量子查询
+-- ① 主查询（无 JOIN）
+SELECT * FROM orders WHERE ...
+-- ② 批量 ref_to：外键 IN 查目标表
+SELECT * FROM users WHERE id IN (?, ?, ...)
+-- ③ 批量 has_many：fk IN 父主键查目标表
+SELECT * FROM order_items WHERE order_id IN (?, ?, ...)
 ```
+
+**无笛卡尔积**：主查询结果行数恒等于主实体数，`has_many` 子行不再乘入父查询；`page()` 的 total 恒为父实体计数。
+
+**查询次数权衡**：批量 include 是「主查询 1 次 + 按目标表合并的 N 批子查询」。指向同一目标表的多个关联（如多个 `@Ref[User]`）合并为一次 IN 查询；has_one 与 has_many 共享同一 fk 也合并；主键/外键集合为空时跳过。相比单条 LEFT JOIN 大查询，查询次数增多，但消除了笛卡尔积、同表重复 JOIN、嵌套 include 不可用三个问题。
+
+**同表多引用合并示例**：订单同时引用 `creator` 和 `updater` 两个 `User` 时，二者合并为一条 `WHERE id IN (...)`，返回值按 id 建查找表后分别按各外键回填。
 
 ## 指定关联字段
 
@@ -346,7 +363,9 @@ rf.transaction { tx: Tx =>
 
 ## 已知限制
 
-- **`has_one` 的 String 主键目标 include 加载暂不支持**：`@Rel[has_one, Target, fk]` 且目标主键为 `String` 时，`include`/JOIN 预加载无法正确还原子对象 id（宏层无法跨类内省目标主键类型）。`ref_to` 的 String 主键目标不受影响（fk 类型在当前表可直接推导）
+- **目标实体必须有单列 `id` 主键**：批量 IN 以目标 `id` 为键，嵌套 include 的目标主键读取也硬编码 `id`（`@Id` 自定义主键名目标、复合主键目标不支持）
+- **复合主键主实体的集合 include 不支持**：`has_many` / `has_one` / `ref_many` 需要主实体单列主键的原始值，复合主键主实体执行前抛带说明的 `QueryException`
+- **字符串路径 `includeAll` 不支持字段子集**：路径只能由纯点号关系名组成（如 `"author.profile"`），不能携带字段；需要字段子集请用 `include(rel, fields)` 或 `withInclude` 链手写
 - **`batchSave` / `batchUpdate` 不级联**：批量操作只处理传入的实体数组本身，不沿关联字段递归
 - **update 列表移除不自动删库**：从关联列表移除子对象不会删除其数据库行
 - **级联与主写操作同在一个事务内**：由单个 `tx.save/update/delete` 触发，全程共用同一个 `tx`；`rf.transaction` 包裹时失败自动回滚，仅当手动管理连接/会话事务时才需自行 `tx.rollback()`

@@ -144,10 +144,10 @@ class Order {
 
 ### @Rel\[kind, Target, foreignKey]
 
-| kind | 语义 | Cangjie 类型 | SQL |
+| kind | 语义 | Cangjie 类型 | include 批量查询 |
 |---|---|---|---|
-| `has_many` | 拥有多个 | `ArrayList<Target>` | LEFT JOIN ON source.id = target.fk |
-| `has_one` | 拥有一个 | `Option<Target>` | LEFT JOIN ON source.id = target.fk |
+| `has_many` | 拥有多个 | `ArrayList<Target>` | `SELECT target.* WHERE target.fk IN (父 id 集合)` |
+| `has_one` | 拥有一个 | `Option<Target>` | `SELECT target.* WHERE target.fk IN (父 id 集合)` |
 
 ```cangjie
 @Refine

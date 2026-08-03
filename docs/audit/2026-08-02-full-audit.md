@@ -37,6 +37,7 @@
 - **位置**：`query.cj:323-335` + `method_gen.cj:44-48` + `method_gen.cj:208-214`
 - **问题**：`wrapMapper` 调 `targetMapper`（完整 `UserRowMapper`），它读取 target 所有非关系字段；`stripPrefix` 后只剩 include 的 fields 子集（默认 `["id"]`），`columnMap.get("email").getOrThrow()` 必抛 → 被 C1 吞掉 → **ref_to/has_one 路径整行丢失**。has_many/ref_many 集合路径（`aggregateWithCollections`）无 try/catch → **直接抛异常**。
 - **修法**：装配必须基于 include 的 fields 子集生成轻量 mapper，而非复用完整 RowMapper。
+- **✅ 已解决（2026-08-03 batch include）**：JOIN 装配路径整体删除（`wrapMapper`/`stripPrefix`/`aggregateWithCollections` 全部移除），改为批量分步查询——批量子查询按字段并集 SELECT，目标 RowMapper 按 `columnMap.contains` 逐字段装配，未选中字段保持默认值，不再有「丢行/漏字段」路径。
 
 ### C3. 静态 `Entity.save/update/delete` 不落库，只跑 hook —— API 信任事故
 - **位置**：`method_gen.cj:104-144`
@@ -48,6 +49,7 @@
 - **位置**：`query.cj:107-132` + `query.cj:445-467`
 - **问题**：`all()/one()` 对集合 include 走 `aggregateWithCollections` 按主键去重，但 `page()` 逐行映射——hasMany 展开的每行都生成一个父实体；同时 `countWith` 拷贝 JoinClause，`COUNT(*)` 在 JOIN 后对每行计数，total 被放大。
 - **修法**：`page()` 走与 `all()` 相同的集合去重路径；`countWith` 对含集合 include 应用 `COUNT(DISTINCT 主键)` 或子查询计数。
+- **✅ 已解决（2026-08-03 batch include）**：主查询不再生成 include JOIN，`COUNT(*)` 天然按父实体计数，total 正确；主查询无子行展开，`page()` 单页恒返回 size 个主实体，`aggregateWithCollections` 与 `COUNT(DISTINCT)` 分支均已删除。
 
 ### C5. PostgreSQL 子查询参数 `$n` 编号冲突（跨库不一致）
 - **位置**：`dialect_postgres.cj:112-115`
@@ -84,6 +86,7 @@
 - **位置**：`query.cj:302-312`
 - **问题**：`processIncluded` 只对 WhereClause 调 `qualifyExpr`，OrderBy/GroupBy/Having 被遗漏。include 后 join 表通常也有 id 列，`ORDER BY "id"` 在三方言都报 ambiguous。
 - **修法**：对 OrderBy/GroupBy/Having 同样递归 qualifyExpr。
+- **✅ 已解决（2026-08-03 batch include）**：`qualifyExpr` 与 `processIncluded` 的 JOIN 分支已整体删除，主查询不再 join 任何目标表，ORDER BY/GROUP BY/HAVING 只作用于源表列，歧义问题不复存在。
 
 ### I2. PostgreSQL `quoteIdentifier` 强制小写 → 驼峰字段映射失败 + include 别名错位
 - **位置**：`dialect_postgres.cj:11-13`
@@ -114,11 +117,13 @@
 - **位置**：`query.cj:550-557`
 - **问题**：`try { result.get<String>(idx); false } catch { true }` 用 get<String> 读 Int64 主键列判断 NULL，依赖 std 驱动对 NULL 的异常行为，跨驱动未验证；`query.cj:592` 还用 `get<String>` 读 Int64 id。测试注释写 get<Int64>、实现是 get<String>。
 - **修法**：用 `getOrNull<T>` 判空，并补真实行为测试。
+- **✅ 已解决（2026-08-03 batch include）**：`isNullId` 已随 JOIN 装配路径删除（`a0486ea` + Task 4），批量装配改为 `result.getOrNull<Int64|String>(idx)` 显式判空，不再依赖驱动异常边界。
 
 ### I8. `include(rel, fields)` 双参重载装配不完整（只填 id）
 - **位置**：`query.cj:213-216` vs `relation.cj:61-64`
 - **问题**：双参重载只加入 `FieldOverrideRelation` 不调 `wrapMapper`，装配走 base mapper 前缀检查只读取 `fieldName.id`——fields 覆盖完全失效。链式 `include(rel.setFields([...]))` 单参路径则正常。同一意图两条路径行为不一致。
 - **修法**：双参重载同样包 wrapMapper。
+- **✅ 已解决（2026-08-03 batch include）**：JOIN 装配路径删除后，双参重载的 `FieldOverrideRelation` 直接参与批量装配——`resolve().fields` 即覆盖字段集，批量子查询按字段并集 SELECT，与 `withInclude` 链/`setFields` 单参走同一套引擎，覆盖完全生效。
 
 ### I9. Refine.all/one 修改 Query 内部状态 + 双重关闭 session
 - **位置**：`refine.cj:113-129`
@@ -139,6 +144,7 @@
 - **位置**：`query.cj:604-608`
 - **问题**：`for ((_, entity) in map.toArray())` 依 HashMap 迭代序返回，ORDER BY/LIMIT/OFFSET 语义失效。
 - **修法**：维护插入序（LinkedHashMap 或序号键）。
+- **✅ 已解决（2026-08-03 batch include）**：`aggregateWithCollections` 已整体删除。批量装配在主查询映射后的实体数组上原地回填，顺序即主查询结果顺序，ORDER BY/LIMIT/OFFSET 语义天然保持。
 
 ### I13. `exists()` 全表 count
 - **位置**：`query.cj:469-471`
@@ -193,6 +199,7 @@
 - **问题**：`qualifyExpr` 只对 `Column/Binary/Unary/Aliased/Ordered` 递归，`Expr.Range`（I16 新增的 BETWEEN 三操作数变体）落入 `case _` 原样返回。表限定 JOIN 查询里若用 `between()` 谓词（内层列名），列不会被加上 `表名.` 前缀 → 多表时列歧义或错指。与既有 `FuncCall/Raw/SubQuery` 的浅处理一致，非 B5 回归。
 - **修法**：`qualifyExpr` 增加 `case Expr.Range(subject, low, high) => Expr.Range(qualifyExpr(subject, ...), qualifyExpr(low, ...), qualifyExpr(high, ...))`。
 - **备注**：B5 自审发现（2026-08-02），列为后续排期项。
+- **✅ 已解决（2026-08-03 batch include）**：`qualifyExpr` 已随 include JOIN 路径整体删除（`processIncluded` 变为 no-op），主查询不再产生任何 include JOIN，其 `Expr.Range` 递归缺口随函数删除而消除。
 
 ---
 

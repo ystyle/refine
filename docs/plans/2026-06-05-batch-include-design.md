@@ -2,6 +2,11 @@
 
 > **设计文档，非实现计划。** 讨论分步查询替代当前 LEFT JOIN 方案的设计。
 
+> **⚠️ 已被取代（2026-08-02）**：本设计已由
+> [2026-08-02 Batch Include 实现计划](./2026-08-02-batch-include.md) 落地实现并**演进为激进版**——
+> 「保留 JOIN 模式作为可选降级」（`useBatchInclude` / `enableBatchInclude`，见本文「兼容性」与「总结」）等方案
+> **未落地**：激进版直接移除全部 LEFT JOIN 生成/装配代码，batch include 成为唯一实现，无开关/降级。
+
 **目标：** 解决多关联预加载时 LEFT JOIN 导致的笛卡尔积爆炸和无法嵌套 include 的问题。
 
 ---

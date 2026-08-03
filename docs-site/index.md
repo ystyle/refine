@@ -19,7 +19,7 @@ features:
     details: 编译期类型检查，运行时零反射。实体字段映射、查询条件、关联预加载均在编译期校验。
     icon: 🛡️
   - title: 关联预加载
-    details: 支持 RefTo / HasOne / HasMany / RefMany 四种关联，自动 JOIN 或批查询，解决 N+1 问题。
+    details: 支持 RefTo / HasOne / HasMany / RefMany 四种关联，批量分步查询（batch include）合并同表关联，无笛卡尔积、可嵌套预加载。
     icon: 🔗
   - title: 多方言
     details: 内置 SQLite / MySQL / PostgreSQL 方言，可扩展自定义 Dialect。

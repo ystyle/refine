@@ -289,7 +289,8 @@ class ServiceChecks {
         let u2 = UserService.register(rf, n2, n2 + "@t.com")
         for (i in 0..3) { PostService.create(rf, "PI1_" + i.toString(), "B", u1.id) }
         for (i in 0..3) { PostService.create(rf, "PI2_" + i.toString(), "B", u2.id) }
-        // has_many include 的 LEFT JOIN 会按子行展开：断言父实体去重 + total 为父实体数
+        // has_many include 走批量子查询：主查询只渲染源表（无 JOIN），total 恒为父实体数；
+        // posts 由 `WHERE "user_id" IN (父 id 集合)` 的批量查询回填，不再按子行展开父实体
         let pg = User.query().using(rf)
             .filter(User.col().id.anyOf([u1.id, u2.id]))
             .include(UserRel.posts)

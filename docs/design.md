@@ -284,12 +284,19 @@ class Relation<TTarget> {
 
 > 注：仓颉不允许方法与字段同名，字段覆盖方法命名为 `setFields` 而非 `fields`。
 
-类型参数 `TTarget` 确保指向目标实体，但 `include()` 统一接收 `Relation<TTarget>` 的父类型。仓颉中所有 `Relation<TTarget>` 可通过上界通配共享同一接口：
+类型参数 `TTarget` 确保指向目标实体，但 `include()` 统一接收 `Relation<TTarget>` 的父类型。仓颉中所有 `Relation<TTarget>` 可通过上界通配共享同一接口（批量分步查询协议在此基础上扩展，见 §9.2）：
 
 ```cangjie
 interface IRelation {
     func resolve(): (kind: RelationKind, name: String, table: String,
                      fk: String, via: Option<String>, fields: Array<Col<Any>>)
+    // 批量 include 协议（宏层为每个关系生成）：
+    func getTargetMapper(): (QueryResult, HashMap<String, Int64>) -> Any  // 目标 RowMapper
+    func getFieldSetter(): (Any, Any) -> Unit                             // 装配到主实体
+    func getForeignKeyExtractor(): (Any) -> Any                           // ref_to 读主实体 fk
+    func getTargetIdExtractor(): (Any) -> Any                             // 嵌套层读目标主键
+    func withInclude(rel: IRelation): IRelation                           // 嵌套声明
+    func getNested(): Array<IRelation>                                    // 嵌套列表
 }
 ```
 
@@ -350,6 +357,9 @@ class Query<T> {
     // === 关联预加载（类型安全） ===
     func include(rel: IRelation): Query<T>        // 使用默认 fields
     func include(rel: IRelation, fields: Array<Col<Any>>): Query<T>
+    func includeAll(paths: Array<String>): Query<T> // 字符串点号路径，如 ["author.profile"]
+    // 嵌套 include：关系上 withInclude(sub) 链式声明下一层，如
+    //   include(PostRel.author.withInclude(UserRel.profile))   // 两级预加载，见 §9.2
 
     // === 高级查询 ===
     func groupBy(fields: Col<Any>...): Query<T>
@@ -424,6 +434,16 @@ let postsWithAuthor = Post.query()
 // 注：setFields 返回 Relation 基类、不能直接链式传给 include(IRelation)，字段覆盖用双参重载
 let postsWithTags = Post.query()
     .include(PostRel.tags, [Col<Any>("name")])
+    .all()
+
+// 嵌套 include：withInclude 链式声明两级预加载（author 的 profile 一并批量装配）
+let postsWithAuthorProfile = Post.query()
+    .include(PostRel.author.withInclude(UserRel.profile))
+    .all()
+
+// 字符串点号路径 includeAll：与上方 withInclude 链完全等价（同一批装配路径、同一 SQL）
+let postsWithAuthorProfile2 = Post.query()
+    .includeAll(["author.profile"])
     .all()
 
 // 聚合查询：按作者分组统计文章数
@@ -954,41 +974,40 @@ func mapPost(result: QueryResult, columnMap: HashMap<String, Int64>): Post {
 
 ### 9.2 嵌套映射（预加载关联）
 
-`include()` 生成 LEFT JOIN 时，SQL 输出列使用带前缀的别名：
+`include()` 预加载采用**分步批量查询**（batch include）架构，**不再生成 LEFT JOIN**。主查询只渲染源表自身（无 JOIN、无别名、无表名限定），关联数据在 `all()/one()/page()` 返回主实体后按批量查询协议装配：
 
 ```sql
 -- Post.query().include(PostRel.author).all()
--- @Ref[ref_to, target: User, by: "authorId", fields: ["id", "name"]]
-SELECT
-  p.id      AS "id",
-  p.title   AS "title",
-  p.author_id AS "author_id",
-  u.id      AS "author.id",       -- 前缀: "author"
-  u.name    AS "author.name"       -- 前缀: "author"
-FROM post p
-LEFT JOIN user u ON p.author_id = u.id
+-- ① 主查询（不含 include JOIN）
+SELECT "id", "title", "author_id" FROM "post"
+-- ② 批量 ref_to：收集主实体 author_id 集合（去重、过滤 0/""），按 id IN 查询目标表
+SELECT "id", "name" FROM "user" WHERE "id" IN (?, ?)
+-- ③ 按 id 建立 HashMap<id, User> 查找表，逐主实体按 author_id 命中回填（未命中保持未挂载）
 ```
 
-前缀名取自 `Relation.name`（即 `PostRel.author` 的 name）。结果映射时按前缀分拆：
+**批量查询协议**（`assembleRecursive`，按关联类型分派，同表关系合并为一次查询）：
 
-```cangjie
-// @Refine 宏生成，含 include(author) 时的逻辑
-func mapPostWithAuthor(
-    result: QueryResult,
-    columnMap: HashMap<String, Int64>
-): Post {
-    var entity = mapPost(result, columnMap)                    // 主实体映射
+1. **查主实体**：渲染不含 include 的主查询（FROM/WHERE/GROUP/HAVING/ORDER/LIMIT/OFFSET），主 mapper 映射；
+2. **按目标表分组**：遍历 included，按 `resolve().targetTable` 分四类（ref_to / has_one / has_many / ref_many）；
+3. **批量 ref_to**：收集主实体各关系的外键（去重、过滤 0/""）→ `SELECT <字段> FROM <目标表> WHERE "id" IN (...)` → 按 id 建查找表回填，未命中（目标被删）保持未挂载、不抛错；
+4. **批量 has_one / has_many**：收集主实体主键 → `SELECT <字段> FROM <目标表> WHERE "fk" IN (...)` → 按 fk 分组回填（has_many 整组 add、has_one 取组内第一条）；
+5. **批量 ref_many**：收集主实体主键 → junction 中间表 INNER JOIN 目标表批量查询 → 按源 id 分组回填（孤儿行被 INNER JOIN 排除）；
+6. **嵌套递归**：批量查出的目标实体若带 `withInclude` 嵌套声明，对其数组递归执行同一套协议（深度上限 16，防 include 环）。
 
-    if (columnMap.contains("author.id")) {                      // 检查前缀
-        var author = User()
-        author.id   = result.get<Int64>(columnMap["author.id"])
-        author.name = result.get<String>(columnMap["author.name"])
-        entity.author = Some(author)                            // 装配到关联字段
-    }
+**无笛卡尔积保证**：主查询不 join 任何目标表，结果行数恒等于主实体数；has_many 子行不再乘入父查询结果。`page()` 的 total 恒为父实体计数——`COUNT(*)` 天然正确，无需 `COUNT(DISTINCT id)`。
 
-    return entity
-}
-```
+**查询次数权衡**：批量 include 是「主查询 1 次 + 按目标表合并的 N 批子查询」。同表多个 ref_to 合并为一次 IN 查询，has_one 与 has_many 共享同一 fk 也合并；外键/主键集合为空时跳过该批量查询，不产生额外 SQL。相比旧 LEFT JOIN 单查询，查询次数增多（N+1 批），但消除了笛卡尔积、同表多引用重复 JOIN、无法嵌套 include 三个问题。
+
+**嵌套 include（withInclude）**：`include(PostRel.author.withInclude(UserRel.profile))` 链式声明两级预加载；批量装配 author 后，以目标实体的 id 集合作为下一层 `WHERE "user_id" IN (...)` 的参数递归装配 profile。嵌套层同样按目标表合并、共享查找表。
+
+**字符串路径 includeAll**：`includeAll(["author.profile"])` 以点号路径批量声明嵌套 include。宏层为每个实体生成 `<实体>Rel.forName(name)` 逐段解析（首段在本实体 Rel 类、后续段在上一层关系的目标 Rel 类上），组装结果与手写 `withInclude` 链完全等价（同一批装配路径、同一 SQL）。
+
+**限制**：
+
+- 目标实体必须有单列 `id` 主键：ref_to/has_one/has_many 的批量 IN 以目标 `id` 为键，嵌套 include 的目标主键读取也硬编码 `id`（`@Id` 自定义主键名目标、复合主键目标不支持）；
+- 集合 include（has_many / has_one / ref_many）还要求**主实体**为单列主键——复合主键主实体的集合 include 在执行前抛带说明的 `QueryException`；
+- 字符串路径 `includeAll` 只支持纯点号关系名，**不支持字段子集**语法（如 `"author.profile.name"`）；需要字段子集请用 `include(rel, fields)` 或 `withInclude` 链手写；
+- `AfterFind` hook 在批量装配**之前**执行，hook 内读取关联字段为未装配状态（`None` / 空列表）——批量架构的固有取舍（旧 LEFT JOIN 方案在 hook 前已完成 ref_to 装配）。
 
 ### 9.3 `Query<T>` 执行完整路径
 
@@ -1012,8 +1031,12 @@ class Query<T> {
         let columnMap = buildColumnMap(result.columnInfos)
         var entities = ArrayList<T>()
         while (result.next()) {
-            entities.add(mapWithRelations(result, columnMap))
+            entities.add(mainMapper(result, columnMap))   // 主实体映射（含 AfterFind hook）
         }
+
+        // 5. 批量装配（仅当声明了 include）
+        //    按目标表分派批量 IN 子查询，逐层回填关联 + 递归嵌套 include（见 §9.2）
+        assembleIncludes(exec, dialect, entities, rawIds)
         return entities.toArray()
     }
 }

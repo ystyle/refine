@@ -22,6 +22,10 @@ public interface IRelation {
     func resolve(): (RelationKind, String, String, String, Option<String>, Array<Col<Any>>)
     func getTargetMapper(): (QueryResult, HashMap<String, Int64>) -> Any
     func getFieldSetter(): (Any, Any) -> Unit
+    func getForeignKeyExtractor(): (Any) -> Any      // ref_to 批量装配读主实体 fk
+    func getTargetIdExtractor(): (Any) -> Any        // 嵌套 include 读目标主键
+    func withInclude(rel: IRelation): IRelation      // 嵌套声明（clone-on-write）
+    func getNested(): Array<IRelation>               // 嵌套列表
 }
 ```
 
@@ -51,7 +55,8 @@ let rel = RefTo<User>("creator", Col<Any>("user_id"),
 ### 生成的 SQL
 
 ```sql
-LEFT JOIN users creator ON orders.user_id = creator.id
+-- include 批量查询：WHERE 目标.id IN (主实体 fk 集合)
+SELECT * FROM users WHERE id IN (?, ?)
 ```
 
 ## HasOne\<T\> — has_one
@@ -67,7 +72,8 @@ let rel = HasOne<Invoice>("invoice", "order_id",
 ### 生成的 SQL
 
 ```sql
-LEFT JOIN invoices invoice ON orders.id = invoice.order_id
+-- include 批量查询：WHERE 目标.fk IN (主实体主键集合)
+SELECT * FROM invoices WHERE order_id IN (?, ?)
 ```
 
 ## HasMany\<T\> — has_many
@@ -83,12 +89,13 @@ let rel = HasMany<OrderItem>("items", "order_id",
 ### 生成的 SQL
 
 ```sql
-LEFT JOIN order_items items ON orders.id = items.order_id
+-- include 批量查询：WHERE 目标.fk IN (主实体主键集合)，按 fk 分组逐个回填
+SELECT * FROM order_items WHERE order_id IN (?, ?)
 ```
 
-### 去重
+### 批量装配
 
-`has_many` 和 `ref_many` 使用 `aggregateWithCollections()` 对结果集按 `(主实体ID : 关联名 : 子实体ID)` 去重。
+`has_many` 和 `ref_many` 集合关联在主查询后按 fk/中间表执行批量子查询，结果按主实体主键分组回填，**不做内存去重**（主查询本身无 JOIN、不产生重复父行）。
 
 ## RefMany\<T\> — ref_many
 
@@ -103,8 +110,9 @@ let rel = RefMany<Tag>("tags", "order_tags",
 ### 生成的 SQL
 
 ```sql
-LEFT JOIN order_tags tags_junction ON orders.id = tags_junction.order_id
-LEFT JOIN tags tags ON tags_junction.tag_id = tags.id
+-- include 批量查询：junction 中间表 INNER JOIN 目标表，WHERE 中间表源id IN (主实体主键集合)
+SELECT t.* FROM order_tags j JOIN tags t ON j.tag_id = t.id
+WHERE j.order_id IN (?, ?)
 ```
 
 中间表约束：`via` 表名对应的中间表必须包含 `sourceTable_id` 和 `targetTable_id` 两列。
@@ -140,3 +148,22 @@ LEFT JOIN tags tags ON tags_junction.tag_id = tags.id
 q.include(OrderRel.creator, [Col<Any>("name")])
 // 只预加载 creator.name，不加载其他字段
 ```
+
+## 嵌套 include
+
+`withInclude()` 链式声明关联的关联，运行时批量递归装配：
+
+```cangjie
+q.include(OrderRel.creator.withInclude(UserRel.profile))
+// 先批量装配 creator，再以 creator 的 id 集合批量装配其 profile
+```
+
+## 字符串路径 includeAll
+
+`Query.includeAll(paths: Array<String>)` 用点号路径声明嵌套 include，与 `withInclude` 链完全等价：
+
+```cangjie
+q.includeAll(["creator.profile", "tags"])
+```
+
+路径只支持纯点号关系名，不支持字段子集（需要字段子集请用 `include(rel, fields)` 或 `withInclude` 链）。路径字段拼错在运行时抛带清晰信息的 `QueryException`。

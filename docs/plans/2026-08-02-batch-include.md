@@ -2,6 +2,9 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
+> **✅ 状态：已全部完成（2026-08-02 → 08-03）。** Task 1-10 全部落地，测试全绿（781 用例，含真实 MySQL/PG 集成）。
+> 最终实现详见提交历史 `e4dfacb..1083106`（Task 1-9）+ 本 commit（Task 10 文档）。
+
 **Goal:** 将 include 预加载从单查询 LEFT JOIN 方案彻底重构为分步查询（batch include），移除 JOIN 模式，新增嵌套 include 与字符串路径 DSL。
 
 **Architecture:** batch include 成为唯一实现。`all()/one()/page()` 先查主实体，再按目标表批量执行 N+1 次查询（ref_to 按外键 IN、has_many 按主键 IN、ref_many 走 junction JOIN），按 id 建 HashMap 查找表装配关联。删除全部 LEFT JOIN 生成/装配代码（`processIncluded` 的 JOIN 分支、`wrapMapper`、`aggregateWithCollections`、`stripPrefix`、`qualifyExpr` 等）。嵌套 include 通过 `withInclude()` 链式 + 字符串点号路径（`includeAll(["author.profile"])`）双 API 支持，运行时递归装配。
@@ -149,11 +152,11 @@ public interface IRelation {
 - 每 Task 保持全绿 + 新测试；删除 JOIN 相关测试随代码删除
 
 ## 完成定义
-- [ ] LEFT JOIN 生成/装配代码全部删除
-- [ ] ref_to / has_one / has_many / ref_many 批量装配正确
-- [ ] 同表多 ref 合并一次查询
-- [ ] 嵌套 include（withInclude 链式）正确
-- [ ] 字符串 includeAll 点号路径正确
-- [ ] 混合 include 无笛卡尔积
-- [ ] page + include 正确
-- [ ] 全部既有测试迁移/删除后全绿
+- [x] LEFT JOIN 生成/装配代码全部删除
+- [x] ref_to / has_one / has_many / ref_many 批量装配正确
+- [x] 同表多 ref 合并一次查询
+- [x] 嵌套 include（withInclude 链式）正确
+- [x] 字符串 includeAll 点号路径正确
+- [x] 混合 include 无笛卡尔积
+- [x] page + include 正确
+- [x] 全部既有测试迁移/删除后全绿

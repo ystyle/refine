@@ -78,7 +78,15 @@ q.include(UserRel.profile)
 
 // 指定关联返回字段
 q.include(PostRel.author, [Col<Any>("name")])
+
+// 嵌套 include：withInclude 链式声明两级预加载
+q.include(PostRel.author.withInclude(UserRel.profile))
+
+// 字符串点号路径，与 withInclude 链等价
+q.includeAll(["author.profile", "tags"])
 ```
+
+`include()` 采用分步批量查询（batch include）：主查询后按目标表执行 `WHERE 主键/fk IN (...)` 批量子查询回填，无 JOIN、无笛卡尔积。嵌套关联（`withInclude` / `includeAll`）递归批量装配。限制：目标实体须有单列 `id` 主键；复合主键主实体的集合 include 不支持；`includeAll` 路径不支持字段子集。
 
 ### using()
 

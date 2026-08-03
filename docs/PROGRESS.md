@@ -61,7 +61,7 @@
 `docs/design.md#9` 已完成设计：
 
 - **平坦映射**：`columnInfos.name` → index 映射，逐字段 `qr.get<T>(idx)`
-- **嵌套映射**：JOIN 列前缀 `"author.id"` 分拆，@Refine 宏生成按前缀装配的逻辑
+- **嵌套映射**：~~JOIN 列前缀 `"author.id"` 分拆~~（2026-08-03 已由 batch include 取代）——主查询无 JOIN，include 走批量分步查询协议：主查询后按目标表 `WHERE id/fk IN (...)` 批量取目标，HashMap 查找表回填 + 嵌套递归（见 `docs/design.md#9.2`）
 - **参数绑定**：`dispatchSet()` 运行时类型分发 `Array<Any>` → `Statement.set<T>()`
 - 自定义类型走两层：`qr.get<NativeType>()` + `TypeAdapter.fromStored()`
 

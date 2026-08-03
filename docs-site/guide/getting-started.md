@@ -151,7 +151,7 @@ class Order {
     var tags: ArrayList<Tag> = ArrayList<Tag>()
 }
 
-// 预加载：一次查询带出所有关联
+// 预加载：一次主查询带出所有关联（批量子查询回填，无 JOIN 笛卡尔积）
 let orders = Order.query().using(rf)
     .include(OrderRel.creator)
     .include(OrderRel.items)
