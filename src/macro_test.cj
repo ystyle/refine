@@ -3575,6 +3575,11 @@ public class TxDeleteHookAbortTest {
 
 @Test
 public class TxPhysicalDeleteCascadeTest {
+    // F3(b) 孤儿策略固化：物理删父 + 软删子的混合策略。父 physicalDelete 时子对象
+    // cascadeDelete 走子实体自身策略（软删子 → UPDATE deleted_at，行保留），
+    // 父行物理删除。子行 deleted_at 置位但外键仍指向已物理删除的父——软删子保留
+    // 历史（审计/恢复），属有意的孤儿语义（文档见 docs/plans/2026-08-01-cascade-save-design.md
+    // 与 docs-site/guide/relations.md「级联删除」）。
     @TestCase
     public func testTxPhysicalDeleteCascadesChildren(): Unit {
         let conn = CaptureConnection()
@@ -3588,6 +3593,15 @@ public class TxPhysicalDeleteCascadeTest {
         @Expect(conn.stmt.capturedSqlHistory[0], "SELECT * FROM softDeleteChild WHERE parent_id = ?")
         @Expect(conn.stmt.capturedSqlHistory[1].contains("UPDATE \"softDeleteChild\" SET \"deleted_at\""), true)
         @Expect(conn.stmt.capturedSqlHistory[2], "DELETE FROM \"softDeleteParent\" WHERE \"id\" = ?")
+        // 子对象只能被软删（UPDATE deleted_at=1，行保留），绝不能物理删（DELETE child 不应出现）
+        for (sql in conn.stmt.capturedSqlHistory) {
+            @Expect(sql.startsWith("DELETE FROM \"softDeleteChild\""), false)
+        }
+        // 参数序列：SELECT 用父 id=1，子 UPDATE 置 deleted_at=1 + WHERE id=2，父 DELETE WHERE id=1
+        @Expect(capturedInt64(conn.stmt.capturedSetValues, 0), 1)
+        @Expect(capturedInt64(conn.stmt.capturedSetValues, 1), 1)
+        @Expect(capturedInt64(conn.stmt.capturedSetValues, 2), 2)
+        @Expect(capturedInt64(conn.stmt.capturedSetValues, 3), 1)
     }
 }
 

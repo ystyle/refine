@@ -68,6 +68,7 @@ delete 时只执行第 1 步。
 
 - 从根实体递归遍历关联图，**无限深度**。
 - 维护已访问集合，**按对象引用（identity）判断，不用 (type, id)**——因为级联中新对象 id 都是 0，用 (type, id) 会把两个不同新对象误判为同一对象而跳过。用对象引用集合（`Array<Any>` 存实体引用，`contains` 判断），环上重复节点跳过不重复处理。
+- **delete 路径的 visited 与 save/update 不同**：级联删除用 `<Class>:<pk...>` 键（`loadX` 每次新建实体实例，refEq 无法识别 DB 常驻环），键是值类型 String，实现上用 `CascadeVisitedKeys`（`= HashSet<String>`，refine 包公开类型别名）提供 O(1) contains。save/update 的对象引用 visited 保持 `ArrayList<Object>` O(n) 线性扫描——仓颉无 identity-based 哈希集合（`HashSet`/`HashMap` 均按 Equatable 的 `==` 散列，实体默认值语义无法承载 refEq），见 `src/refine.cj` `visitedContains` 注释（2026-08 P1 审计 F2(c)）。
 - 深链示例：Order → items → product → category → ... 自动递归。
 
 ## 3. update 语义
@@ -151,6 +152,33 @@ delete 顺序：
 ## 6.5 已知限制
 
 - **has_one 关联的 String 主键目标实体**：父实体 rowMapper 的 include/JOIN 加载暂不支持（宏层无法跨类内省目标实体主键类型，`result.get<Int64>` 会类型错配导致父实体编译失败）。cascade save/delete 不受影响——has 系走 `loadX(tx)`（含目标实体自身 rowMapper，类型正确）。ref_to 的 String-pk 目标已支持（fk 字段在当前实体上，类型可推导）。
+
+## 6.6 事务与原子性（2026-08 P1 审计 F3）
+
+**级联操作本身不具备跨语句原子性，必须放在事务中使用。**
+
+- 级联 save/update/delete 由 `tx.save` / `tx.update` / `tx.delete` 触发，全程共用同一个 `tx`——一次级联会执行多条 SQL（父 + 子 + 中间表）。若在**自动提交**（非事务）上下文中直接调用，每条 SQL 独立提交，中途失败会留下**部分落库**（部分子对象已写、部分未写），无法整体回滚。
+- 正确用法：级联写操作一律包在 `rf.transaction { tx => ... }` 内（或手动 `begin/commit/rollback`）。事务回滚时，级联产生的全部写入一起回滚，保证原子性。
+- `tx.save` / `tx.update` / `tx.delete` 不会隐式开启事务——它们只是「在同一执行上下文上按序执行多条语句」，并不改变底层连接的提交模式。
+- 只读级联（`loadX`、include 预加载）不涉及写入，无此约束。
+- 相关实现位置：`src/macros/tx_gen.cj`（saveCascade/updateCascade/deleteCascade 全部在同一 extend Tx 内、复用传入 tx）、`src/macros/relation_gen.cj`（cascadePreSave/cascadePostSave/cascadeDelete）。
+
+### 物理删父 + 软删子：孤儿策略（2026-08 P1 审计 F3）
+
+`tx.physicalDelete(parent)` 硬删父实体时，子对象（has 系）仍按**子实体自身策略**处理：
+
+- 子实体是软删模型（有 `deleted_at`）→ `cascadeDelete` 走 `tx.deleteCascade`（软删：`UPDATE deleted_at`），子行**保留**。
+- 父行随后被物理删除。
+
+结果：软删子的 `deleted_at` 置位、行仍在，但其外键指向的父行已物理删除——形成**孤儿行**。
+
+**这是有意的策略**：软删子保留历史/审计/恢复能力，物理删父不应连带把子历史抹掉。代价是子行的外键悬空（访问父记录会命中已删父的软删影子或不存在行）。约束与取舍：
+
+- 若需要「物理删父时物理删子」（不留孤儿），需在删父前手动 `tx.delete` 子对象（子仍软删）或用物理删逐个处理——ORM 不提供「物理删父强制级联物理删子」的开关。
+- 全软删路径（`tx.delete` 软删父）不会产生孤儿：父、子都是 `UPDATE deleted_at`，行都在，仅查询过滤。
+- 测试固化：`TxPhysicalDeleteCascadeTest.testTxPhysicalDeleteCascadesChildren`（物理删父 + 软删子，断言子仅软删、父物理删、无 DELETE 子行）。
+
+实现位置：`src/macros/tx_gen.cj` `buildTxSoftDeleteExtend`（physicalDelete → physicalDeleteCascade → `entity.cascadeDelete(this, visited)` 递归子，子按自身策略软删，父走 DeleteSQL 硬删）。
 
 ## 7. 测试策略
 

@@ -8,6 +8,12 @@ import std.database.sql.QueryResult
 class RelUser {}
 class RelTag {}
 
+// F3(c): 关系 getter 返回的 setter 闭包是否被真实调用的探针（替代 @Expect(true, true) 空占位）
+class SetterProbe {
+    var called: Bool = false
+    public init() {}
+}
+
 @Test
 public class RelationTest {
     @TestCase
@@ -87,7 +93,8 @@ public class RelationTest {
     @TestCase
     public func testHasOne(): Unit {
         let mapper: (QueryResult, HashMap<String, Int64>) -> Any = { r, cm => 1 }
-        let setter: (Any, Any) -> Unit = { e, t => () }
+        let probe = SetterProbe()
+        let setter: (Any, Any) -> Unit = { e, t => probe.called = true }
         let rel = HasOne<Int64>("profile", "user_id", [Col<Any>("id")], "profiles", mapper, setter, dummyTargetIdExtractor)
         let (kind, name, table, fk, via, fields) = rel.resolve()
         @Expect(kind, RelationKind.HasOneRel)
@@ -96,36 +103,51 @@ public class RelationTest {
         @Expect(fk, "user_id")
         @Expect(via.isNone(), true)
         @Expect(fields.size, 1)
-        let tm = rel.getTargetMapper()
-        let fs = rel.getFieldSetter()
-        @Expect(true, true)
+        // getTargetMapper/getFieldSetter 返回的闭包必须可用（行为断言，非引用相等）
+        rel.getFieldSetter()(1, 2)
+        @Expect(probe.called, true)
+        match (rel.getTargetMapper()(RowQueryResult(1), HashMap<String, Int64>())) {
+            case v: Int64 => @Expect(v, 1)
+            case _ => @Fail("expected Int64 mapper result")
+        }
     }
 
     @TestCase
     public func testHasMany(): Unit {
         let mapper: (QueryResult, HashMap<String, Int64>) -> Any = { r, cm => 1 }
-        let setter: (Any, Any) -> Unit = { e, t => () }
+        let probe = SetterProbe()
+        let setter: (Any, Any) -> Unit = { e, t => probe.called = true }
         let rel = HasMany<String>("posts", "user_id", [Col<Any>("id")], "posts", mapper, setter, dummyTargetIdExtractor)
         let (kind, name, _, fk, _, _) = rel.resolve()
         @Expect(kind, RelationKind.HasManyRel)
         @Expect(name, "posts")
         @Expect(fk, "user_id")
-        @Expect(true, true)
+        rel.getFieldSetter()(1, 2)
+        @Expect(probe.called, true)
+        match (rel.getTargetMapper()(RowQueryResult(1), HashMap<String, Int64>())) {
+            case v: Int64 => @Expect(v, 1)
+            case _ => @Fail("expected Int64 mapper result")
+        }
     }
 
     @TestCase
     public func testFieldOverrideRelation(): Unit {
         let mapper: (QueryResult, HashMap<String, Int64>) -> Any = { r, cm => 1 }
-        let setter: (Any, Any) -> Unit = { e, t => () }
+        let probe = SetterProbe()
+        let setter: (Any, Any) -> Unit = { e, t => probe.called = true }
         let inner = HasMany<String>("tags", "post_id", [Col<Any>("id")], "tags", mapper, setter, dummyTargetIdExtractor)
         let overrides = [Col<Any>("name"), Col<Any>("color")]
         let wrapper = FieldOverrideRelation(inner, overrides)
         let (kind, name, _, fk, _, fields) = wrapper.resolve()
         @Expect(kind, RelationKind.HasManyRel)
         @Expect(fields.size, 2)
-        let tm = wrapper.getTargetMapper()
-        let fs = wrapper.getFieldSetter()
-        @Expect(true, true)
+        // FieldOverrideRelation 必须透传目标 mapper/setter（行为断言）
+        wrapper.getFieldSetter()(1, 2)
+        @Expect(probe.called, true)
+        match (wrapper.getTargetMapper()(RowQueryResult(1), HashMap<String, Int64>())) {
+            case v: Int64 => @Expect(v, 1)
+            case _ => @Fail("expected Int64 mapper result")
+        }
     }
 
     @TestCase

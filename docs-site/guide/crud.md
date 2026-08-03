@@ -277,6 +277,8 @@ rf.transaction { tx: Tx =>
 ```
 
 > **级联删除**：`tx.delete` 沿 has 系关联从库查询子对象并级联删除（子对象遵循自身软删/硬删策略），`ref_many` 清空中间表，`ref_to` 不动被引对象。不依赖内存关联列表。详见 [关联 - 级联保存](./relations.md#级联保存)。
+>
+> **⚠ 原子性**：级联删除会执行多条 SQL（父 + 子 + 中间表），`tx.delete` 不隐式开启事务——请在 `rf.transaction` 内调用以保证整体原子性（中途失败整体回滚），见 [事务](../guide/transactions.md) 与 [关联 - 原子性](./relations.md#级联保存)。
 
 ### 条件删除
 

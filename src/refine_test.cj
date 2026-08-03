@@ -175,10 +175,15 @@ public class RefineTest {
 
     @TestCase
     public func testSession(): Unit {
-        let r = Refine(RMockDS(), SQLiteDialect(), 0)
+        let ds = RMockTrackingDS()
+        let r = Refine(ds, SQLiteDialect(), 0)
         let s = r.session()
+        @Expect(s.getParamOffset(), 0)
         s.close()
-        @Expect(true, true)
+        @Expect(ds.created.size, 1)
+        if (ds.created.size > 0) {
+            @Expect(ds.created.get(0).getOrThrow().isClosed(), true)
+        }
     }
 
     @TestCase
@@ -381,8 +386,11 @@ public class RefineTest {
     @TestCase
     public func testMigrator(): Unit {
         let r = Refine(RMockDS(), SQLiteDialect(), 0)
-        r.migrator()
-        @Expect(true, true)
+        let m = r.migrator()
+        match (m) {
+            case _: SQLiteMigrator => ()
+            case _ => @Fail("expected SQLiteMigrator for SQLite dialect")
+        }
         r.close()
     }
 

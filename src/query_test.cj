@@ -370,9 +370,14 @@ public class QueryTest {
         q.select([Expr.Column("id")])
         q.from("t")
         q.setMapper({ r: QueryResult, cm: HashMap<String, Int64> => 0 })
-        // one() requires an executor - we can't easily provide one in unit test
-        // but we can verify it doesn't throw "no auto-mapper"
-        @Expect(true, true)
+        @Expect(q.mapper.isSome(), true)
+        // mapper 已注册：one() 不再抛 "No auto-mapper"，而应因缺 executor 抛 QueryException
+        try {
+            let _ = q.one()
+            @Fail("expected QueryException for missing executor")
+        } catch (e: QueryException) {
+            @Expect(e.message.contains("No execution context"), true)
+        }
     }
 
     @TestCase
@@ -401,8 +406,9 @@ public class QueryTest {
     @TestCase
     public func testSetMapper(): Unit {
         let q = Query<Int64>()
+        @Expect(q.mapper.isNone(), true)
         q.setMapper({ r: QueryResult, cm: HashMap<String, Int64> => 0 })
-        @Expect(true, true)
+        @Expect(q.mapper.isSome(), true)
     }
 
     @TestCase

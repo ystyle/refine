@@ -252,11 +252,13 @@
 - **位置**：`relation_gen.cj:214`（`if (pkFields.size == 0)` 分支）
 - **问题**：(a) `buildCascadeKeyTokens` 的 `pkFields.size == 0` 死代码分支——无 pk 的实体能否级联删除未验证；(b) 复合 pk 的 `cascadeDelete` 键（`<Class>:<pk1>:<pk2>`）无专门测试（现有 `testTxUpdateVersionedOrderTagConflictCompositePk` 是乐观锁复合 pk，非级联删除）；(c) `visitedContains/visitedKeyContains` 是 O(n) 线性扫描，深链/大集合时退化为 O(n²)。
 - **修法**：补复合 pk 级联删除测试；评估 visited 改 HashSet。
+- **✅ 已解决（2026-08-03 P1）**：(a) 裁决 `pkFields.size == 0` **不可达死代码**——`@Refine` 实体要么含 `id` 字段（extractFields 默认主键，size==1），要么带 `@Id` 标注（Id 宏 fieldName=声明字段，至少标注一个，size>=1）；唯一 size==0 是「无 id 字段且无 @Id」，此时生成的 `target.id` 引用无法编译，实体不可构建。分支移除，改抛明确宏错误（"cascade methods require at least one @Id primary key field"）。(b) 新增 `OrderLineItem`（`@Id` 双主键）+ `OrderWithRel`（has_many）fixture 与 4 个测试：键格式 `<Class>:<pk1>:<pk2>`、visited 命中短路、`tx.deleteCascade` 重复删除只删一次、父级联删复合 pk 子对象（`testCascadeDeleteCompositePk*`）。(c) delete 路径 visited 改 `CascadeVisitedKeys`（`= HashSet<String>`，refine 包公开类型别名，O(1) contains）；save/update 的 `visitedContains`（对象引用）保留 O(n) 并注释约束——仓颉无 identity-based 哈希集合（HashSet/HashMap 按 Equatable == 散列），见 `refine.cj`。
 
 ### F3. 非事务级联原子性 + 物理删父软删子孤儿 + Task6 minor 加固
 - **位置**：`docs/plans/2026-08-01-cascade-save-design.md`
 - **问题**：(a) 非事务场景下级联保存/删除不具备原子性（中途失败部分落库），文档未说明；(b) 物理删除父实体时，若子实体是软删模型，`cascadeDelete` 走 `tx.deleteCascade`（软删）而父走 `physicalDelete`，导致孤儿——策略继承未文档化/验证；(c) Task6 部分边界测试断言偏弱（如 `@Expect(true, true)` 空占位）。
 - **修法**：文档明确"级联操作应在事务中使用"；物理删父对软删子的策略补说明与测试；加固 Task6 断言。
+- **✅ 已解决（2026-08-03 P1）**：(a) 设计文档新增「6.6 事务与原子性」章节（级联不隐式开事务、自动提交下部分落库、须 `rf.transaction` 包裹），docs-site relations.md/crud.md/transactions.md 同步补充原子性警示。(b) 文档化孤儿策略为**有意行为**（软删子保留历史/审计/恢复能力）：`physicalDelete` 父 → 子按自身策略软删（行保留、`deleted_at` 置位）、父物理删，软删子成孤儿；全软删路径无孤儿。`testTxPhysicalDeleteCascadesChildren` 加固断言（子仅软删无 DELETE、参数序列），见 `macro_test.cj`。(c) 加固弱断言：`refine_test` testSession/testMigrator（断言连接关闭、migrator 类型）、`query_test` testSetMapper/testOneWithMapper（断言 mapper 注册 + 缺 executor 抛 QueryException）、`relation_test` testHasOne/testHasMany/testFieldOverrideRelation（行为断言：返回的 mapper/setter 可调用）。`case None => @Expect(true,true)`（DB 不可用跳过）与 `catch { @Fail + @Expect(true,true) }`（@Fail 已守卫）为合法模式保留。
 
 ---
 

@@ -190,7 +190,9 @@ ref_many 的完整关联管理 API（六件套）见下文 [ref_many 关联管�
 
 ## 级联保存
 
-`tx.save(entity)` / `tx.update(entity)` / `tx.delete(entity)` 会沿关联字段自动级联处理子对象（不落库/删除被引对象本身）。所有级联写操作都在同一个事务中执行。
+`tx.save(entity)` / `tx.update(entity)` / `tx.delete(entity)` 会沿关联字段自动级联处理子对象（不落库/删除被引对象本身）。所有级联写操作都在同一个 `tx` 上执行。
+
+> **⚠ 级联不具跨语句原子性，请在事务中使用**：一次级联会执行多条 SQL（父 + 子 + 中间表）。`tx.save/update/delete` **不会隐式开启事务**——在自动提交（非事务）上下文中，每条 SQL 独立提交，中途失败会留下部分落库（部分子对象已写）。要保证整体原子性，请把级联写操作包在 `rf.transaction { tx => ... }`（或手动 `begin/commit/rollback`）内，回滚时级联产生的全部写入一起回滚。设计细节见仓库内 `docs/plans/2026-08-01-cascade-save-design.md` 第 6.6 节。
 
 ### 级联语义
 
@@ -313,7 +315,9 @@ DELETE FROM post_tags WHERE post_id = ?    -- 清空中间表
 DELETE FROM user WHERE id = ?              -- 删除父
 ```
 
-子对象删除遵循**自身策略**：软删除实体软删（`UPDATE deleted_at`）、物理删除实体硬删。`tx.physicalDelete(user)` 硬删父时，子对象仍按自身策略处理（软删子仍软删，可能留下引用已删父的行）。
+子对象删除遵循**自身策略**：软删除实体软删（`UPDATE deleted_at`）、物理删除实体硬删。
+
+**`tx.physicalDelete(parent)` 硬删父 + 软删子的孤儿策略**：父物理删时，软删子仍走软删（`UPDATE deleted_at`，行保留），随后父行被物理删除——子行 `deleted_at` 置位但外键指向已删父，成为**孤儿行**。这是有意的：软删子保留历史/审计/恢复能力，物理删父不应连带抹掉子历史。若不允许孤儿，需在删父前手动按需删除子对象。全软删路径（`tx.delete`）不会产生孤儿（父、子均只 `UPDATE deleted_at`，行都在）。
 
 ### 环 / 菱形安全
 
@@ -368,5 +372,5 @@ rf.transaction { tx: Tx =>
 - **字符串路径 `includeAll` 不支持字段子集**：路径只能由纯点号关系名组成（如 `"author.profile"`），不能携带字段；需要字段子集请用 `include(rel, fields)` 或 `withInclude` 链手写
 - **`batchSave` / `batchUpdate` 不级联**：批量操作只处理传入的实体数组本身，不沿关联字段递归
 - **update 列表移除不自动删库**：从关联列表移除子对象不会删除其数据库行
-- **级联与主写操作同在一个事务内**：由单个 `tx.save/update/delete` 触发，全程共用同一个 `tx`；`rf.transaction` 包裹时失败自动回滚，仅当手动管理连接/会话事务时才需自行 `tx.rollback()`
-- **`physicalDelete` 硬删父**：子对象仍遵循自身删除策略，软删子仍软删，可能留下引用已删父的行
+- **级联操作不隐式开启事务**：由单个 `tx.save/update/delete` 触发，全程共用同一个 `tx`，但**不改变底层连接的提交模式**——非事务（自动提交）下每条级联 SQL 独立提交，中途失败无原子性；请在 `rf.transaction` 内使用，失败自动回滚
+- **`physicalDelete` 硬删父**：子对象仍遵循自身删除策略，软删子仍软删（行保留，`deleted_at` 置位），父行物理删除后软删子成为孤儿——属有意的历史保留策略，见[级联删除](#级联删除)
