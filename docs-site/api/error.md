@@ -53,3 +53,11 @@ try {
 | `actual` | `Int64` | 数据库中的实际版本号（行不存在时为 -1） |
 
 > `batchUpdate` 匹配行数不足时也会抛出，此时 `pk` 为 `"batch"`、`expected` 为 0、`actual` 为 -1。
+
+### 构造
+
+```cangjie
+// M10: init 私有化，须经工厂方法构造（pk 语义在调用点显式表达）
+let e1 = OptimisticLockException.createWithInt64Pk("User", 42, 3, 5)
+let e2 = OptimisticLockException.createWithStringPk("Event", "uuid-9", 4, 6)
+```
