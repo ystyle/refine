@@ -474,6 +474,14 @@ public class SoftDeleteChild {
     var parent_id: Int64 = 0
 }
 
+// M9: DateTime 声明的 deleted_at——软删除过滤应为 IS NULL，软删写值应为 DateTime.now()
+@Refine
+public class DateTimeSoftDeleteEntity {
+    var id: Int64 = 0
+    var name: String = ""
+    var deleted_at: DateTime = DateTime.now()
+}
+
 class HookFlag {
     var called: Bool = false
     public init() {}
@@ -1453,6 +1461,15 @@ public class MacroExistingTest {
         @Expect(cols[0].storageType, StorageType.Integer)
     }
 
+    // M24: junction 表 (src_id, tgt_id) 构成复合主键——同一关联对天然唯一，防重复关联行
+    @TestCase
+    public func testJunctionSchemaColumnsAreCompositePk(): Unit {
+        let js = PostWithRel_TagsJunctionSchema()
+        let cols = js.columns()
+        @Expect(cols[0].primaryKey, true)
+        @Expect(cols[1].primaryKey, true)
+    }
+
     @TestCase
     public func testSchemasReturnsMainAndJunction(): Unit {
         let all = PostWithRel.schemas()
@@ -1577,6 +1594,61 @@ public class SoftDeleteTest {
             }
         }
         @Expect(hasDeletedAtFilter, false)
+    }
+}
+
+// M9: DateTime 版 deleted_at 的软删除行为——过滤走 IS NULL（而非 Int64 的 = 0），
+// 软删写值走 DateTime.now()（而非硬编码整数 1）。
+@Test
+public class DateTimeSoftDeleteTest {
+    @TestCase
+    public func testQueryAddsIsNullFilterForDateTimeDeletedAt(): Unit {
+        let q = DateTimeSoftDeleteEntity.query()
+        var hasIsNull = false
+        for (c in q.stmt.clauses) {
+            match (c) {
+                case Clause.WhereClause(predicates) =>
+                    for (p in predicates) {
+                        match (p) {
+                            case Expr.Unary(UnaryOp.IsNull, Expr.Column(name)) =>
+                                if (name == "deleted_at") { hasIsNull = true }
+                            case _ => ()
+                        }
+                    }
+                case _ => ()
+            }
+        }
+        @Expect(hasIsNull, true)
+    }
+
+    @TestCase
+    public func testTxDeleteWritesDateTimeValue(): Unit {
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        let e = DateTimeSoftDeleteEntity()
+        e.id = 1
+        tx.delete(e)
+        @Expect(conn.stmt.capturedSql.contains("UPDATE"), true)
+        @Expect(conn.stmt.capturedSql.contains("deleted_at"), true)
+        // 参数[0] 是 SET deleted_at 的值，必须是 DateTime（而非 Int64 1）
+        let first = conn.stmt.capturedSetValues[0]
+        var isDateTime = false
+        match (first) {
+            case _: DateTime => isDateTime = true
+            case _ => ()
+        }
+        @Expect(isDateTime, true)
+    }
+
+    @TestCase
+    public func testTxPhysicalDeleteIsDelete(): Unit {
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        let e = DateTimeSoftDeleteEntity()
+        e.id = 1
+        tx.physicalDelete(e)
+        @Expect(conn.stmt.capturedSql.contains("DELETE"), true)
+        @Expect(conn.stmt.capturedSql.contains("deleted_at"), false)
     }
 }
 

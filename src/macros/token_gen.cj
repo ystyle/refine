@@ -153,10 +153,16 @@ func buildDeleteEntityParamsToken(pkFields: ArrayList<FieldInfo>): Tokens {
     arr
 }
 
-func buildSoftDeleteEntityParamsToken(pkFields: ArrayList<FieldInfo>): Tokens {
+// M9: 软删 SET deleted_at 的参数值按列类型生成——Int64 写整数 1（历史行为），
+// DateTime 写 DateTime.now()（时间戳软删，配合 IS NULL 过滤）。
+func buildSoftDeleteEntityParamsToken(pkFields: ArrayList<FieldInfo>, deletedAtIsDateTime: Bool): Tokens {
     var arr = Tokens()
     arr = arr + Token(TokenKind.LSQUARE)
-    arr = arr + Token(TokenKind.IDENTIFIER, "1")
+    if (deletedAtIsDateTime) {
+        arr = arr + quote(DateTime.now())
+    } else {
+        arr = arr + Token(TokenKind.IDENTIFIER, "1")
+    }
     for (pk in pkFields) {
         arr = arr + Token(TokenKind.COMMA)
         arr = arr + Token(TokenKind.IDENTIFIER, "entity")

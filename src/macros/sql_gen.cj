@@ -315,12 +315,14 @@ func buildDeleteSQLFunc(className: String, tableName: String, pkFields: ArrayLis
     )
 }
 
-func buildSoftDeleteSQLFunc(className: String, tableName: String, pkFields: ArrayList<FieldInfo>): Tokens {
+// M9: deletedAtIsDateTime 控制 SET deleted_at 的写值类型——Int64 软删写整数 1，
+// DateTime 软删写 DateTime.now()（软删语义是"打时间戳"，与 IS NULL 过滤互补）。
+func buildSoftDeleteSQLFunc(className: String, tableName: String, pkFields: ArrayList<FieldInfo>, deletedAtIsDateTime: Bool): Tokens {
     let funcName = Token(TokenKind.IDENTIFIER, className + "SoftDeleteSQL")
     let cn = Token(TokenKind.IDENTIFIER, className)
     let tblLit = Token(TokenKind.STRING_LITERAL, tableName)
     let pkWhereTok = buildQuotedPkWhereTokens(pkFields)
-    let entityArray = buildSoftDeleteEntityParamsToken(pkFields)
+    let entityArray = buildSoftDeleteEntityParamsToken(pkFields, deletedAtIsDateTime)
     quote(
         func $(funcName)(entity: $(cn), dialect: Dialect): (String, Array<Any>) {
             $(pkWhereTok)

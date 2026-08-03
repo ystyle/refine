@@ -93,8 +93,15 @@ public macro Refine(input: Tokens): Tokens {
 
     // Detect soft delete: has deleted_at field AND no @HardDelete annotation
     var hasDeletedAt = false
+    var deletedAtIsDateTime = false
     for (f in mergedFields) {
-        if (f.name == "deleted_at") { hasDeletedAt = true; break }
+        if (f.name == "deleted_at") {
+            hasDeletedAt = true
+            // M9: 软删过滤与写值按 deleted_at 声明类型生成：DateTime → IS NULL /
+            // DateTime.now()（Int64 → `= 0` / 1，保持原行为）
+            deletedAtIsDateTime = f.typeName == "DateTime"
+            break
+        }
     }
     let hardDeleteMessages = getChildMessages("HardDelete")
     let isSoftDelete = hasDeletedAt && hardDeleteMessages.size == 0
@@ -105,6 +112,17 @@ public macro Refine(input: Tokens): Tokens {
     // Task 7: includeAll 字符串路径 DSL 需要顶层关系解析器。随 query() 挂载
     // `<实体>Rel.forName`（静态方法引用，类型 (String) -> Option<IRelation>）。
     let relResolverName = Token(TokenKind.IDENTIFIER, className + "Rel")
+    // M9: 软删过滤按 deleted_at 类型生成——DateTime 列未删状态是 NULL（IS NULL），
+    // Int64 列未删状态是 0（`= 0`）。修复前硬编码 `= 0`，DateTime 列永远查不到。
+    let softDeleteFilterTokens = if (deletedAtIsDateTime) {
+        quote(
+            q.filter(Expr.Unary(UnaryOp.IsNull, Expr.Column("deleted_at")));
+        )
+    } else {
+        quote(
+            q.filter(Expr.Binary(Expr.Column("deleted_at"), BinOp.Eq, Expr.Value(0)));
+        )
+    }
     let queryTokens = if (isSoftDelete) {
         quote(
             public static func query(): Query<$(classNameToken)> {
@@ -112,7 +130,7 @@ public macro Refine(input: Tokens): Tokens {
                 q.typeName = $(nameLit)
                 q.select($(selectCols))
                 q.from($(Token(TokenKind.STRING_LITERAL, tableName)))
-                q.filter(Expr.Binary(Expr.Column("deleted_at"), BinOp.Eq, Expr.Value(0)))
+                $(softDeleteFilterTokens)
                 q.setMapper($(mapperFuncName))
                 q.setKeyExtractor($(keyExtractorFuncName))
                 q.setRelResolver($(relResolverName).forName);
@@ -195,7 +213,7 @@ public macro Refine(input: Tokens): Tokens {
     var deleteSQLFunc = buildDeleteSQLFunc(className, tableName, pkFields)
     var txDeleteExtend: Tokens
     if (isSoftDelete) {
-        let softDeleteSQLFunc = buildSoftDeleteSQLFunc(className, tableName, pkFields)
+        let softDeleteSQLFunc = buildSoftDeleteSQLFunc(className, tableName, pkFields, deletedAtIsDateTime)
         txDeleteExtend = buildTxSoftDeleteExtend(className, pkFields)
         classDecl.toTokens() + Token(TokenKind.NL) + Token(TokenKind.NL) +
             colsStruct + Token(TokenKind.NL) + Token(TokenKind.NL) + relClass +

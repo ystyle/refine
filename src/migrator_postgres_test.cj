@@ -114,6 +114,17 @@ public class PostgreSQLMigratorTest {
         @Expect(sql.contains("userprofile"), false)
     }
 
+    // M24: 复合主键（junction 表）渲染表级 PRIMARY KEY，列级不再重复 PRIMARY KEY
+    @TestCase
+    public func testCreateTableSQLCompositePk(): Unit {
+        let d = PostgreSQLDialect()
+        let sql = PostgreSQLMigrator.createTableSQL(PostWithRel_TagsJunctionSchema(), d)
+        @Expect(sql, "CREATE TABLE IF NOT EXISTS \"post_tags\" (" +
+            "\"postWithRel_id\" BIGINT NOT NULL, " +
+            "\"tag_id\" BIGINT NOT NULL, " +
+            "PRIMARY KEY (\"postWithRel_id\", \"tag_id\"))")
+    }
+
     @TestCase
     public func testHasTablePassesOriginalCase(): Unit {
         let ds = CaptureDatasource()

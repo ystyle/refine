@@ -25,9 +25,43 @@ public class PostgreSQLMigrator <: Migrator {
     }
 
     public static func createTableSQL(schema: TableSchema, d: PostgreSQLDialect): String {
+        let cols = schema.columns()
+        var pkNames = ArrayList<String>()
+        for (col in cols) { if (col.primaryKey) { pkNames.add(col.name) } }
+        // M24: ≥2 主键列（junction 复合主键）时列级不追加 PRIMARY KEY，改表级约束
+        let composite = pkNames.size > 1
         var colDefs = ArrayList<String>()
-        for (col in schema.columns()) { colDefs.add(columnDefSQL(col, d)) }
-        "CREATE TABLE IF NOT EXISTS \"" + schema.tableName() + "\" (" + String.join(colDefs.toArray(), delimiter: ", ") + ")"
+        for (col in cols) {
+            if (composite && col.primaryKey) { colDefs.add(compositePkColumnDefSQL(col, d)) }
+            else { colDefs.add(columnDefSQL(col, d)) }
+        }
+        var parts = ArrayList<String>()
+        parts.add("CREATE TABLE IF NOT EXISTS \"" + schema.tableName() + "\" (")
+        let colDefsSQL = String.join(colDefs.toArray(), delimiter: ", ")
+        if (composite) {
+            var pkParts = ArrayList<String>()
+            for (name in pkNames) { pkParts.add("\"" + name + "\"") }
+            parts.add(colDefsSQL + ", PRIMARY KEY (" + String.join(pkParts.toArray(), delimiter: ", ") + ")")
+        } else {
+            parts.add(colDefsSQL)
+        }
+        parts.add(")")
+        String.join(parts.toArray(), delimiter: "")
+    }
+
+    // M24 复合主键列定义：列级不追加 PRIMARY KEY；autoIncrement 列用 BIGSERIAL
+    //（自带 NOT NULL，序列即主键来源），其余列按类型 + 可空性输出（junction 列
+    // nullable=false → NOT NULL）。
+    private static func compositePkColumnDefSQL(col: ColumnDef, d: PostgreSQLDialect): String {
+        var parts = ArrayList<String>()
+        parts.add("\"" + col.name + "\"")
+        if (col.autoIncrement) {
+            parts.add("BIGSERIAL")
+        } else {
+            parts.add(d.dataTypeOf(col.storageType))
+            if (!col.nullable) { parts.add("NOT NULL") }
+        }
+        String.join(parts.toArray(), delimiter: " ")
     }
 
     // I6: session 一律 try/finally 关闭，query/execute 抛异常时不得泄漏池化连接

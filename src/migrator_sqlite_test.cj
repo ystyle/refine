@@ -74,6 +74,16 @@ public class SQLiteMigratorTest {
         @Expect(sql, expected)
     }
 
+    // M24: 复合主键（junction 表）渲染表级 PRIMARY KEY，不依赖单列列级约束
+    @TestCase
+    public func testCreateTableSQLCompositePk(): Unit {
+        let sql = SQLiteMigrator.createTableSQL(PostWithRel_TagsJunctionSchema())
+        @Expect(sql, "CREATE TABLE IF NOT EXISTS \"post_tags\" (" +
+            "\"postWithRel_id\" INTEGER NOT NULL, " +
+            "\"tag_id\" INTEGER NOT NULL, " +
+            "PRIMARY KEY (\"postWithRel_id\", \"tag_id\"))")
+    }
+
     @TestCase
     public func testAddColumnSQL(): Unit {
         let sql = SQLiteMigrator.addColumnSQL("user", ColumnDef("nickname", StorageType.Text, false, false, true))

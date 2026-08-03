@@ -76,12 +76,14 @@ func buildJunctionSchema(className: String, rel: RelInfo, tableName: String, sou
     let srcStParts = sourcePkStorage.split(".")
     let srcStorageTypeTok = Token(TokenKind.IDENTIFIER, srcStParts[0])
     let srcStorageNameTok = Token(TokenKind.IDENTIFIER, srcStParts[1])
+    // M24: junction 两列（源/目标 fk）构成复合主键——同一 (src,tgt) 关联天然唯一，
+    // 防重复关联行；createTableSQL 对 ≥2 主键列的表渲染表级 `PRIMARY KEY (col1, col2)`。
     quote(
         public class $(schemaName) <: TableSchema {
             public func tableName(): String { $(viaLit) }
             public func columns(): Array<ColumnDef> {
-                [ColumnDef($(srcColLit), $(srcStorageTypeTok).$(srcStorageNameTok), false, false, false),
-                 ColumnDef($(tgtColLit), StorageType.Integer, false, false, false)]
+                [ColumnDef($(srcColLit), $(srcStorageTypeTok).$(srcStorageNameTok), true, false, false),
+                 ColumnDef($(tgtColLit), StorageType.Integer, true, false, false)]
             }
             public func indexes(): Array<IndexDef> { [] }
         }
