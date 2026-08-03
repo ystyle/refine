@@ -478,6 +478,54 @@ public class RefineTest {
         r.close()
     }
 
+    // R-I1: rf.all(query) 必须触发 AfterFind hook。修复前 copy().using(session)
+    // 走 using(exec: ExecutionContext) 只设 executor/queryDialect/columnOffset 不设 ref，
+    // runAfterFindHooks 见 ref=None 静默跳过 hook（query.using(rf).all() 却正常触发）。
+    @TestCase
+    public func testAllFiresAfterFindHook(): Unit {
+        let ds = QueryTrackDatasource()
+        let r = Refine(ds, SQLiteDialect(), 0)
+        let flag = HookFlag()
+        r.hook<Int64>("RfAllHook", HookKind.AfterFind) { scope: Scope<Int64> =>
+            flag.called = true
+        }
+        let cols: Array<ColumnInfo> = [MapperMockColumnInfo("id", false)]
+        ds.conn.stmt.queryResult = MapperMockQueryResult(cols, [Array<Any>(1, {i => 1})])
+        let q = Query<Int64>()
+        q.select([Expr.Column("id")])
+        q.from("t")
+        q.typeName = "RfAllHook"
+        q.setMapper({ result: QueryResult, cm: HashMap<String, Int64> => 0 })
+        let result = r.all(q)
+        @Expect(result.size, 1)
+        @Expect(flag.called, true)
+        // 副本上设置 ref，调用方持有的 Query 仍保持未绑定状态
+        @Expect(q.ref.isNone(), true)
+        r.close()
+    }
+
+    // R-I1: rf.one(query) 同样必须触发 AfterFind hook。
+    @TestCase
+    public func testOneFiresAfterFindHook(): Unit {
+        let ds = QueryTrackDatasource()
+        let r = Refine(ds, SQLiteDialect(), 0)
+        let flag = HookFlag()
+        r.hook<Int64>("RfOneHook", HookKind.AfterFind) { scope: Scope<Int64> =>
+            flag.called = true
+        }
+        let cols: Array<ColumnInfo> = [MapperMockColumnInfo("id", false)]
+        ds.conn.stmt.queryResult = MapperMockQueryResult(cols, [Array<Any>(1, {i => 1})])
+        let q = Query<Int64>()
+        q.select([Expr.Column("id")])
+        q.from("t")
+        q.typeName = "RfOneHook"
+        q.setMapper({ result: QueryResult, cm: HashMap<String, Int64> => 0 })
+        let result = r.one(q)
+        @Expect(result.isSome(), true)
+        @Expect(flag.called, true)
+        r.close()
+    }
+
     // I9: 同一个 Query 对象先后复用多次，调用后仍保持原始状态（无并发/复用竞态污染）。
     @TestCase
     public func testQueryReusableAcrossAllCalls(): Unit {

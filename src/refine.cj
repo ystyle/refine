@@ -128,10 +128,15 @@ public class Refine {
     // 都被 using() 写进副本）；session 生命周期全部收敛在 try/finally：
     // 成功路径由 Query.closeExecutor 关闭（Session.close 幂等，finally 的 close 是 no-op），
     // 异常路径由 finally 兜底关闭，任何情况下底层连接恰好关闭一次。
+    // R-I1: 副本必须绑定本 Refine 实例（copy.ref = Some(this)）。using(session) 走
+    // using(exec: ExecutionContext) 只设 executor/queryDialect/columnOffset 不设 ref，
+    // 否则 runAfterFindHooks 见 ref=None 静默跳过 AfterFind（query.using(rf).all() 却触发）。
     public func all<T>(query: Query<T>): Array<T> {
         let s = session()
         try {
-            return query.copy().using(s).all()
+            let copy = query.copy()
+            copy.ref = Some(this)
+            return copy.using(s).all()
         } finally {
             s.close()
         }
@@ -140,7 +145,9 @@ public class Refine {
     public func one<T>(query: Query<T>): Option<T> {
         let s = session()
         try {
-            return query.copy().using(s).one()
+            let copy = query.copy()
+            copy.ref = Some(this)
+            return copy.using(s).one()
         } finally {
             s.close()
         }
