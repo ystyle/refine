@@ -201,6 +201,38 @@ public class UuidKeyTagPost {
     var tags: ArrayList<UuidTag> = ArrayList<UuidTag>()
 }
 
+// I20 fixture：驼峰自增主键列（postId），PG save 的 RETURNING 需把 postId 引号化
+//（未引号则折叠为 postid，找不到列）。
+@Refine
+public class CamelAutoPkPost {
+    @Id[auto, true]
+    var postId: Int64 = 0
+    var title: String = ""
+}
+
+// I21 fixture：驼峰 via 中间表名（camelViaPostTags）+ 驼峰源列（camelViaPost_id），
+// 验证 junction 写路径 SQL 对 via 表名/列名的运行时引号化。
+@Refine
+public class CamelViaPost {
+    var id: Int64 = 0
+    var title: String = ""
+
+    @Ref[Tag, via: camelViaPostTags]
+    var tags: ArrayList<Tag> = ArrayList<Tag>()
+}
+
+// F1 fixture：String-pk 源实体 → Int64-pk 目标（Tag）。junction 源列类型跟随源主键
+//（String→StorageType.String），目标列跟随目标主键（Tag 为 Int64→Integer），
+// 是 String-pk 源 junction 在真实 PG 上可完整读写的最小组合。
+@Refine
+public class StringKeyPost {
+    var id: String = ""
+    var title: String = ""
+
+    @Ref[Tag, via: string_key_post_tags]
+    var tags: ArrayList<Tag> = ArrayList<Tag>()
+}
+
 @Refine
 public class UnderscoreFieldEntity {
     var id: Int64 = 0
@@ -2264,9 +2296,9 @@ public class CascadeTraversalTest {
         p.tags = list
         p.cascadePostSave(tx, ArrayList<Object>())
         @Expect(conn.stmt.capturedSqlHistory.size, 3)
-        @Expect(conn.stmt.capturedSqlHistory[0], "DELETE FROM post_tags WHERE postWithRel_id = ?")
-        @Expect(conn.stmt.capturedSqlHistory[1], "INSERT INTO post_tags (postWithRel_id, tag_id) VALUES (?, ?)")
-        @Expect(conn.stmt.capturedSqlHistory[2], "INSERT INTO post_tags (postWithRel_id, tag_id) VALUES (?, ?)")
+        @Expect(conn.stmt.capturedSqlHistory[0], "DELETE FROM \"post_tags\" WHERE \"postWithRel_id\" = ?")
+        @Expect(conn.stmt.capturedSqlHistory[1], "INSERT INTO \"post_tags\" (\"postWithRel_id\", \"tag_id\") VALUES (?, ?)")
+        @Expect(conn.stmt.capturedSqlHistory[2], "INSERT INTO \"post_tags\" (\"postWithRel_id\", \"tag_id\") VALUES (?, ?)")
     }
 
     @TestCase
@@ -2460,7 +2492,7 @@ public class CascadeTraversalTest {
         @Expect(conn.stmt.capturedSqlHistory.size, 3)
         @Expect(conn.stmt.capturedSqlHistory[0], "SELECT * FROM comment WHERE post_id = ?")
         @Expect(conn.stmt.capturedSqlHistory[1], "DELETE FROM \"comment\" WHERE \"id\" = ?")
-        @Expect(conn.stmt.capturedSqlHistory[2], "DELETE FROM post_tags WHERE postWithRel_id = ?")
+        @Expect(conn.stmt.capturedSqlHistory[2], "DELETE FROM \"post_tags\" WHERE \"postWithRel_id\" = ?")
         @Expect(capturedInt64(conn.stmt.capturedSetValues, 0), 5)
         @Expect(capturedInt64(conn.stmt.capturedSetValues, 1), 9)
     }
@@ -2616,12 +2648,12 @@ public class RefManyRelationApiTest {
         let t = Tag()
         t.id = 7
         let r = p.appendTags(tx, t)
-        @Expect(conn.stmt.capturedSql, "INSERT INTO post_tags (postWithRel_id, tag_id) VALUES (?, ?)")
+        @Expect(conn.stmt.capturedSql, "INSERT INTO \"post_tags\" (\"postWithRel_id\", \"tag_id\") VALUES (?, ?)")
         @Expect(conn.stmt.capturedSetValues.size, 2)
         @Expect(capturedInt64(conn.stmt.capturedSetValues, 0), 42)
         @Expect(capturedInt64(conn.stmt.capturedSetValues, 1), 7)
         r.clearTags(tx)
-        @Expect(conn.stmt.capturedSql, "DELETE FROM post_tags WHERE postWithRel_id = ?")
+        @Expect(conn.stmt.capturedSql, "DELETE FROM \"post_tags\" WHERE \"postWithRel_id\" = ?")
     }
 
     @TestCase
@@ -2636,8 +2668,8 @@ public class RefManyRelationApiTest {
         t2.id = 8
         p.appendTags(tx, [t1, t2])
         @Expect(conn.stmt.capturedSqlHistory.size, 2)
-        @Expect(conn.stmt.capturedSqlHistory[0], "INSERT INTO post_tags (postWithRel_id, tag_id) VALUES (?, ?)")
-        @Expect(conn.stmt.capturedSqlHistory[1], "INSERT INTO post_tags (postWithRel_id, tag_id) VALUES (?, ?)")
+        @Expect(conn.stmt.capturedSqlHistory[0], "INSERT INTO \"post_tags\" (\"postWithRel_id\", \"tag_id\") VALUES (?, ?)")
+        @Expect(conn.stmt.capturedSqlHistory[1], "INSERT INTO \"post_tags\" (\"postWithRel_id\", \"tag_id\") VALUES (?, ?)")
         @Expect(conn.stmt.capturedSetValues.size, 4)
         @Expect(capturedInt64(conn.stmt.capturedSetValues, 0), 42)
         @Expect(capturedInt64(conn.stmt.capturedSetValues, 1), 7)
@@ -2657,9 +2689,9 @@ public class RefManyRelationApiTest {
         t2.id = 8
         p.replaceTags(tx, [t1, t2])
         @Expect(conn.stmt.capturedSqlHistory.size, 3)
-        @Expect(conn.stmt.capturedSqlHistory[0], "DELETE FROM post_tags WHERE postWithRel_id = ?")
-        @Expect(conn.stmt.capturedSqlHistory[1], "INSERT INTO post_tags (postWithRel_id, tag_id) VALUES (?, ?)")
-        @Expect(conn.stmt.capturedSqlHistory[2], "INSERT INTO post_tags (postWithRel_id, tag_id) VALUES (?, ?)")
+        @Expect(conn.stmt.capturedSqlHistory[0], "DELETE FROM \"post_tags\" WHERE \"postWithRel_id\" = ?")
+        @Expect(conn.stmt.capturedSqlHistory[1], "INSERT INTO \"post_tags\" (\"postWithRel_id\", \"tag_id\") VALUES (?, ?)")
+        @Expect(conn.stmt.capturedSqlHistory[2], "INSERT INTO \"post_tags\" (\"postWithRel_id\", \"tag_id\") VALUES (?, ?)")
         @Expect(conn.stmt.capturedSetValues.size, 5)
         @Expect(capturedInt64(conn.stmt.capturedSetValues, 0), 42)
         @Expect(capturedInt64(conn.stmt.capturedSetValues, 1), 42)
@@ -2677,7 +2709,7 @@ public class RefManyRelationApiTest {
         let t = Tag()
         t.id = 7
         p.deleteTags(tx, t)
-        @Expect(conn.stmt.capturedSql, "DELETE FROM post_tags WHERE postWithRel_id = ? AND tag_id = ?")
+        @Expect(conn.stmt.capturedSql, "DELETE FROM \"post_tags\" WHERE \"postWithRel_id\" = ? AND \"tag_id\" = ?")
         @Expect(conn.stmt.capturedSetValues.size, 2)
         @Expect(capturedInt64(conn.stmt.capturedSetValues, 0), 42)
         @Expect(capturedInt64(conn.stmt.capturedSetValues, 1), 7)
@@ -2695,8 +2727,8 @@ public class RefManyRelationApiTest {
         t2.id = 8
         p.deleteTags(tx, [t1, t2])
         @Expect(conn.stmt.capturedSqlHistory.size, 2)
-        @Expect(conn.stmt.capturedSqlHistory[0], "DELETE FROM post_tags WHERE postWithRel_id = ? AND tag_id = ?")
-        @Expect(conn.stmt.capturedSqlHistory[1], "DELETE FROM post_tags WHERE postWithRel_id = ? AND tag_id = ?")
+        @Expect(conn.stmt.capturedSqlHistory[0], "DELETE FROM \"post_tags\" WHERE \"postWithRel_id\" = ? AND \"tag_id\" = ?")
+        @Expect(conn.stmt.capturedSqlHistory[1], "DELETE FROM \"post_tags\" WHERE \"postWithRel_id\" = ? AND \"tag_id\" = ?")
         @Expect(conn.stmt.capturedSetValues.size, 4)
         @Expect(capturedInt64(conn.stmt.capturedSetValues, 0), 42)
         @Expect(capturedInt64(conn.stmt.capturedSetValues, 1), 7)
@@ -2711,7 +2743,7 @@ public class RefManyRelationApiTest {
         let p = PostWithRel()
         p.id = 42
         p.clearTags(tx)
-        @Expect(conn.stmt.capturedSql, "DELETE FROM post_tags WHERE postWithRel_id = ?")
+        @Expect(conn.stmt.capturedSql, "DELETE FROM \"post_tags\" WHERE \"postWithRel_id\" = ?")
         @Expect(conn.stmt.capturedSetValues.size, 1)
         @Expect(capturedInt64(conn.stmt.capturedSetValues, 0), 42)
     }
@@ -2726,7 +2758,7 @@ public class RefManyRelationApiTest {
         conn.stmt.queryResult = MapperMockQueryResult([col], [Array<Any>(1, {i => 5})])
         let n = p.countTags(tx)
         @Expect(n, 5)
-        @Expect(conn.stmt.capturedSql, "SELECT COUNT(*) FROM post_tags WHERE postWithRel_id = ?")
+        @Expect(conn.stmt.capturedSql, "SELECT COUNT(*) FROM \"post_tags\" WHERE \"postWithRel_id\" = ?")
         @Expect(conn.stmt.capturedSetValues.size, 1)
         @Expect(capturedInt64(conn.stmt.capturedSetValues, 0), 42)
     }
@@ -2782,7 +2814,7 @@ public class RefManyTableOverrideTest {
         let t = CustomTag()
         t.id = 7
         p.appendTags(tx, t)
-        @Expect(conn.stmt.capturedSql, "INSERT INTO custom_post_tags (custom_tag_posts_id, customTag_id) VALUES (?, ?)")
+        @Expect(conn.stmt.capturedSql, "INSERT INTO \"custom_post_tags\" (\"custom_tag_posts_id\", \"customTag_id\") VALUES (?, ?)")
     }
 
     @TestCase
@@ -2794,7 +2826,7 @@ public class RefManyTableOverrideTest {
         let t = CustomTag()
         t.id = 7
         p.deleteTags(tx, t)
-        @Expect(conn.stmt.capturedSql, "DELETE FROM custom_post_tags WHERE custom_tag_posts_id = ? AND customTag_id = ?")
+        @Expect(conn.stmt.capturedSql, "DELETE FROM \"custom_post_tags\" WHERE \"custom_tag_posts_id\" = ? AND \"customTag_id\" = ?")
     }
 
     @TestCase
@@ -2804,9 +2836,45 @@ public class RefManyTableOverrideTest {
         let p = CustomTagPost()
         p.id = 42
         p.loadTags(tx)
-        @Expect(conn.stmt.capturedSql.contains("custom_post_tags.customTag_id"), true)
-        @Expect(conn.stmt.capturedSql.contains("custom_post_tags.custom_tags_id"), false)
-        @Expect(conn.stmt.capturedSql.contains("custom_post_tags.custom_tag_posts_id"), true)
+        @Expect(conn.stmt.capturedSql.contains("\"custom_post_tags\".\"customTag_id\""), true)
+        @Expect(conn.stmt.capturedSql.contains("\"custom_post_tags\".\"custom_tags_id\""), false)
+        @Expect(conn.stmt.capturedSql.contains("\"custom_post_tags\".\"custom_tag_posts_id\""), true)
+    }
+
+    // ─── F1: junction schema 列类型跟随源/目标主键类型 ─────────────
+    // 源列类型 = 本类主键类型（宏层可内省）；目标列类型 = 目标类主键类型。
+    // 目标类 String-pk 时宏层无法跨类内省，保持 Integer（见任务 F1 决策注释）。
+
+    @TestCase
+    public func testJunctionSourceColIntegerWhenSourcePkInt64(): Unit {
+        // CustomTagPost 主键 Int64 → 源列 Integer；CustomTag 主键 Int64 → 目标列 Integer
+        let js = CustomTagPost_TagsJunctionSchema()
+        let cols = js.columns()
+        @Expect(cols[0].storageType, StorageType.Integer)
+        @Expect(cols[1].storageType, StorageType.Integer)
+    }
+
+    @TestCase
+    public func testJunctionSourceColStringWhenSourcePkString(): Unit {
+        // StringKeyPost 主键 String → 源列 String；目标 Tag 主键 Int64 → 目标列 Integer
+        let js = StringKeyPost_TagsJunctionSchema()
+        let cols = js.columns()
+        @Expect(cols[0].name, "stringKeyPost_id")
+        @Expect(cols[0].storageType, StorageType.String)
+        @Expect(cols[1].name, "tag_id")
+        @Expect(cols[1].storageType, StorageType.Integer)
+    }
+
+    @TestCase
+    public func testJunctionSourceColStringWhenUuidSourcePkString(): Unit {
+        // UuidKeyTagPost 主键 String → 源列 String；目标 UuidTag 亦 String-pk，
+        // 但目标列类型宏层无法跨类内省 → 保持 Integer（已文档化限制）
+        let js = UuidKeyTagPost_TagsJunctionSchema()
+        let cols = js.columns()
+        @Expect(cols[0].name, "uuidKeyTagPost_id")
+        @Expect(cols[0].storageType, StorageType.String)
+        @Expect(cols[1].name, "uuidTag_id")
+        @Expect(cols[1].storageType, StorageType.Integer)
     }
 }
 
@@ -2938,7 +3006,7 @@ public class TxCascadeTest {
         @Expect(conn.stmt.capturedSqlHistory.size, 4)
         @Expect(conn.stmt.capturedSqlHistory[0], "SELECT * FROM comment WHERE post_id = ?")
         @Expect(conn.stmt.capturedSqlHistory[1], "DELETE FROM \"comment\" WHERE \"id\" = ?")
-        @Expect(conn.stmt.capturedSqlHistory[2], "DELETE FROM post_tags WHERE postWithRel_id = ?")
+        @Expect(conn.stmt.capturedSqlHistory[2], "DELETE FROM \"post_tags\" WHERE \"postWithRel_id\" = ?")
         @Expect(conn.stmt.capturedSqlHistory[3], "DELETE FROM \"postWithRel\" WHERE \"id\" = ?")
         @Expect(capturedInt64(conn.stmt.capturedSetValues, 0), 5)
         @Expect(capturedInt64(conn.stmt.capturedSetValues, 1), 9)
@@ -3102,9 +3170,9 @@ public class TxCascadeTest {
         tx.save(p)
         @Expect(conn.stmt.capturedSqlHistory.size, 4)
         @Expect(conn.stmt.capturedSqlHistory[0], "INSERT INTO \"postWithRel\" (\"title\", \"user_id\", \"post_id\") VALUES (?, ?, ?)")
-        @Expect(conn.stmt.capturedSqlHistory[1], "DELETE FROM post_tags WHERE postWithRel_id = ?")
-        @Expect(conn.stmt.capturedSqlHistory[2], "INSERT INTO post_tags (postWithRel_id, tag_id) VALUES (?, ?)")
-        @Expect(conn.stmt.capturedSqlHistory[3], "INSERT INTO post_tags (postWithRel_id, tag_id) VALUES (?, ?)")
+        @Expect(conn.stmt.capturedSqlHistory[1], "DELETE FROM \"post_tags\" WHERE \"postWithRel_id\" = ?")
+        @Expect(conn.stmt.capturedSqlHistory[2], "INSERT INTO \"post_tags\" (\"postWithRel_id\", \"tag_id\") VALUES (?, ?)")
+        @Expect(conn.stmt.capturedSqlHistory[3], "INSERT INTO \"post_tags\" (\"postWithRel_id\", \"tag_id\") VALUES (?, ?)")
         @Expect(capturedInt64(conn.stmt.capturedSetValues, 3), 42)
     }
 }
@@ -3209,7 +3277,7 @@ public class CascadeBoundaryTest {
         tx.save(p)
         @Expect(conn.stmt.capturedSqlHistory.size, 2)
         @Expect(conn.stmt.capturedSqlHistory[0], "INSERT INTO \"postWithRel\" (\"title\", \"user_id\", \"post_id\") VALUES (?, ?, ?)")
-        @Expect(conn.stmt.capturedSqlHistory[1], "DELETE FROM post_tags WHERE postWithRel_id = ?")
+        @Expect(conn.stmt.capturedSqlHistory[1], "DELETE FROM \"post_tags\" WHERE \"postWithRel_id\" = ?")
         @Expect(capturedInt64(conn.stmt.capturedSetValues, 3), 42)
     }
 
@@ -3225,7 +3293,7 @@ public class CascadeBoundaryTest {
         tx.update(p)
         @Expect(conn.stmt.capturedSqlHistory.size, 2)
         @Expect(conn.stmt.capturedSqlHistory[0], "UPDATE \"postWithRel\" SET \"title\" = ?, \"user_id\" = ?, \"post_id\" = ? WHERE \"id\" = ?")
-        @Expect(conn.stmt.capturedSqlHistory[1], "DELETE FROM post_tags WHERE postWithRel_id = ?")
+        @Expect(conn.stmt.capturedSqlHistory[1], "DELETE FROM \"post_tags\" WHERE \"postWithRel_id\" = ?")
         @Expect(capturedInt64(conn.stmt.capturedSetValues, 4), 5)
     }
 
@@ -3448,6 +3516,18 @@ public class WritePathDialectQuotingTest {
     }
 
     @TestCase
+    public func testSavePostgresCamelCaseAutoPkReturningQuotes(): Unit {
+        // I20：驼峰自增主键列 postId 的 RETURNING 必须引号化（未引号 PG 折叠 postid）
+        let (conn, tx) = txWith(PostgreSQLDialect())
+        conn.stmt.queryResult = RowQueryResult(9)
+        let p = CamelAutoPkPost()
+        p.title = "T"
+        tx.save(p)
+        @Expect(conn.stmt.capturedSql.contains("RETURNING \"postId\""), true)
+        @Expect(p.postId, 9)
+    }
+
+    @TestCase
     public func testBatchSaveSQLiteQuotesIdentifiers(): Unit {
         let (conn, tx) = txWith(SQLiteDialect())
         let u1 = CamelUser(); u1.displayName = "A"
@@ -3612,6 +3692,74 @@ public class WritePathDialectQuotingTest {
         let ot2 = OrderItemTag(); ot2.order_id = 3; ot2.item_id = 4; ot2.quantity = 6
         tx.batchUpdate([ot1, ot2])
         @Expect(conn.stmt.capturedSql, "UPDATE \"orderItemTag\" SET \"quantity\" = CASE WHEN \"order_id\" = ? AND \"item_id\" = ? THEN ? WHEN \"order_id\" = ? AND \"item_id\" = ? THEN ? END WHERE (\"order_id\", \"item_id\") IN ((?, ?), (?, ?))")
+    }
+
+    // ─── I21: ref_many junction 写路径标识符引号化 ─────────────
+    // junction SQL（INSERT/DELETE/LOAD/COUNT）的 via 表名、源列 <源表>_id、目标列
+    // <目标类>_id、目标表名均经 tx.getDialect().quoteIdentifier 运行时引号化，
+    // 与批量装配读路径（assembleRefMany）对齐。PostWithRel→Tag via post_tags。
+
+    @TestCase
+    public func testAppendTagsQuotesJunctionIdentifiersSQLite(): Unit {
+        let (conn, tx) = txWith(SQLiteDialect())
+        let p = PostWithRel(); p.id = 42
+        let t = Tag(); t.id = 7
+        p.appendTags(tx, t)
+        @Expect(conn.stmt.capturedSql, "INSERT INTO \"post_tags\" (\"postWithRel_id\", \"tag_id\") VALUES (?, ?)")
+    }
+
+    @TestCase
+    public func testAppendTagsQuotesJunctionIdentifiersPostgres(): Unit {
+        let (conn, tx) = txWith(PostgreSQLDialect())
+        let p = PostWithRel(); p.id = 42
+        let t = Tag(); t.id = 7
+        p.appendTags(tx, t)
+        @Expect(conn.stmt.capturedSql, "INSERT INTO \"post_tags\" (\"postWithRel_id\", \"tag_id\") VALUES (?, ?)")
+    }
+
+    @TestCase
+    public func testDeleteTagsQuotesJunctionIdentifiers(): Unit {
+        let (conn, tx) = txWith(PostgreSQLDialect())
+        let p = PostWithRel(); p.id = 42
+        let t = Tag(); t.id = 7
+        p.deleteTags(tx, t)
+        @Expect(conn.stmt.capturedSql, "DELETE FROM \"post_tags\" WHERE \"postWithRel_id\" = ? AND \"tag_id\" = ?")
+    }
+
+    @TestCase
+    public func testClearTagsQuotesJunctionIdentifiers(): Unit {
+        let (conn, tx) = txWith(PostgreSQLDialect())
+        let p = PostWithRel(); p.id = 42
+        p.clearTags(tx)
+        @Expect(conn.stmt.capturedSql, "DELETE FROM \"post_tags\" WHERE \"postWithRel_id\" = ?")
+    }
+
+    @TestCase
+    public func testCountTagsQuotesJunctionIdentifiers(): Unit {
+        let (conn, tx) = txWith(PostgreSQLDialect())
+        conn.stmt.queryResult = MapperMockQueryResult([MapperMockColumnInfo("COUNT(*)", false)], [Array<Any>(1, {i => 3})])
+        let p = PostWithRel(); p.id = 42
+        let n = p.countTags(tx)
+        @Expect(n, 3)
+        @Expect(conn.stmt.capturedSql, "SELECT COUNT(*) FROM \"post_tags\" WHERE \"postWithRel_id\" = ?")
+    }
+
+    @TestCase
+    public func testLoadTagsQuotesJunctionIdentifiers(): Unit {
+        let (conn, tx) = txWith(PostgreSQLDialect())
+        let p = PostWithRel(); p.id = 42
+        p.loadTags(tx)
+        @Expect(conn.stmt.capturedSql, "SELECT \"tag\".* FROM \"tag\" JOIN \"post_tags\" ON \"tag\".\"id\" = \"post_tags\".\"tag_id\" WHERE \"post_tags\".\"postWithRel_id\" = ?")
+    }
+
+    @TestCase
+    public func testCamelViaPostJunctionQuotesIdentifiers(): Unit {
+        // I21 驼峰 via 表名 + 驼峰源列（camelViaPostTags / camelViaPost_id）
+        let (conn, tx) = txWith(PostgreSQLDialect())
+        let p = CamelViaPost(); p.id = 42
+        let t = Tag(); t.id = 7
+        p.appendTags(tx, t)
+        @Expect(conn.stmt.capturedSql, "INSERT INTO \"camelViaPostTags\" (\"camelViaPost_id\", \"tag_id\") VALUES (?, ?)")
     }
 }
 

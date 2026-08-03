@@ -345,10 +345,18 @@ func buildSelectColumnTokens(fields: ArrayList<FieldInfo>): Tokens {
     arr
 }
 
-func buildAutoPkReturningCols(pkFields: ArrayList<FieldInfo>): String {
-    var cols = ArrayList<String>()
-    for (pk in pkFields) { if (pk.autoInc) { cols.add(pk.name) } }
-    String.join(cols.toArray(), delimiter: ", ")
+// I20: RETURNING 自增主键列经 dialect.quoteIdentifier 运行时引号化。生成代码位于
+// extend Tx 作用域（this 即 Tx，getDialect() 可用），声明局部变量 returningCols。
+func buildAutoPkReturningCols(pkFields: ArrayList<FieldInfo>): Tokens {
+    var names = ArrayList<String>()
+    for (pk in pkFields) { if (pk.autoInc) { names.add(pk.name) } }
+    let nameArr = genStringArrayTokens(names)
+    quote(
+        let returningNameArr: Array<String> = $(nameArr)
+        var returningParts = ArrayList<String>()
+        for (_rc_ in returningNameArr) { returningParts.add(this.getDialect().quoteIdentifier(_rc_)) }
+        let returningCols = String.join(returningParts.toArray(), delimiter: ", ")
+    )
 }
 
 func pgCastTypeOf(typeName: String): String {

@@ -47,8 +47,7 @@ func buildTxSaveExtend(className: String, pkFields: ArrayList<FieldInfo>, hasCli
     } else if (hasAutoPk) {
         let assignTokens = buildAutoPkAssignTokens(pkFields)
         let returningTokens = buildAutoPkReturningTokens(pkFields)
-        let returningCols = buildAutoPkReturningCols(pkFields)
-        let returningColsLit = Token(TokenKind.STRING_LITERAL, returningCols)
+        let returningColsTokens = buildAutoPkReturningCols(pkFields)
         quote(
             extend Tx {
                 public func save(entity: $(cn)): Unit {
@@ -63,7 +62,8 @@ func buildTxSaveExtend(className: String, pkFields: ArrayList<FieldInfo>, hasCli
                     if (scope.aborted) { throw scope.error.getOrThrow() }
                     let (sql, params) = $(insertSQLFuncName)(entity, this.getDialect())
                     if (this.getDialect().hasReturningSupport()) {
-                        let qr = this.query(sql + " RETURNING " + $(returningColsLit), params)
+                        $(returningColsTokens)
+                        let qr = this.query(sql + " RETURNING " + returningCols, params)
                         if (qr.next()) { $(returningTokens) }
                         qr.close()
                     } else {

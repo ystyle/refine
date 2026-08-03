@@ -154,10 +154,18 @@ public macro Refine(input: Tokens): Tokens {
     // Generate junction schemas for ref_many relations
     var junctionTokens = Tokens()
     var junctionRelNames = ArrayList<String>()
+    // F1: junction 源列类型跟随本类主键类型（宏层可内省）。复合主键取第一个 pk 字段；
+    // 单主键即 id 字段（junction SQL 均以 this.id 为源列值）。目标列类型不可跨类内省，
+    // 由 buildJunctionSchema 保持 Integer（见其注释的已文档化限制）。
+    var sourcePkStorage = "StorageType.Integer"
+    if (pkFields.size > 0) {
+        let pk = pkFields.get(0).getOrThrow()
+        sourcePkStorage = if (pk.storageOverride != "") { "StorageType." + pk.storageOverride } else { typeNameToStorageType(pk.typeName) }
+    }
     for (rel in mergedRels) {
         if (rel.kind == "ref_many") {
             if (junctionRelNames.size > 0) { junctionTokens = junctionTokens + Token(TokenKind.NL) + Token(TokenKind.NL) }
-            junctionTokens = junctionTokens + buildJunctionSchema(className, rel, tableName)
+            junctionTokens = junctionTokens + buildJunctionSchema(className, rel, tableName, sourcePkStorage)
             junctionRelNames.add(rel.fieldName)
         }
     }

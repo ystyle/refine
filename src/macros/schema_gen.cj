@@ -63,17 +63,24 @@ func buildSchemaClass(className: String, fields: ArrayList<FieldInfo>, tableName
     )
 }
 
-func buildJunctionSchema(className: String, rel: RelInfo, tableName: String): Tokens {
+// F1: junction 源列类型跟随源实体主键类型（宏层可内省 className 的 pkFields）。
+// 目标列类型 = 目标实体主键类型，但宏层无法跨类内省目标类字段（同 has_one→String-pk
+// 目标的既有限制），故目标列保持 Integer：Int64-pk 目标正确；String-pk 目标时
+// junction 目标列需 TEXT 而宏层无法推导，属已文档化限制（需手工迁移或用 Int64-pk 目标）。
+func buildJunctionSchema(className: String, rel: RelInfo, tableName: String, sourcePkStorage: String): Tokens {
     let sourceTable = tableName
     let viaLit = Token(TokenKind.STRING_LITERAL, rel.via)
     let srcColLit = Token(TokenKind.STRING_LITERAL, sourceTable + "_id")
     let tgtColLit = Token(TokenKind.STRING_LITERAL, lowerTableName(rel.target) + "_id")
     let schemaName = Token(TokenKind.IDENTIFIER, className + "_" + upperFirstLetter(rel.fieldName) + "JunctionSchema")
+    let srcStParts = sourcePkStorage.split(".")
+    let srcStorageTypeTok = Token(TokenKind.IDENTIFIER, srcStParts[0])
+    let srcStorageNameTok = Token(TokenKind.IDENTIFIER, srcStParts[1])
     quote(
         public class $(schemaName) <: TableSchema {
             public func tableName(): String { $(viaLit) }
             public func columns(): Array<ColumnDef> {
-                [ColumnDef($(srcColLit), StorageType.Integer, false, false, false),
+                [ColumnDef($(srcColLit), $(srcStorageTypeTok).$(srcStorageNameTok), false, false, false),
                  ColumnDef($(tgtColLit), StorageType.Integer, false, false, false)]
             }
             public func indexes(): Array<IndexDef> { [] }

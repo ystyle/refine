@@ -42,8 +42,12 @@ func buildRelationMethods(className: String, rels: ArrayList<RelInfo>, cd: Class
             // 中间表目标列名固定用 lowerTableName(target) + "_id"，与 buildJunctionSchema 一致
             // （不能用 targetSchema().tableName() + "_id"，否则 @Table 覆盖表名时列名不一致）
             let targetColLit = Token(TokenKind.STRING_LITERAL, lowerTableName(r.target) + "_id")
+            // I21：junction SQL 标识符全部经运行时 tx.getDialect().quoteIdentifier 引号化
+            //（via 表名、源列 <源表>_id、目标列 <目标类>_id、目标表名、id），
+            // 与批量装配读路径（assembleRefMany）对齐，PG 驼峰 via 表/列可命中。
+            // 生成的方法均带 tx: Tx 参数，tx.getDialect() 可得。
             let joinSQL = quote(
-                "SELECT " + $(tableNameExpr) + ".* FROM " + $(tableNameExpr) + " JOIN " + $(viaLit) + " ON " + $(tableNameExpr) + ".id = " + $(viaLit) + "." + $(targetColLit) + " WHERE " + $(viaLit) + "." + $(sourceSchemaIdent)().tableName() + "_id = ?"
+                "SELECT " + tx.getDialect().quoteIdentifier($(tableNameExpr)) + ".* FROM " + tx.getDialect().quoteIdentifier($(tableNameExpr)) + " JOIN " + tx.getDialect().quoteIdentifier($(viaLit)) + " ON " + tx.getDialect().quoteIdentifier($(tableNameExpr)) + "." + tx.getDialect().quoteIdentifier("id") + " = " + tx.getDialect().quoteIdentifier($(viaLit)) + "." + tx.getDialect().quoteIdentifier($(targetColLit)) + " WHERE " + tx.getDialect().quoteIdentifier($(viaLit)) + "." + tx.getDialect().quoteIdentifier($(sourceSchemaIdent)().tableName() + "_id") + " = ?"
             )
             let joinSQLToken = joinSQL
             let loadName = Token(TokenKind.IDENTIFIER, "load" + prefix)
@@ -74,16 +78,16 @@ func buildRelationMethods(className: String, rels: ArrayList<RelInfo>, cd: Class
             let unsavedMsg = Token(TokenKind.STRING_LITERAL,
                 "ref_many " + r.fieldName + ": target " + r.target + " has empty id, save it first")
             let insertSQL = quote(
-                "INSERT INTO " + $(viaLit) + " (" + $(sourceSchemaIdent)().tableName() + "_id, " + $(targetColLit) + ") VALUES (?, ?)"
+                "INSERT INTO " + tx.getDialect().quoteIdentifier($(viaLit)) + " (" + tx.getDialect().quoteIdentifier($(sourceSchemaIdent)().tableName() + "_id") + ", " + tx.getDialect().quoteIdentifier($(targetColLit)) + ") VALUES (?, ?)"
             )
             let deleteSQL = quote(
-                "DELETE FROM " + $(viaLit) + " WHERE " + $(sourceSchemaIdent)().tableName() + "_id = ? AND " + $(targetColLit) + " = ?"
+                "DELETE FROM " + tx.getDialect().quoteIdentifier($(viaLit)) + " WHERE " + tx.getDialect().quoteIdentifier($(sourceSchemaIdent)().tableName() + "_id") + " = ? AND " + tx.getDialect().quoteIdentifier($(targetColLit)) + " = ?"
             )
             let clearSQL = quote(
-                "DELETE FROM " + $(viaLit) + " WHERE " + $(sourceSchemaIdent)().tableName() + "_id = ?"
+                "DELETE FROM " + tx.getDialect().quoteIdentifier($(viaLit)) + " WHERE " + tx.getDialect().quoteIdentifier($(sourceSchemaIdent)().tableName() + "_id") + " = ?"
             )
             let countSQL = quote(
-                "SELECT COUNT(*) FROM " + $(viaLit) + " WHERE " + $(sourceSchemaIdent)().tableName() + "_id = ?"
+                "SELECT COUNT(*) FROM " + tx.getDialect().quoteIdentifier($(viaLit)) + " WHERE " + tx.getDialect().quoteIdentifier($(sourceSchemaIdent)().tableName() + "_id") + " = ?"
             )
             let targetIdCheck = quote(
                 let anyId: Any = $(targetParam).id

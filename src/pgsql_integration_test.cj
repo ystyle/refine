@@ -482,9 +482,7 @@ public class PostgreSQLIntegrationTest {
     // CustomTagPost(@Table custom_tag_posts) → CustomTag(@Table custom_tags) via custom_post_tags。
     // 中间表列名验证：源列 custom_tag_posts_id、目标列 customTag_id——@Table 覆盖目标表名
     // 时目标列仍基于目标「类名」（customTag_id 而非 custom_tags_id），装配 SQL 必须命中前者。
-    // 中间表行用带引号的 raw INSERT 写入（宏层 appendTags 写路径列名未加引号，PG 折叠
-    // customTag_id→customtag_id 无法命中，属既有限制；批量装配读路径全部 quoteIdentifier，
-    // 不受影响）。
+    // 中间表行用带引号的 raw INSERT 写入（读路径不依赖宏层写路径）。
     @TestCase
     public func testRefManyIncludeAssembles(): Unit {
         match (tryPostgres()) {
@@ -830,6 +828,110 @@ public class PostgreSQLIntegrationTest {
                 let found = NestedUser.query().include(NestedUserRel.comments).using(rf).filter(NestedUser.col().name == "Lonely").one()
                 @Expect(found.isSome(), true)
                 @Expect(found.getOrThrow().comments.size, 0)
+                rf.close()
+            case None => @Expect(true, true)
+        }
+    }
+
+    // ─── I20: RETURNING 自增主键列引号化（真实 PG） ─────────────────────────────
+    // 驼峰自增主键列 postId（表 camelAutoPkPost 建表时引号原样保留）。save 的
+    // RETURNING 若未引号化则折叠为 postid 找不到列；引号化后能回填实体主键。
+    @TestCase
+    public func testCamelCaseAutoPkSaveReturningQuoted(): Unit {
+        match (tryPostgres()) {
+            case Some(rf) =>
+                rf.transaction { tx: Tx => tx.execute("DROP TABLE IF EXISTS \"camelAutoPkPost\"", []) }
+                let m = rf.migrator()
+                m.autoMigrate([CamelAutoPkPostSchema()])
+                let p = CamelAutoPkPost()
+                p.title = "ret"
+                rf.transaction { tx: Tx => tx.save(p) }
+                @Expect(p.postId > 0, true)
+                let found = CamelAutoPkPost.query().using(rf).filter(CamelAutoPkPost.col().postId == p.postId).one()
+                @Expect(found.isSome(), true)
+                @Expect(found.getOrThrow().title, "ret")
+                rf.transaction { tx: Tx => tx.delete(found.getOrThrow()) }
+                rf.close()
+            case None => @Expect(true, true)
+        }
+    }
+
+    // ─── I21: junction 写路径标识符引号化（真实 PG） ─────────────────────────────
+    // 驼峰 via 表 camelViaPostTags + 驼峰源列 camelViaPost_id：append/delete/clear/count
+    // 走宏生成实体方法，SQL 运行时经 tx.getDialect().quoteIdentifier 引号化，
+    // 与建表时引号原样保留的标识符一致，PG 可正常读写。
+    @TestCase
+    public func testCamelViaJunctionWriteRoundtrip(): Unit {
+        match (tryPostgres()) {
+            case Some(rf) =>
+                rf.transaction { tx: Tx =>
+                    tx.execute("DROP TABLE IF EXISTS \"camelViaPostTags\"", [])
+                    tx.execute("DROP TABLE IF EXISTS \"camelViaPost\"", [])
+                    tx.execute("DROP TABLE IF EXISTS \"tag\"", [])
+                }
+                let m = rf.migrator()
+                m.autoMigrate([CamelViaPostSchema(), TagSchema(), CamelViaPost_TagsJunctionSchema()])
+                let p = CamelViaPost()
+                p.title = "via"
+                rf.transaction { tx: Tx => tx.save(p) }
+                @Expect(p.id > 0, true)
+                let t1 = Tag(); t1.name = "t1"
+                let t2 = Tag(); t2.name = "t2"
+                rf.transaction { tx: Tx =>
+                    tx.save(t1)
+                    tx.save(t2)
+                }
+                rf.transaction { tx: Tx => p.appendTags(tx, [t1, t2]) }
+                rf.transaction { tx: Tx => @Expect(p.countTags(tx), 2) }
+                let loaded = rf.transaction { tx: Tx => p.loadTags(tx) }
+                @Expect(loaded.size, 2)
+                rf.transaction { tx: Tx => p.deleteTags(tx, t1) }
+                rf.transaction { tx: Tx => @Expect(p.countTags(tx), 1) }
+                rf.transaction { tx: Tx => p.clearTags(tx) }
+                rf.transaction { tx: Tx => @Expect(p.countTags(tx), 0) }
+                rf.transaction { tx: Tx =>
+                    tx.delete(t1)
+                    tx.delete(t2)
+                    tx.delete(p)
+                }
+                rf.close()
+            case None => @Expect(true, true)
+        }
+    }
+
+    // ─── F1: junction schema 源列类型跟随源主键（真实 PG） ─────────────────────────
+    // StringKeyPost 主键 String → junction 源列 stringKeyPost_id 建为 VARCHAR(255)，
+    // 目标列 tag_id（Tag 主键 Int64）为 BIGINT。String 源 id 可经 appendTags 写入
+    // VARCHAR 列并回读，验证 String-pk 源 junction 真实可读写（此前硬编码 Integer
+    // 导致源列 BIGINT，String id 写入即报错）。
+    @TestCase
+    public func testStringPkSourceJunctionRoundtrip(): Unit {
+        match (tryPostgres()) {
+            case Some(rf) =>
+                rf.transaction { tx: Tx =>
+                    tx.execute("DROP TABLE IF EXISTS \"string_key_post_tags\"", [])
+                    tx.execute("DROP TABLE IF EXISTS \"stringKeyPost\"", [])
+                    tx.execute("DROP TABLE IF EXISTS \"tag\"", [])
+                }
+                let m = rf.migrator()
+                m.autoMigrate([StringKeyPostSchema(), TagSchema(), StringKeyPost_TagsJunctionSchema()])
+                let p = StringKeyPost()
+                p.id = "skp-1"
+                p.title = "skp"
+                let t = Tag(); t.name = "tag-1"
+                rf.transaction { tx: Tx =>
+                    tx.save(p)
+                    tx.save(t)
+                }
+                rf.transaction { tx: Tx => p.appendTags(tx, t) }
+                rf.transaction { tx: Tx => @Expect(p.countTags(tx), 1) }
+                let loaded = rf.transaction { tx: Tx => p.loadTags(tx) }
+                @Expect(loaded.size, 1)
+                @Expect(loaded[0].name, "tag-1")
+                rf.transaction { tx: Tx =>
+                    tx.delete(t)
+                    tx.delete(p)
+                }
                 rf.close()
             case None => @Expect(true, true)
         }
