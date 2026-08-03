@@ -77,7 +77,7 @@
 - **位置**：`src/macros/meta.cj:42-49`（detectRelations 把一切 `Array<X>` 当 ref_many）+ `meta.cj:204-206`（isRelationField）
 - **问题**：`var data: Array<UInt8>` 生成 `RefMany<UInt8>` 并引用不存在的 `UInt8Schema`/`UInt8Rel` → 难懂编译错误。Bytes 是一等存储类型（meta.cj:235、sql_gen.cj BYTEA、db.cj:370 绑定）但**不可通过实体 DSL 触达**。根因与 F4 同源：关系检测未对已知标量存储类型做白名单。
 - **修法**：关系检测加已知标量类型白名单（Array<UInt8> → Bytes 而非 ref_many）。补 `Array<UInt8>` 实体测试。
-- **✅ 已解决（2026-08-03）**：白名单函数 `isBytesArrayType`（归一化去空格比较，实测 `vd.declType.toTokens().toString()` 对泛型渲染为 `Array < UInt8 >`——带空格，修复前 `typeNameToStorageType` 的 `"Array<UInt8>"` 字面量与 `isRelationField` 子串匹配全部对不上/误中）。`detectRelations` 与 `isRelationField` 排除 Bytes；`typeNameToStorageType` 改用归一化判定 → Bytes。新增 `ByteBlobFieldTest` 5 例（schema 映射 Bytes / 列名含 data / save 绑定 Array<UInt8> / RowMapper 读回 / Array<Tag> 仍是 ref_many 回归）+ 真实 PG/MySQL 集成 `testBytesFieldRoundtrip`。
+- **✅ 已解决（2026-08-03）**：根因核实——`vd.declType.toTokens().toString()` 对泛型渲染为 `Array < UInt8 >`（带空格），导致两条路径失效：`isRelationField` 的 `contains("Array")` 子串误中（把 Bytes 字段当关系字段跳过 → 不可达），而 `typeNameToStorageType` 的 `"Array<UInt8>"` 字面量与带空格形式失配（Bytes 分支死代码）。修复：白名单函数 `isBytesArrayType`（归一化去空格比较）在 `detectRelations`/`isRelationField`/`typeNameToStorageType` 三处统一使用——`Array<UInt8>` → Bytes 而非 ref_many，`typeNameToStorageType` 正确映射 Bytes。新增 `ByteBlobFieldTest` 5 例（schema 映射 Bytes / 列名含 data / save 绑定 Array<UInt8> / RowMapper 读回 / Array<Tag> 仍是 ref_many 回归）+ 真实 PG/MySQL 集成 `testBytesFieldRoundtrip`。
 
 ### R-I9. ref_many 目标列恒 Integer —— String-pk 目标端到端运行期类型错误
 - **位置**：`src/macros/schema_gen.cj:86` + `relation_gen.cj:105,126`
