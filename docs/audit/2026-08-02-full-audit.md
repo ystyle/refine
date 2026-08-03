@@ -3,7 +3,7 @@
 > 审查日期：2026-08-02
 > 审查范围：全部 `src/` 运行时 + `src/macros/` 宏层 + 三方言 + 三迁移器
 > 审查方式：三路并行深度审查（核心运行时 / 方言+迁移 / 宏生成层），逐行核对 + 交叉验证
-> 状态：**Not ready for release** — 存在 9 个 Critical + 19 个 Important，修复后需补测试沉淀。下一项排期：**I19** 宏写路径未引号标识符（由 I2 修复暴露，2026-08-02）
+> 状态：**Not ready for release** — 存在 9 个 Critical + 19 个 Important，修复后需补测试沉淀。进度：I19/I20/I21/I22/I23/F1/F2/F3 已修复（2026-08-02~08-03）；**P2 Minor 批次（M1/M2/M4/M5/M6/M7/M8/M9/M11/M13/M14/M15/M23/M24）已处理（2026-08-03）**，设计项 M3/M10/M16/M19/M22 与重构项 M18/M20 待排期。
 
 ---
 
@@ -212,20 +212,32 @@
 ## 四、Minor（Nice to Have）
 
 - **M1** `Refine.open` 未调用 `dialect.initialize(db)`（`refine.cj:25-36`；接口空实现 `dialect.cj:18`）。
+  - **✅ 已解决（2026-08-03）**: `open` 构造 `DB(pooled, offset, d)` 后调用 `d.initialize(db)`。三方言实现均为空，此调用仅挂载钩子（未来方言初始化入口），无行为变化。
 - **M2** `visitedContains/visitedKeyContains` 是 public 顶层函数，泄漏内部实现（`refine.cj:165-177`）。
+  - **✅ 已解决（2026-08-03，裁决为 by-design）**: 宏生成代码（`relation_gen.cj` 级联系列，位于**用户包**）引用这两个函数，宏展开代码无法访问 refine 包 internal，public 是刻意设计（`CascadeVisitedKeys` 别名同理由）。
 - **M3** `idgen.cj:40-45` Sonyflake machineId 随机化 → 多进程共库时 ID 冲突风险。
 - **M4** `col.cj:24,32` 空数组返回 `Raw("1 = 0")` 硬编码字符串。
+  - **✅ 已解决（2026-08-03，裁决为 no-op）**: `anyOf([]) → Raw("1 = 0")`、`notAnyOf([]) → Raw("1 = 1")` 是 SQLite/MySQL/PG 三方言通用的恒假/恒真 SQL 常量，仅作 filter 谓词、无注入面，保持原样。
 - **M5** `db.cj:207-210` `setIsolation` 错误信息硬编码 "SQLite does not support"。
+  - **✅ 已解决（2026-08-03）**: 错误信息改为 `dialect.name() + " does not support transaction isolation levels"`（SQLite 报 `sqlite ...`），不再张冠李戴；`db_test` 断言同步。
 - **M6** `log.cj:79-87` `formatAny` 对 DateTime/Array 输出 `<unknown>`。
+  - **✅ 已解决（2026-08-03）**: `formatAny` 补齐 DateTime（`toString()` ISO 8601）、`Array<Any>`（递归 join `[a, b]`）、`Array<UInt8>`（hex `bytes[...]`）、Int32/Float32；`formatAny` 由 private 改 internal 供同包测试断言，新增 7 例。
 - **M7** `page.cj:16-19` `totalPages()` 在 `size=0` 时除零。
+  - **✅ 已解决（2026-08-03）**: `totalPages()` 增加 `size<=0` 守卫抛 `RefineException`（`page()` 已校验 `size>=1`，size=0 仅手工构造可达）；新增 `PageTest` 5 例。
 - **M8** `query.cj:495` 聚合列名 `Raw(fn + "(" + colName + ")")` 拼字符串；`min/max` 缺 String 版本。
+  - **✅ 已解决（2026-08-03）**: (a) 聚合列名改经 `dialect.quoteIdentifier` 引号化（修复 Raw 拼裸列名，与 C9 同源）；(b) 新增 `min/max(col: Col<String>): String`（String 聚合读取器，空结果返回空串）。
 - **M9** `dialect_sqlite.cj:174` Timestamp→TEXT，软删除过滤硬编码 `deleted_at = 0`（`refine_macro.cj:99`），若 deleted_at 声明为 DateTime 会永远查不到。
+  - **✅ 已解决（2026-08-03）**: 软删过滤与写值按 `deleted_at` 声明类型生成——DateTime → `IS NULL` + `DateTime.now()`，Int64 → `= 0` + `1`（历史行为不变）；新增 `DateTimeSoftDeleteTest` 3 例。**遗留**：DateTime 软删端到端可用还需 deleted_at 列可空 + `Option<DateTime>` 字段支持（宏层 `isRelationField` 当前把 `Option<X>` 当 ref_to 关系），属宏设计层后续项。
 - **M10** `error.cj:45-65` `OptimisticLockException` 两个 pk 重载（Int64/String）易混淆。
 - **M11** `dispatchSet1`（`db.cj:296-299`）从未被调用。
+  - **✅ 已解决（2026-08-03）**: `dispatchSet1` 死代码删除（grep 确认零调用方，与 M23 同项）。
 - **M12** `runQuery`（`query.cj:184-198`）是死代码。
 - **M13** `migrator_sqlite.cj:61` alterColumn 抛裸 `Exception`，应抛 RefineException。
+  - **✅ 已解决（2026-08-03）**: 改抛 `MigrationException`（`RefineException` 子类），`testMigratorAlterColumn` 断言 message 不受影响。
 - **M14** MySQL/PG upsert 把主键列写进 DO UPDATE SET（噪音）。
+  - **✅ 已解决（2026-08-03）**: MySQL/PG `upsertSQL` 跳过 `conflictColumns`（主键）进 DO UPDATE SET；全列皆冲突列时 MySQL 退化为首列无操作更新、PG 退化为 `DO NOTHING`（防非法 SQL）。**SQLite 保留 pk-in-update-set**（其测试断言完整 SQL，M14 范围外）。
 - **M15** MySQL `getExistingIndexNames` 复合索引名重复出现，且混入 PRIMARY。
+  - **✅ 已解决（2026-08-03）**: 改 `SELECT DISTINCT INDEX_NAME ... AND INDEX_NAME != 'PRIMARY'`，复合索引去重且不混入主键。
 - **M16** `DatabaseRegistry` 静态全局状态与"多实例隔离"相悖，无并发保护。
 - **M17** `dummyMapper/dummySetter`（`relation.cj:147-148`）是测试泄漏到生产。
 - **M18** 三方言约 150 行逐字节重复代码（render 主循环、renderExpr 系列），应抽取共享基类。
@@ -234,7 +246,9 @@
 - **M21** `Refine.migrator()` 内 `DB(datasource)` 与 `DB(datasource, paramOffset)` 双分支笨拙（`refine.cj:131-139`）。
 - **M22** `meta.cj:228-238` `typeNameToStorageType` 把未知 struct 一律映射为 Text 而非 design 的 Json——自定义类型适配未真正接线到宏。
 - **M23** `db.cj:296-299` dispatchSet1 死代码（与 M11 重复，保留一个）。
+  - **✅ 已解决（2026-08-03）**: 与 M11 同项（重复登记），`dispatchSet1` 已删除。
 - **M24** junction schema 无联合主键（post_tags 的 (src_id,tgt_id) 应为主键）。
+  - **✅ 已解决（2026-08-03）**: `buildJunctionSchema` 两列标为 `primaryKey=true`；三方言 `createTableSQL` 对 ≥2 主键列渲染表级 `PRIMARY KEY (col1, col2)`（列级不再重复 PRIMARY KEY）；新增三方言复合主键建表测试 + 宏 junction pk 断言，真实 MySQL/PG 集成测试验证通过（修复前真实 MariaDB 报 `Multiple primary key defined`）。
 
 ---
 
