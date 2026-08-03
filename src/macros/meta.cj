@@ -234,7 +234,7 @@ func typeNameToStorageType(typeName: String): String {
     } else if (typeName == "String") { "StorageType.String"
     } else if (typeName == "Array<UInt8>") { "StorageType.Bytes"
     } else if (typeName == "DateTime") { "StorageType.Timestamp"
-    } else { "StorageType.Text" }
+    } else { "StorageType.Json" }
 }
 
 func mergeFieldOverrides(fields: ArrayList<FieldInfo>, fieldMessages: ArrayList<MacroMessage>): ArrayList<FieldInfo> {

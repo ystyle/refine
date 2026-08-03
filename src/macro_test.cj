@@ -1542,6 +1542,48 @@ public class FieldAnnotationTest {
     }
 }
 
+// ─── M22: 未知 struct 类型默认映射 StorageType.Json ─────────────────────────
+// design §6.3「struct → StorageType.Json」；M22 修复前 typeNameToStorageType 把
+// 未知 struct 一律映射为 Text，与 design 不符。注意：宏层 TypeAdapter 读写接线
+// （toStored/fromStored）尚未实现，本项只修正 schema 默认推断（见 audit 备注）。
+public struct Profile {
+    public var bio: String = ""
+    public var avatarUrl: String = ""
+    public init() {}
+    public init(bio: String, avatarUrl: String) {
+        this.bio = bio
+        this.avatarUrl = avatarUrl
+    }
+}
+
+@Refine
+public class ProfileDoc {
+    var id: Int64 = 0
+    var title: String = ""
+    var profile: Profile = Profile()
+}
+
+@Test
+public class UnknownTypeSchemaTest {
+    @TestCase
+    public func testUnknownStructMapsToJson(): Unit {
+        let schema = ProfileDocSchema()
+        let cols = schema.columns()
+        @Expect(cols.size, 3)
+        @Expect(cols[0].name, "id")
+        @Expect(cols[1].name, "title")
+        @Expect(cols[2].name, "profile")
+        @Expect(cols[2].storageType, StorageType.Json)
+    }
+
+    @TestCase
+    public func testUnknownStructColumnNamesIncludeStruct(): Unit {
+        let cols = ProfileDocColumnNames()
+        @Expect(cols.size, 3)
+        @Expect(cols[2].name, "profile")
+    }
+}
+
 // ─── Soft Delete Entity ────────────────────────────────
 
 @Refine
