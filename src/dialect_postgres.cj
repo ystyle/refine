@@ -4,16 +4,17 @@ import std.collection.ArrayList
 
 // PostgreSQL 方言：ANSI 双引号标识符、FOR UPDATE 行锁（继承 AbstractDialect 默认）。
 // 差异点（M18 抽取后仅剩）：
-// - renderParam = "$n" 编号占位符（从 1 递增并推进 paramIdx，跨子查询延续编号）
+// - renderParam(ctx) = "$n" 编号占位符（从 1 递增并推进 ctx.paramIdx，跨子查询延续编号）
 // - hasReturningSupport = true：PG 原生支持 RETURNING（save 用 RETURNING 回填生成字段）
 public class PostgreSQLDialect <: AbstractDialect {
     public func name(): String { "postgresql" }
 
     // PG 占位符用 $n 编号（从 1 递增），覆盖 base 的 "?"；参数顺序与占位符编号一致，
-    // 子查询渲染延续外层编号（render 每次重置 paramIdx = 1）
-    protected override func renderParam(): String {
-        let ph = "$" + paramIdx.toString()
-        paramIdx++
+    // 子查询渲染延续外层编号（render 每次新建 RenderContext，paramIdx 从 1 起）。
+    // R-I4：paramIdx 收敛进 ctx，不再共享实例字段（详见 dialect_base.cj 文件头）。
+    protected override func renderParam(ctx: RenderContext): String {
+        let ph = "$" + ctx.paramIdx.toString()
+        ctx.paramIdx++
         ph
     }
 

@@ -8,7 +8,7 @@ import std.collection.ArrayList
 // 在三方言中完全一致，收敛到本基类统一实现；方言差异收敛到两类钩子：
 //
 //  1. open 钩子（提供 2/3 方言的共识默认，另一方言按需覆盖）：
-//     - renderParam()       参数占位符，默认 "?"（SQLite/MySQL），PG 覆盖为 "$n" 并推进 paramIdx
+//     - renderParam(ctx)    参数占位符，默认 "?"（SQLite/MySQL），PG 覆盖为 "$n" 并推进 ctx.paramIdx
 //     - quoteIdentifier()   标识符引用，默认 ANSI 双引号（SQLite/PG），MySQL 覆盖为反引号
 //     - hasLockSupport()    SELECT ... FOR UPDATE，默认 true（MySQL/PG），SQLite 覆盖为 false
 //     - renderLimitOffset() LIMIT/OFFSET 段组装，默认原样追加（SQLite/PG），MySQL 覆盖裸 OFFSET 哨兵
@@ -18,16 +18,22 @@ import std.collection.ArrayList
 //     name / dataTypeOf / upsertSQL / migrator / defaultValueOf
 //
 // 共享能力位 hasUpsertSupport / hasJSONSupport / initialize 三方言一致，直接在本基类实现。
+//
+// R-I4：渲染状态收敛为 RenderContext。render 的参数缓冲（params）与 PG $n 编号游标
+// （paramIdx）曾经是 AbstractDialect 的实例字段：runtime 只构建一个 dialect 实例并被
+// 连接池多线程共享，render() 重置后递归填充期间被其它线程的 render 交叉污染，产生错位的
+// 参数与 PG $n 编号。收敛为 render() 每次新建的本地 RenderContext 并沿
+// renderBody/renderExpr/renderExprList/renderAndList/renderParam 传递后，渲染过程不再触碰
+// 任何实例状态，共享 dialect 实例天然并发安全。renderLimitOffset 只消费本地 limit 列表
+// （无参数缓冲），quoteIdentifier/hasLockSupport/hasIsolationSupport/hasReturningSupport
+// 为无状态，均不需要 ctx。
 public abstract class AbstractDialect <: Dialect {
-    // 渲染过程中的参数缓冲与 PG $n 编号游标（render() 每次重置）
-    protected var params = ArrayList<Any>()
-    protected var paramIdx: Int64 = 1
-
     // ── 方言差异钩子（open 默认实现，子类按需覆盖）──
 
-    // 参数占位符：默认 "?"（SQLite/MySQL）；PG 覆盖为 "$n" 并推进 paramIdx。
+    // 参数占位符：默认 "?"（SQLite/MySQL）；PG 覆盖为 "$n" 并推进 ctx.paramIdx。
     // renderBody 的 UPDATE SET 与 renderExpr 的 Value 分支共用，保证参数顺序与占位符一致。
-    protected open func renderParam(): String {
+    // ctx 承载单次渲染的本地状态（参数缓冲 + $n 编号游标），见文件头 R-I4 说明。
+    protected open func renderParam(ctx: RenderContext): String {
         "?"
     }
 
@@ -70,12 +76,11 @@ public abstract class AbstractDialect <: Dialect {
     // ── 共享渲染逻辑（三方言完全一致）──
 
     public func render(stmt: Statement): (String, Array<Any>) {
-        params = ArrayList<Any>()
-        paramIdx = 1
-        (renderBody(stmt), params.toArray())
+        let ctx = RenderContext()
+        (renderBody(ctx, stmt), ctx.params.toArray())
     }
 
-    private func renderBody(stmt: Statement): String {
+    private func renderBody(ctx: RenderContext, stmt: Statement): String {
         var select = ArrayList<String>()
         var from = ArrayList<String>()
         var joins = ArrayList<String>()
@@ -97,19 +102,19 @@ public abstract class AbstractDialect <: Dialect {
                 case SelectClause(fields) =>
                     hasSelect = true
                     if (fields.size == 0) { select.add("SELECT *") }
-                    else { select.add("SELECT " + renderExprList(fields)) }
+                    else { select.add("SELECT " + renderExprList(ctx, fields)) }
                 case FromClause(table) =>
                     from.add("FROM " + quoteIdentifier(table))
                 case WhereClause(predicates) =>
                     let prefix = if (whereAdded) { "AND " } else { "WHERE " }
                     whereAdded = true
-                    whereClause.add(prefix + renderAndList(predicates))
+                    whereClause.add(prefix + renderAndList(ctx, predicates))
                 case OrderByClause(fields) =>
-                    orderBy.add("ORDER BY " + renderExprList(fields))
+                    orderBy.add("ORDER BY " + renderExprList(ctx, fields))
                 case GroupByClause(fields) =>
-                    groupBy.add("GROUP BY " + renderExprList(fields))
+                    groupBy.add("GROUP BY " + renderExprList(ctx, fields))
                 case HavingClause(predicates) =>
-                    having.add("HAVING " + renderAndList(predicates))
+                    having.add("HAVING " + renderAndList(ctx, predicates))
                 case LimitClause(n) =>
                     hasLimit = true
                     limit.add("LIMIT " + n.toString())
@@ -117,12 +122,12 @@ public abstract class AbstractDialect <: Dialect {
                     hasOffset = true
                     limit.add("OFFSET " + n.toString())
                 case JoinClause(table, alias, on) =>
-                    joins.add("LEFT JOIN " + quoteIdentifier(table) + " " + quoteIdentifier(alias) + " ON " + renderExpr(on))
+                    joins.add("LEFT JOIN " + quoteIdentifier(table) + " " + quoteIdentifier(alias) + " ON " + renderExpr(ctx, on))
                 case UpdateClause(table, setCols, setVals) =>
                     var setParts = ArrayList<String>()
                     for (_si_ in 0..setCols.size) {
-                        setParts.add(quoteIdentifier(setCols[_si_]) + " = " + renderParam())
-                        params.add(setVals[_si_])
+                        setParts.add(quoteIdentifier(setCols[_si_]) + " = " + renderParam(ctx))
+                        ctx.params.add(setVals[_si_])
                     }
                     updateSQL = "UPDATE " + quoteIdentifier(table) + " SET " + String.join(setParts.toArray(), delimiter: ", ")
                 case DeleteClause(table) =>
@@ -153,44 +158,44 @@ public abstract class AbstractDialect <: Dialect {
         String.join(parts.toArray(), delimiter: " ")
     }
 
-    private func renderExpr(expr: Expr): String {
+    private func renderExpr(ctx: RenderContext, expr: Expr): String {
         match (expr) {
             case Column(n) => quoteIdentifier(n)
             case Value(v) =>
-                params.add(v)
-                renderParam()
+                ctx.params.add(v)
+                renderParam(ctx)
             case Binary(l, op, r) =>
-                renderExpr(l) + " " + renderOp(op) + " " + renderExpr(r)
+                renderExpr(ctx, l) + " " + renderOp(op) + " " + renderExpr(ctx, r)
             case Range(subject, low, high) =>
-                renderExpr(subject) + " BETWEEN " + renderExpr(low) + " AND " + renderExpr(high)
+                renderExpr(ctx, subject) + " BETWEEN " + renderExpr(ctx, low) + " AND " + renderExpr(ctx, high)
             case Unary(op, e) =>
-                renderUnaryOp(op) + " " + renderExpr(e)
+                renderUnaryOp(op) + " " + renderExpr(ctx, e)
             case FuncCall(n, args) =>
-                n + "(" + renderExprList(args) + ")"
+                n + "(" + renderExprList(ctx, args) + ")"
             case Raw(s) => s
             case Ordered(expr, dir) =>
-                renderExpr(expr) + " " + dir
+                renderExpr(ctx, expr) + " " + dir
             case Aliased(expr, alias) =>
-                renderExpr(expr) + " AS " + quoteIdentifier(alias)
+                renderExpr(ctx, expr) + " AS " + quoteIdentifier(alias)
             case SubQuery(s) =>
-                "(" + renderBody(s) + ")"
+                "(" + renderBody(ctx, s) + ")"
         }
     }
 
-    private func renderExprList(exprs: Array<Expr>): String {
+    private func renderExprList(ctx: RenderContext, exprs: Array<Expr>): String {
         if (exprs.size == 0) { return "" }
         var parts = ArrayList<String>()
         for (e in exprs) {
-            parts.add(renderExpr(e))
+            parts.add(renderExpr(ctx, e))
         }
         String.join(parts.toArray(), delimiter: ", ")
     }
 
-    private func renderAndList(exprs: Array<Expr>): String {
+    private func renderAndList(ctx: RenderContext, exprs: Array<Expr>): String {
         if (exprs.size == 0) { return "" }
         var parts = ArrayList<String>()
         for (e in exprs) {
-            parts.add(renderExpr(e))
+            parts.add(renderExpr(ctx, e))
         }
         String.join(parts.toArray(), delimiter: " AND ")
     }
@@ -232,4 +237,13 @@ public abstract class AbstractDialect <: Dialect {
     public func upsertSQL(table: String, columns: Array<String>, conflictColumns: Array<String>, auditCreateCols: Array<String>, auditUpdateCols: Array<String>, versionCol: String): (String, Int64)
     public func migrator(db: DB): Migrator
     public func defaultValueOf(st: StorageType): String
+}
+
+// 单次 render() 调用的本地渲染状态（参数缓冲 + PG $n 编号游标），见文件头 R-I4 说明。
+// 包级可见（无修饰符）：PostgreSQLDialect 覆盖 renderParam(ctx) 需要引用该类型。
+public class RenderContext {
+    var params: ArrayList<Any> = ArrayList<Any>()
+    var paramIdx: Int64 = 1
+
+    public init() {}
 }

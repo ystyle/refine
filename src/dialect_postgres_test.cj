@@ -1,5 +1,6 @@
 package refine
 
+import std.collection.ArrayList
 import std.unittest.*
 import std.unittest.testmacro.*
 
@@ -572,5 +573,77 @@ public class PostgreSQLDialectTest {
         let (sql, params) = dialect.render(stmt)
         @Expect(sql, "SELECT \"x\" FROM \"t\" LIMIT 5 OFFSET 10 FOR UPDATE")
         @Expect(params.size, 0)
+    }
+
+    // R-I4 确定性回归：同一 dialect 实例连续 render 多条语句互不残留状态——
+    // 上一条的参数不泄漏进下一条，PG $n 编号每次从 $1 重新计数。
+    @TestCase
+    public func testRenderLeavesNoStateBetweenCalls(): Unit {
+        let dialect = PostgreSQLDialect()
+        let s1 = Statement()
+        s1.addClause(SelectClause([Column("id")]))
+        s1.addClause(FromClause("t"))
+        s1.addClause(WhereClause([Binary(Column("a"), Eq, Value(1))]))
+        let (sql1, params1) = dialect.render(s1)
+        @Expect(sql1, "SELECT \"id\" FROM \"t\" WHERE \"a\" = $1")
+        @Expect(params1.size, 1)
+        @Expect(checkInt(params1[0], 1))
+        let s2 = Statement()
+        s2.addClause(SelectClause([Column("id")]))
+        s2.addClause(FromClause("t"))
+        s2.addClause(WhereClause([Binary(Column("a"), Eq, Value(7)), Binary(Column("b"), Eq, Value(8))]))
+        let (sql2, params2) = dialect.render(s2)
+        @Expect(sql2, "SELECT \"id\" FROM \"t\" WHERE \"a\" = $1 AND \"b\" = $2")
+        @Expect(params2.size, 2)
+        @Expect(checkInt(params2[0], 7))
+        @Expect(checkInt(params2[1], 8))
+    }
+
+    // R-I4 回归：共享 dialect 实例并发 render 互不污染。修复前 params/paramIdx 是
+    // AbstractDialect 实例字段（runtime 只构建一个 dialect 实例、连接池多线程共享），
+    // render() 重置后递归填充期间被其它线程的 render 交叉污染：参数缓冲并置、PG $n
+    // 编号交错递增，导致 SQL 占位符与参数错位。修复后渲染状态收敛为 render() 每次
+    // 新建的 RenderContext，无共享可变状态，并发安全。
+    // 8 线程 × 300 次迭代、每次 3 个参数：旧实现下大概率发生缓冲/编号污染（非确定性
+    // 竞态；断言的是修复后语义的确定性正确）。每个线程只渲染自己的 Statement 并断言
+    // 自己最后一次渲染的 SQL 与参数一一对应。
+    @TestCase
+    public func testConcurrentRenderSharedDialectIsolated(): Unit {
+        let dialect: Dialect = PostgreSQLDialect()
+        let threads: Int64 = 8
+        let iterations: Int64 = 300
+        let futures = ArrayList<Future<(String, Array<Any>)>>()
+        for (i in 0..threads) {
+            let ti = i
+            let fut = spawn {
+                var sql = ""
+                var params = Array<Any>()
+                for (k in 0..iterations) {
+                    let stmt = Statement()
+                    stmt.addClause(SelectClause([Column("id")]))
+                    stmt.addClause(FromClause("t" + ti.toString()))
+                    stmt.addClause(WhereClause([
+                        Binary(Column("a"), Eq, Value(ti)),
+                        Binary(Column("b"), Eq, Value(k)),
+                        Binary(Column("c"), Eq, Value("v" + ti.toString() + "_" + k.toString())),
+                    ]))
+                    let (s, p) = dialect.render(stmt)
+                    sql = s
+                    params = p
+                }
+                (sql, params)
+            }
+            futures.add(fut)
+        }
+        for (i in 0..threads) {
+            let (sql, params) = futures[i].get()
+            let lastK: Int64 = iterations - 1
+            @Expect(sql, "SELECT \"id\" FROM \"t" + i.toString() +
+                "\" WHERE \"a\" = $1 AND \"b\" = $2 AND \"c\" = $3")
+            @Expect(params.size, 3)
+            @Expect(checkInt(params[0], i))
+            @Expect(checkInt(params[1], lastK))
+            @Expect(checkStr(params[2], "v" + i.toString() + "_" + lastK.toString()))
+        }
     }
 }
