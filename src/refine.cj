@@ -7,16 +7,23 @@ import std.collection.HashSet
 import std.convert.*
 
 public class Refine {
-    private var datasource: Datasource
+    private var db: DB
     private var dialect: Dialect
-    private var paramOffset: Int64 = 0
     private var hookRegistry = HashMap<String, ArrayList<Any>>()
     private var idGenerator: IdGenerator = SonyflakeIdGenerator()
 
-    internal init(datasource: Datasource, dialect: Dialect, paramOffset: Int64) {
-        this.datasource = datasource
+    // ORM 层主构造：持有纯连接层 DB + 方言。DB 承载 datasource/paramOffset/连接池，
+    // Refine 独占 ORM 职责（dialect/hookRegistry/idGenerator）。
+    internal init(db: DB, dialect: Dialect) {
+        this.db = db
         this.dialect = dialect
-        this.paramOffset = paramOffset
+    }
+
+    // 兼容构造：直接给 datasource/dialect/paramOffset（测试与旧调用点）。内部包装为
+    // 纯 DB + dialect，避免调用方自行组装连接层。
+    internal init(datasource: Datasource, dialect: Dialect, paramOffset: Int64) {
+        this.db = DB(datasource, paramOffset)
+        this.dialect = dialect
     }
 
     public func getIdGenerator(): IdGenerator { idGenerator }
@@ -34,68 +41,34 @@ public class Refine {
         let d = detectDialect(driverName)
         let offset = detectParamOffset(driverName)
         let pooled = PooledDatasource(ds)
+        let db = DB(pooled, offset)
         // M1: 接通 Dialect.initialize(db) 钩子。所有方言当前为空实现（SQLite/MySQL/PG），
-        // 此调用为未来方言初始化（建表前环境准备、连接级配置等）提供挂载点；DB 包装
-        // 只承载 datasource/dialect，不额外占用连接。
-        d.initialize(DB(pooled, offset, d))
-        Refine(pooled, d, offset)
+        // 此调用为未来方言初始化（建表前环境准备、连接级配置等）提供挂载点；DB 为纯
+        // 连接层，只承载 datasource/paramOffset。
+        d.initialize(db)
+        Refine(db, d)
     }
 
     public func session(): Session {
-        Session(datasource.connect(), this, paramOffset)
+        let s = db.session()
+        s.ref = Some(this)
+        s
     }
 
     public func transaction<T>(action: (Tx) -> T): T {
-        let conn = datasource.connect()
-        try {
-            let tx = Tx(conn, this, paramOffset)
-            tx.begin()
-            try {
-                let result = action(tx)
-                // R-M12: action 内手动 commit 后状态为 Committed，isActive() = false，
-                // 外层跳过 auto-commit——否则 M19 守卫抛 "transaction is not active"，
-                // 把「成功返回」误转成异常。仅 Active 时才自动 commit。
-                if (tx.isActive()) { tx.commit() }
-                return result
-            } catch (e: Exception) {
-                // Fix 1 (M19 评审): 回滚为 best-effort——action 内手动 commit 后再抛
-                // 异常时，tx.rollback() 会因状态已非 Active 抛 "transaction is not active"，
-                // 若直接向上传播会把原始异常遮蔽掉。吞掉回滚错误，始终抛原始异常。
-                // （真实回滚失败也选择记录而非覆盖原始异常，属标准模式。）
-                try { tx.rollback() } catch (_: Exception) { () }
-                throw e
-            }
-        } finally {
-            conn.close()
-        }
+        db.transaction(action, Some(this))
     }
 
     public func transaction<T>(level: IsolationLevel, action: (Tx) -> T): T {
-        let conn = datasource.connect()
-        try {
-            let tx = Tx(conn, this, paramOffset)
-            tx.setIsolation(level)
-            tx.begin()
-            try {
-                let result = action(tx)
-                // R-M12: 同上——仅 Active 时自动 commit，尊重 action 内的手动 commit。
-                if (tx.isActive()) { tx.commit() }
-                return result
-            } catch (e: Exception) {
-                try { tx.rollback() } catch (_: Exception) { () }
-                throw e
-            }
-        } finally {
-            conn.close()
-        }
+        db.transaction(action, Some(this), level)
     }
 
     public func getDialect(): Dialect { dialect }
 
-    public func getParamOffset(): Int64 { paramOffset }
+    public func getParamOffset(): Int64 { db.getParamOffset() }
 
     public func getRawConn(): Connection {
-        datasource.connect()
+        db.getRawConn()
     }
 
     public func hook<T>(typeName: String, kind: HookKind, hook: HookFn<T>): Unit {
@@ -135,7 +108,7 @@ public class Refine {
     // R-I1: 副本必须绑定本 Refine 实例（copy.ref = Some(this)）。session() 创建的
     // Session 携带 ref = Some(this)，using(exec) 现也会自动传播；此处的显式赋值是
     // 双保险——即便未来 session 不携带 ref，Refine.all/one 仍保证触发本实例的 AfterFind。
-    // R-M11: 调用方可能已用 using(rf)/using(db)/using(session) 预绑定 Session；下面的
+    // R-M11: 调用方可能已用 using(rf)/using(exec) 预绑定 Session；下面的
     // using(s) 会覆盖 copy.executor，若先不关闭旧 Session，其底层连接将永远泄漏。
     // 故在覆盖前按 closeExecutor 语义关闭预绑定的 Session（预绑定 Tx 属外部生命周期，
     // 不在此关闭，执行只会改用本方法新建的 session）。
@@ -170,11 +143,11 @@ public class Refine {
     }
 
     public func migrator(): Migrator {
-        dialect.migrator(DB(datasource, paramOffset, dialect))
+        dialect.migrator(this.db)
     }
 
     public func close(): Unit {
-        datasource.close()
+        db.close()
     }
 }
 

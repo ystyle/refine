@@ -20,7 +20,17 @@ public class DatabaseConfig {
 
     public init() {}
 
+    // 纯连接层：返回 DB（datasource + paramOffset + 连接池），无方言。
     public func toDB(): DB {
+        DB(openPooledDatasource(), detectParamOffset(driver))
+    }
+
+    // ORM 层：建纯 DB + 方言，返回 Refine（持有 DB，getParamOffset/方言经 db）。
+    public func toRefine(): Refine {
+        Refine(toDB(), detectDialect(driver))
+    }
+
+    private func openPooledDatasource(): PooledDatasource {
         let drvOpt = DriverManager.getDriver(driver)
         match (drvOpt) {
             case Some(drv) =>
@@ -29,9 +39,7 @@ public class DatabaseConfig {
                 if (passwd != "") { opts.add(("password", passwd)) }
                 if (let Some(db) <- database) { opts.add(("database", db)) }
                 let ds = drv.open(dsn, opts.toArray())
-                let d = detectDialect(this.driver)
-                let offset = detectParamOffset(this.driver)
-                DB(applyPoolConfig(this, ds), offset, d)
+                applyPoolConfig(this, ds)
             case None =>
                 throw ConnectionException("Driver '${driver}' not found")
         }
@@ -55,7 +63,7 @@ func applyPoolConfig(cfg: DatabaseConfig, ds: Datasource): PooledDatasource {
 // register/get/initAll/closeAll/clear）必须加锁保护，否则 HashMap 并发读写可能抛异常
 // 或损坏结构。Mutex 可重入，嵌套调用（如 initAll 内调 get）不会死锁。
 public class DatabaseRegistry {
-    private static var instances = HashMap<String, DB>()
+    private static var instances = HashMap<String, Refine>()
     private static var configs = HashMap<String, DatabaseConfig>()
     private static let registryLock = Mutex()
 
@@ -65,16 +73,16 @@ public class DatabaseRegistry {
         }
     }
 
-    public static func get(name: String): DB {
+    public static func get(name: String): Refine {
         synchronized(registryLock) {
             match (instances.get(name)) {
-                case Some(db) => db
+                case Some(rf) => rf
                 case None =>
                     match (configs.get(name)) {
                         case Some(config) =>
-                            let db = config.toDB()
-                            instances.add(name, db)
-                            db
+                            let rf = config.toRefine()
+                            instances.add(name, rf)
+                            rf
                         case None =>
                             throw ConfigException("Database '${name}' not configured")
                     }
@@ -92,16 +100,16 @@ public class DatabaseRegistry {
 
     public static func closeAll(): Unit {
         synchronized(registryLock) {
-            for (db in instances.values()) {
-                db.close()
+            for (rf in instances.values()) {
+                rf.close()
             }
-            instances = HashMap<String, DB>()
+            instances = HashMap<String, Refine>()
         }
     }
 
     public static func clear(): Unit {
         synchronized(registryLock) {
-            instances = HashMap<String, DB>()
+            instances = HashMap<String, Refine>()
             configs = HashMap<String, DatabaseConfig>()
         }
     }

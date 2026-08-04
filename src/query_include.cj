@@ -148,13 +148,9 @@ extend<T> Query<T> {
         this
     }
 
-    // R-M2: 原 using(DB) 把 db 存入 Query.db 字段（write-only 死代码，从未被读取），
-    // 0.5.1 起不再存储——using(DB) 只负责把 DB 会话绑定为执行上下文。
-    public func using(database: DB): Query<T> {
-        this.executor = Some(database.session())
-        this
-    }
-
+    // R-M2: using(DB) 缺陷 API 已于 DB 收敛为纯连接层后移除——DB 无 dialect/offset
+    // 语义，不该用于 ORM Query 绑定。需 ORM 查询请用 Refine.open 后 using(rf)，
+    // 或显式 Session/Tx 执行上下文 using(exec)。
     public func using(rf: Refine): Query<T> {
         this.executor = Some(rf.session())
         this.queryDialect = Some(rf.getDialect())

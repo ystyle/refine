@@ -703,10 +703,12 @@ class CaptureConnection <: Connection {
 }
 
 // 共享测试助手：CaptureConnection + 指定方言 Tx（WritePathDialectQuotingTest 的
-// 私有 txWith 语义相同，多个测试类需要时提为顶层函数）。
+// 私有 txWith 语义相同，多个测试类需要时提为顶层函数）。Tx 经 ref 绑定 Refine
+// 获取方言（DB 收敛后 Session/Tx 不再直接持有 dialect）。
 func makeTestTx(dialect: Dialect): (CaptureConnection, Tx) {
     let conn = CaptureConnection()
-    let tx = Tx(conn, 0, dialect)
+    let rf = Refine(MockDatasource(), dialect, 0)
+    let tx = Tx(conn, rf, 0)
     tx.begin()
     (conn, tx)
 }
@@ -735,7 +737,7 @@ public class MacroSaveTest {
     @TestCase
     public func testTxSavePost(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
 
         let p = Post()
@@ -749,7 +751,7 @@ public class MacroSaveTest {
     @TestCase
     public func testTxSaveUser(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
 
         let u = User()
@@ -763,7 +765,7 @@ public class MacroSaveTest {
     @TestCase
     public func testTxUpdatePost(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
 
         let p = Post()
@@ -778,7 +780,7 @@ public class MacroSaveTest {
     @TestCase
     public func testTxDeletePost(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
 
         let p = Post()
@@ -833,7 +835,7 @@ public class MacroSaveTest {
     @TestCase
     public func testTxBatchSavePost(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
 
         let p1 = Post()
@@ -851,7 +853,7 @@ public class MacroSaveTest {
     @TestCase
     public func testTxBatchSaveUser(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
 
         let u1 = User()
@@ -909,7 +911,7 @@ public class MacroSaveTest {
         let conn = CaptureConnection()
         conn.stmt.mockLastInsertId = 100
         conn.stmt.mockRowCount = 2
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
 
         let p1 = Post(); p1.title = "A"; p1.content = "B"
@@ -924,7 +926,7 @@ public class MacroSaveTest {
     @TestCase
     public func testTxBatchSaveEmptyEntities(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
 
         tx.batchSave(ArrayList<Post>().toArray())
@@ -1042,7 +1044,7 @@ public class MacroSaveTest {
     @TestCase
     public func testTxSaveManualIdPostIncludesId(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
 
         let p = ManualIdPost()
@@ -1106,7 +1108,7 @@ public class MacroSaveTest {
     @TestCase
     public func testTxUpdateManualIdPost(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
 
         let p = ManualIdPost()
@@ -1121,7 +1123,7 @@ public class MacroSaveTest {
     @TestCase
     public func testTxDeleteManualIdPost(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
 
         let p = ManualIdPost()
@@ -1135,7 +1137,7 @@ public class MacroSaveTest {
     @TestCase
     public func testTxSaveOrderTagCompoundPk(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
 
         let ot = OrderTag()
@@ -1150,7 +1152,7 @@ public class MacroSaveTest {
     @TestCase
     public func testTxUpdateOrderTagCompoundPk(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
 
         let ot = OrderTag()
@@ -1164,7 +1166,7 @@ public class MacroSaveTest {
     @TestCase
     public func testTxDeleteOrderTagCompoundPk(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
 
         let ot = OrderTag()
@@ -1256,7 +1258,8 @@ public class MacroSaveTest {
     @TestCase
     public func testTxUpsertDBPathMySQL(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn, 1, MySQLDialect())
+        let rf = Refine(MockDatasource(), MySQLDialect(), 1)
+        let tx = Tx(conn, rf, 1)
         tx.begin()
 
         let p = Post()
@@ -1272,7 +1275,8 @@ public class MacroSaveTest {
     @TestCase
     public func testTxUpsertDBPathPostgres(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn, 0, PostgreSQLDialect())
+        let rf = Refine(MockDatasource(), PostgreSQLDialect(), 0)
+        let tx = Tx(conn, rf, 0)
         tx.begin()
 
         let p = Post()
@@ -1289,7 +1293,8 @@ public class MacroSaveTest {
     public func testTxSaveDBPathPostgresReturning(): Unit {
         let conn = CaptureConnection()
         conn.stmt.queryResult = RowQueryResult(7)
-        let tx = Tx(conn, 0, PostgreSQLDialect())
+        let rf = Refine(MockDatasource(), PostgreSQLDialect(), 0)
+        let tx = Tx(conn, rf, 0)
         tx.begin()
 
         let p = PgPost()
@@ -1305,7 +1310,8 @@ public class MacroSaveTest {
     public func testTxUpsertDBPathSQLite(): Unit {
         // 本项目无真实 SQLite 驱动，此处用 CaptureConnection（mock）仅验证宏层生成的 upsert SQL
         let conn = CaptureConnection()
-        let tx = Tx(conn, 0, SQLiteDialect())
+        let rf = Refine(MockDatasource(), SQLiteDialect(), 0)
+        let tx = Tx(conn, rf, 0)
         tx.begin()
 
         let p = Post()
@@ -1324,7 +1330,8 @@ public class MacroSaveTest {
         // lastInsertId 回填路径（SQLite hasReturningSupport=false，走 execute/lastInsertId）
         let conn = CaptureConnection()
         conn.stmt.mockLastInsertId = 7
-        let tx = Tx(conn, 0, SQLiteDialect())
+        let rf = Refine(MockDatasource(), SQLiteDialect(), 0)
+        let tx = Tx(conn, rf, 0)
         tx.begin()
 
         let p = Post()
@@ -1341,7 +1348,7 @@ public class MacroSaveTest {
     @TestCase
     public func testTxBatchUpdatePost(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
 
         let p1 = Post()
@@ -1360,7 +1367,7 @@ public class MacroSaveTest {
     @TestCase
     public func testTxBatchUpdateEmpty(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
 
         tx.batchUpdate(ArrayList<Post>().toArray())
@@ -1390,7 +1397,7 @@ public class MacroSaveTest {
     @TestCase
     public func testTxBatchUpdateCompoundPk(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
 
         let ot1 = OrderItemTag()
@@ -1409,7 +1416,7 @@ public class MacroSaveTest {
     @TestCase
     public func testTxBatchUpdateNoUpdatableColumns(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
 
         let ot1 = OrderTag()
@@ -1530,7 +1537,7 @@ public class MacroExistingTest {
     @TestCase
     public func testIncludeRefToBatchAssembly(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         // 主查询：postWithRel 自身列（user_id=99）
         let mainCols: Array<ColumnInfo> = [
@@ -1708,7 +1715,7 @@ public class SoftDeleteTest {
     @TestCase
     public func testTxDeleteIsUpdateForSoftDelete(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let u = SoftUser()
         u.id = 1
@@ -1722,7 +1729,7 @@ public class SoftDeleteTest {
     @TestCase
     public func testTxPhysicalDeleteIsDeleteForSoftDelete(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let u = SoftUser()
         u.id = 1
@@ -1735,7 +1742,7 @@ public class SoftDeleteTest {
     @TestCase
     public func testTxDeleteIsDeleteForHardDeleted(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let u = HardUser()
         u.id = 1
@@ -1865,7 +1872,7 @@ public class VersionedEntityTest {
     @TestCase
     public func testTxSaveVersionedPostInjectsAuditAndVersion(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let before = DateTime.now()
 
@@ -1887,7 +1894,7 @@ public class VersionedEntityTest {
     public func testTxUpdateVersionedPostSuccess(): Unit {
         let conn = CaptureConnection()
         conn.stmt.mockRowCount = 1
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
 
         let p = VersionedPost()
@@ -1904,7 +1911,7 @@ public class VersionedEntityTest {
     public func testTxUpdateVersionedPostConflictNotFound(): Unit {
         let conn = CaptureConnection()
         conn.stmt.mockRowCount = 0
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
 
         let p = VersionedPost()
@@ -1928,7 +1935,7 @@ public class VersionedEntityTest {
         let conn = CaptureConnection()
         conn.stmt.mockRowCount = 0
         conn.stmt.queryResult = RowQueryResult(5)
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
 
         let p = VersionedPost()
@@ -1947,7 +1954,7 @@ public class VersionedEntityTest {
     @TestCase
     public func testTxSaveVersionedEventClientPkInjectsVersion(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
 
         let e = VersionedEvent()
@@ -1963,7 +1970,7 @@ public class VersionedEntityTest {
     public func testTxUpdateVersionedEventConflictStringPk(): Unit {
         let conn = CaptureConnection()
         conn.stmt.mockRowCount = 0
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
 
         let e = VersionedEvent()
@@ -1983,7 +1990,7 @@ public class VersionedEntityTest {
     public func testTxUpdateVersionedPostWritesVersionInSet(): Unit {
         let conn = CaptureConnection()
         conn.stmt.mockRowCount = 1
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
 
         let p = VersionedPost()
@@ -2000,7 +2007,7 @@ public class VersionedEntityTest {
     @TestCase
     public func testTxSaveVersionedOrderTagInjectsVersion(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
 
         let ot = VersionedOrderTag()
@@ -2017,7 +2024,7 @@ public class VersionedEntityTest {
     public func testTxUpdateVersionedOrderTagCompoundPk(): Unit {
         let conn = CaptureConnection()
         conn.stmt.mockRowCount = 1
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
 
         let ot = VersionedOrderTag()
@@ -2036,7 +2043,7 @@ public class VersionedEntityTest {
         let conn = CaptureConnection()
         conn.stmt.mockRowCount = 0
         conn.stmt.queryResult = RowQueryResult(3)
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
 
         let ot = VersionedOrderTag()
@@ -2058,7 +2065,7 @@ public class VersionedEntityTest {
     public func testTxUpdateVersionedPostTwiceNoFalseConflict(): Unit {
         let conn = CaptureConnection()
         conn.stmt.mockRowCount = 1
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
 
         let p = VersionedPost()
@@ -2086,7 +2093,7 @@ public class VersionedEntityTest {
     public func testTxUpdateVersionedPostNoOpStillBumpsVersion(): Unit {
         let conn = CaptureConnection()
         conn.stmt.mockRowCount = 1
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
 
         let p = VersionedPost()
@@ -2104,7 +2111,7 @@ public class VersionedEntityTest {
     @TestCase
     public func testTxBatchSaveVersionedPostInjectsAuditAndVersion(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
 
         let p1 = VersionedPost()
@@ -2122,7 +2129,7 @@ public class VersionedEntityTest {
     @TestCase
     public func testTxBatchSaveVersionedEventClientPkInjectsVersion(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
 
         let e1 = VersionedEvent()
@@ -2141,7 +2148,7 @@ public class VersionedEntityTest {
     @TestCase
     public func testTxBatchSaveVersionedOrderTagInjectsVersion(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
 
         let ot1 = VersionedOrderTag()
@@ -2163,7 +2170,7 @@ public class VersionedEntityTest {
     public func testTxBatchUpdateVersionedPostVersionCaseAndRefresh(): Unit {
         let conn = CaptureConnection()
         conn.stmt.mockRowCount = 2
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
 
         let p1 = VersionedPost()
@@ -2189,7 +2196,7 @@ public class VersionedEntityTest {
     public func testTxBatchUpdateVersionedPostConflict(): Unit {
         let conn = CaptureConnection()
         conn.stmt.mockRowCount = 1
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
 
         let p1 = VersionedPost()
@@ -2217,7 +2224,7 @@ public class VersionedEntityTest {
     public func testTxBatchUpdateVersionedOrderTagVersionCase(): Unit {
         let conn = CaptureConnection()
         conn.stmt.mockRowCount = 2
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
 
         let ot1 = VersionedOrderTag()
@@ -2419,7 +2426,7 @@ public class CascadeTraversalTest {
     @TestCase
     public func testCascadePreSaveRefToBackfillsFk(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let p = PostWithRel()
         let u = User()
@@ -2433,7 +2440,7 @@ public class CascadeTraversalTest {
     @TestCase
     public func testCascadePreSaveRefToZeroIdClearsFk(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let p = PostWithRel()
         let u = User()
@@ -2445,7 +2452,7 @@ public class CascadeTraversalTest {
     @TestCase
     public func testCascadePreSaveRefToNoneClearsFk(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let p = PostWithRel()
         p.user_id = 7
@@ -2457,7 +2464,7 @@ public class CascadeTraversalTest {
     @TestCase
     public func testCascadePreSaveSkipsWhenNotModified(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let p = PostWithRel()
         let u = User()
@@ -2470,7 +2477,7 @@ public class CascadeTraversalTest {
     @TestCase
     public func testCascadePreSaveStringFkBackfills(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let c = UuidRefComment()
         let u = UuidPost()
@@ -2483,7 +2490,7 @@ public class CascadeTraversalTest {
     @TestCase
     public func testCascadePreSaveStringFkClears(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let c = UuidRefComment()
         c.post_id = "old"
@@ -2495,7 +2502,7 @@ public class CascadeTraversalTest {
     @TestCase
     public func testCascadePreSaveStringFkNoneClears(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let c = UuidRefComment()
         c.post_id = "old"
@@ -2507,7 +2514,7 @@ public class CascadeTraversalTest {
     @TestCase
     public func testCascadePostSaveHasManyNewChildSaves(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let p = PostWithRel()
         p.id = 5
@@ -2523,7 +2530,7 @@ public class CascadeTraversalTest {
     @TestCase
     public func testCascadePostSaveHasManyExistingChildUpdates(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let p = PostWithRel()
         p.id = 5
@@ -2541,7 +2548,7 @@ public class CascadeTraversalTest {
     @TestCase
     public func testCascadePostSaveHasManyNotModifiedSkips(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let p = PostWithRel()
         p.id = 5
@@ -2556,7 +2563,7 @@ public class CascadeTraversalTest {
     @TestCase
     public func testCascadePostSaveHasOneSavesChild(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let u = UserWithRel()
         u.id = 3
@@ -2571,7 +2578,7 @@ public class CascadeTraversalTest {
     @TestCase
     public func testCascadePostSaveRefManyRebuilds(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let p = PostWithRel()
         p.id = 5
@@ -2593,7 +2600,7 @@ public class CascadeTraversalTest {
     @TestCase
     public func testCascadePostSaveRefManyNotModifiedSkips(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let p = PostWithRel()
         p.id = 5
@@ -2607,7 +2614,7 @@ public class CascadeTraversalTest {
     @TestCase
     public func testCascadePostSaveVisitedSkipsDuplicates(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let p = PostWithRel()
         p.id = 5
@@ -2626,7 +2633,7 @@ public class CascadeTraversalTest {
     @TestCase
     public func testCascadePostSaveSkipsVisitedChild(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let p = PostWithRel()
         p.id = 5
@@ -2645,7 +2652,7 @@ public class CascadeTraversalTest {
     @TestCase
     public func testCascadePostSaveHasOneSkipsVisitedChild(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let u = UserWithRel()
         u.id = 3
@@ -2662,7 +2669,7 @@ public class CascadeTraversalTest {
     @TestCase
     public func testCascadePreSaveRefToResetsMarker(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let p = PostWithRel()
         let u = User()
@@ -2677,7 +2684,7 @@ public class CascadeTraversalTest {
     @TestCase
     public func testCascadePostSaveHasManyResetsMarker(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let p = PostWithRel()
         p.id = 5
@@ -2694,7 +2701,7 @@ public class CascadeTraversalTest {
     @TestCase
     public func testCascadePostSaveHasOneResetsMarker(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let u = UserWithRel()
         u.id = 3
@@ -2710,7 +2717,7 @@ public class CascadeTraversalTest {
     @TestCase
     public func testCascadePostSaveRefManyResetsMarker(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let p = PostWithRel()
         p.id = 5
@@ -2728,7 +2735,7 @@ public class CascadeTraversalTest {
     @TestCase
     public func testCascadeCycleSaveNoDuplicateInsert(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let a = CategoryWithRel()
         a.id = 1
@@ -2751,7 +2758,7 @@ public class CascadeTraversalTest {
     @TestCase
     public func testCascadeDiamondSaveNoDuplicateSharedChild(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let p = CategoryWithRel()
         p.id = 1
@@ -2782,7 +2789,7 @@ public class CascadeTraversalTest {
     @TestCase
     public func testCascadeDeleteChildrenThenJunction(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let p = PostWithRel()
         p.id = 5
@@ -2800,7 +2807,7 @@ public class CascadeTraversalTest {
     @TestCase
     public func testCascadeDeleteHasOneViaQuery(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let u = UserWithRel()
         u.id = 3
@@ -2817,7 +2824,7 @@ public class CascadeTraversalTest {
     @TestCase
     public func testCascadeDeleteRecursiveGrandchildren(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let cols: Array<ColumnInfo> = [MapperMockColumnInfo("id", false), MapperMockColumnInfo("name", false), MapperMockColumnInfo("parent_id", false)]
         conn.stmt.queryResultQueue.add(MapperMockQueryResult(cols, [Array<Any>(3, {i => if (i == 0) { 9 } else if (i == 1) { "c" } else { 5 }})]))
@@ -2839,7 +2846,7 @@ public class CascadeTraversalTest {
     @TestCase
     public func testCascadeDeleteDbCycleTerminates(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let cols: Array<ColumnInfo> = [MapperMockColumnInfo("id", false), MapperMockColumnInfo("name", false), MapperMockColumnInfo("parent_id", false)]
         // DB 常驻环：A(id=5) → B(id=9) → A'(id=5) → ... 每次 loadX 都新建实体实例，
@@ -2867,7 +2874,7 @@ public class CascadeTraversalTest {
     @TestCase
     public func testCascadeDeleteVisitedSkipsAlreadySeen(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let p = PostWithRel()
         p.id = 5
@@ -2880,7 +2887,7 @@ public class CascadeTraversalTest {
     @TestCase
     public func testCascadeDeleteRefToNotProcessed(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let c = UuidRefComment()
         c.id = 3
@@ -2896,7 +2903,7 @@ public class CascadeTraversalTest {
     @TestCase
     public func testCascadeDeleteCompositePkKeyFormat(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let item = OrderLineItem()
         item.tenant_id = 7
@@ -2911,7 +2918,7 @@ public class CascadeTraversalTest {
     @TestCase
     public func testCascadeDeleteCompositePkSkipsAlreadySeen(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let item = OrderLineItem()
         item.tenant_id = 7
@@ -2926,7 +2933,7 @@ public class CascadeTraversalTest {
     @TestCase
     public func testCascadeDeleteCompositePkNoDuplicateDelete(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         // 同一复合主键实体经两次 deleteCascade 调用（模拟环/菱形里被两条路径命中），
         // 第二次必须被 visited 键守卫短路，DELETE 只执行一次
@@ -2946,7 +2953,7 @@ public class CascadeTraversalTest {
     @TestCase
     public func testCascadeDeleteCompositePkChildrenViaParent(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let order = OrderWithRel()
         order.id = 5
@@ -3026,7 +3033,7 @@ public class RefManyRelationApiTest {
     @TestCase
     public func testAppendTagsSingle(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let p = PostWithRel()
         p.id = 42
@@ -3044,7 +3051,7 @@ public class RefManyRelationApiTest {
     @TestCase
     public func testAppendTagsArray(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let p = PostWithRel()
         p.id = 42
@@ -3066,7 +3073,7 @@ public class RefManyRelationApiTest {
     @TestCase
     public func testReplaceTags(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let p = PostWithRel()
         p.id = 42
@@ -3090,7 +3097,7 @@ public class RefManyRelationApiTest {
     @TestCase
     public func testDeleteTagsSingle(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let p = PostWithRel()
         p.id = 42
@@ -3106,7 +3113,7 @@ public class RefManyRelationApiTest {
     @TestCase
     public func testDeleteTagsArray(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let p = PostWithRel()
         p.id = 42
@@ -3128,7 +3135,7 @@ public class RefManyRelationApiTest {
     @TestCase
     public func testClearTags(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let p = PostWithRel()
         p.id = 42
@@ -3141,7 +3148,7 @@ public class RefManyRelationApiTest {
     @TestCase
     public func testCountTags(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let p = PostWithRel()
         p.id = 42
@@ -3157,7 +3164,7 @@ public class RefManyRelationApiTest {
     @TestCase
     public func testAppendTagsUnsavedThrows(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let p = PostWithRel()
         p.id = 42
@@ -3173,7 +3180,7 @@ public class RefManyRelationApiTest {
     @TestCase
     public func testDeleteTagsUnsavedThrows(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let p = PostWithRel()
         p.id = 42
@@ -3201,7 +3208,7 @@ public class RefManyTableOverrideTest {
     @TestCase
     public func testAppendTagsUsesJunctionColumnNames(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let p = CustomTagPost()
         p.id = 42
@@ -3214,7 +3221,7 @@ public class RefManyTableOverrideTest {
     @TestCase
     public func testDeleteTagsUsesJunctionColumnNames(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let p = CustomTagPost()
         p.id = 42
@@ -3227,7 +3234,7 @@ public class RefManyTableOverrideTest {
     @TestCase
     public func testLoadTagsUsesJunctionColumnNames(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let p = CustomTagPost()
         p.id = 42
@@ -3297,7 +3304,7 @@ public class RefManyStringPkTargetTest {
     @TestCase
     public func testAppendUnsavedStringPkTargetThrows(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let p = UuidTagPost()
         p.id = 42
@@ -3313,7 +3320,7 @@ public class RefManyStringPkTargetTest {
     @TestCase
     public func testDeleteUnsavedStringPkTargetThrows(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let p = UuidTagPost()
         p.id = 42
@@ -3332,7 +3339,7 @@ public class RefManyStringPkTargetTest {
         // String-pk 目标会把 String id 绑进 INTEGER 列 → 真实 DB 类型错误。
         // 修复后执行前抛明确 RefineException（而非 DB 层报错），Int64-pk 目标不受影响。
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let p = UuidTagPost()
         p.id = 42
@@ -3352,7 +3359,7 @@ public class RefManyStringPkTargetTest {
     @TestCase
     public func testDeleteSavedStringPkTargetThrowsUnimplemented(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let p = UuidTagPost()
         p.id = 42
@@ -3370,7 +3377,7 @@ public class RefManyStringPkTargetTest {
     @TestCase
     public func testReplaceStringPkTargetThrowsUnimplemented(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let p = UuidTagPost()
         p.id = 42
@@ -3414,7 +3421,7 @@ public class ByteBlobFieldTest {
     @TestCase
     public func testSaveBindsArrayUInt8(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let e = ByteBlobEntity()
         e.name = "blob"
@@ -3471,7 +3478,7 @@ public class TxCascadeTest {
     public func testTxSaveCascadesHasManyBackfillsFk(): Unit {
         let conn = CaptureConnection()
         conn.stmt.mockLastInsertId = 42
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let p = PostWithRel()
         let c = Comment()
@@ -3492,7 +3499,7 @@ public class TxCascadeTest {
     public func testTxSaveCascadesHasOneBackfillsFk(): Unit {
         let conn = CaptureConnection()
         conn.stmt.mockLastInsertId = 7
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let u = UserWithRel()
         let pr = ProfileWithRel()
@@ -3510,7 +3517,7 @@ public class TxCascadeTest {
     public func testTxUpdateCascadesChildInsertAndUpdate(): Unit {
         let conn = CaptureConnection()
         conn.stmt.mockRowCount = 1
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let p = PostWithRel()
         p.id = 5
@@ -3535,7 +3542,7 @@ public class TxCascadeTest {
     @TestCase
     public func testTxDeleteCascadesChildrenThenParent(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let p = PostWithRel()
         p.id = 5
@@ -3554,7 +3561,7 @@ public class TxCascadeTest {
     @TestCase
     public func testTxDeleteSoftDeleteCascadesChildren(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let p = SoftDeleteParent()
         p.id = 1
@@ -3570,7 +3577,7 @@ public class TxCascadeTest {
     @TestCase
     public func testTxSaveCycleNoDuplicateInsertSharedVisited(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let a = CategoryWithRel()
         let b = CategoryWithRel()
@@ -3589,7 +3596,7 @@ public class TxCascadeTest {
     @TestCase
     public func testTxSaveRefToBackfillsFkBeforeInsert(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let p = PostWithRel()
         let u = User()
@@ -3607,7 +3614,7 @@ public class TxCascadeTest {
         conn.stmt.mockLastInsertIdQueue.add(1)   // p.id
         conn.stmt.mockLastInsertIdQueue.add(2)   // u.id
         conn.stmt.mockRowCount = 1
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let p = PostWithRel()
         let u = User()
@@ -3635,7 +3642,7 @@ public class TxCascadeTest {
     public func testTxUpdateNoCascadeWhenRelsNotModified(): Unit {
         let conn = CaptureConnection()
         conn.stmt.mockRowCount = 1
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let p = PostWithRel()
         p.id = 5
@@ -3649,7 +3656,7 @@ public class TxCascadeTest {
     public func testTxSaveResetsMarkersThenUpdateDoesNotReplay(): Unit {
         let conn = CaptureConnection()
         conn.stmt.mockLastInsertId = 42
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let p = PostWithRel()
         let c = Comment()
@@ -3673,7 +3680,7 @@ public class TxCascadeTest {
     public func testTxSaveResetsMarkersThenUpdateReplayAfterReassign(): Unit {
         let conn = CaptureConnection()
         conn.stmt.mockLastInsertId = 42
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let p = PostWithRel()
         let c = Comment()
@@ -3703,7 +3710,7 @@ public class TxCascadeTest {
     public func testTxSaveRefManyRebuildsJunction(): Unit {
         let conn = CaptureConnection()
         conn.stmt.mockLastInsertId = 42
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let p = PostWithRel()
         let t1 = Tag()
@@ -3752,7 +3759,7 @@ public class CascadeBoundaryTest {
         // 仅加载未修改 → update 只发父 UPDATE，无 fk 改动 / 无子落库 / 无中间表重建
         let conn = CaptureConnection()
         conn.stmt.mockRowCount = 1
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         tx.update(e)
         @Expect(conn.stmt.capturedSqlHistory.size, 1)
@@ -3765,7 +3772,7 @@ public class CascadeBoundaryTest {
         // 两个不同实例的新子对象（都 id=0）不得被 visited 按 (type,id) 误判为同一对象
         let conn = CaptureConnection()
         conn.stmt.mockLastInsertId = 42
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let p = PostWithRel()
         let c1 = Comment()
@@ -3793,7 +3800,7 @@ public class CascadeBoundaryTest {
         // 标记 true 且 has_many 列表为空 → save 无子对象要存（只父 INSERT）
         let conn = CaptureConnection()
         conn.stmt.mockLastInsertId = 42
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let p = PostWithRel()
         p.comments = ArrayList<Comment>()
@@ -3807,7 +3814,7 @@ public class CascadeBoundaryTest {
         // 标记 true 且 has_many 列表为空 → update 不删现有（不自动清库）
         let conn = CaptureConnection()
         conn.stmt.mockRowCount = 1
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let p = PostWithRel()
         p.id = 5
@@ -3822,7 +3829,7 @@ public class CascadeBoundaryTest {
         // 标记 true 且 ref_many 列表为空 → save 清空中间表（DELETE 旧关联，无 INSERT）
         let conn = CaptureConnection()
         conn.stmt.mockLastInsertId = 42
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let p = PostWithRel()
         p.tags = ArrayList<Tag>()
@@ -3838,7 +3845,7 @@ public class CascadeBoundaryTest {
         // 标记 true 且 ref_many 列表为空 → update 清空中间表（重建为空 = 清旧关联）
         let conn = CaptureConnection()
         conn.stmt.mockRowCount = 1
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let p = PostWithRel()
         p.id = 5
@@ -3857,7 +3864,7 @@ public class CascadeBoundaryTest {
         conn.stmt.mockLastInsertIdQueue.add(10)
         conn.stmt.mockLastInsertIdQueue.add(11)
         conn.stmt.mockLastInsertIdQueue.add(12)
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let root = CategoryWithRel()
         root.name = "root"
@@ -3890,7 +3897,7 @@ public class CascadeBoundaryTest {
         // 级联 update 子对象带乐观锁：子 UPDATE 含 version 校验并递增
         let conn = CaptureConnection()
         conn.stmt.mockRowCount = 1
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let order = VersionedOrder()
         order.id = 1
@@ -3918,7 +3925,7 @@ public class CascadeBoundaryTest {
         let conn = CaptureConnection()
         conn.stmt.mockRowCountQueue.add(1)
         conn.stmt.mockRowCountQueue.add(0)
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let order = VersionedOrder()
         order.id = 1
@@ -3949,7 +3956,7 @@ public class CascadeBoundaryTest {
         let conn = CaptureConnection()
         conn.stmt.mockLastInsertIdQueue.add(1)
         conn.stmt.mockLastInsertIdQueue.add(2)
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let order = VersionedOrder()
         order.name = "o"
@@ -4009,7 +4016,7 @@ public class TxPhysicalDeleteCascadeTest {
     @TestCase
     public func testTxPhysicalDeleteCascadesChildren(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let p = SoftDeleteParent()
         p.id = 1
@@ -4414,7 +4421,7 @@ public class C2IncludePreloadTest {
     public func testRefToIncludeDefaultAllColumns(): Unit {
         // Task 3 批量协议：主查询 + 批量查询两次，String-pk 目标按 fk 回填全列
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let mainCols: Array<ColumnInfo> = [
             MapperMockColumnInfo("id", false),
@@ -4449,7 +4456,7 @@ public class C2IncludePreloadTest {
         // Task 3 批量协议：include(rel, fields) 字段子集 → 批量查询只选子集列，
         // 缺列字段保持默认值（content 缺列 → ""），不缺行不抛异常
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let mainCols: Array<ColumnInfo> = [
             MapperMockColumnInfo("id", false),
@@ -4485,7 +4492,7 @@ public class C2IncludePreloadTest {
     public func testRefToIncludeNullTargetKeepsRow(): Unit {
         // Task 3 批量协议：fk 指向已删除目标 → 批量查询空结果，主实体保留、目标不挂载
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let mainCols: Array<ColumnInfo> = [
             MapperMockColumnInfo("id", false),
@@ -4517,7 +4524,7 @@ public class C2IncludePreloadTest {
         // Task 4 批量协议：主查询无 JOIN 列；批量查询按 fk（post_id）IN 主实体 id 取回，
         // SELECT 强制 fk 列 + 子集列并集，RowMapper 对未选字段保持宽容（不抛异常）。
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let mainCols: Array<ColumnInfo> = [
             MapperMockColumnInfo("id", false),
@@ -4559,7 +4566,7 @@ public class C2IncludePreloadTest {
     @TestCase
     public func testRefManyIncludeSubsetFieldsNoThrow(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let mainCols: Array<ColumnInfo> = [
             MapperMockColumnInfo("id", false),
@@ -4642,7 +4649,7 @@ public class RelationMutationTest {
     @TestCase
     public func testAddCommentsNewChildInserts(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let post = PostWithRel()
         post.id = 1
@@ -4656,7 +4663,7 @@ public class RelationMutationTest {
     @TestCase
     public func testAddCommentsPersistedChildUpdates(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let post = PostWithRel()
         post.id = 1
@@ -4671,7 +4678,7 @@ public class RelationMutationTest {
     @TestCase
     public func testSetProfileNewChildInserts(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let user = UserWithRel()
         user.id = 1
@@ -4687,7 +4694,7 @@ public class RelationMutationTest {
     public func testSetProfileClearsOldThenUpdates(): Unit {
         let conn = CaptureConnection()
         conn.stmt.queryResult = profileResult(5, "old", 1)
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let user = UserWithRel()
         user.id = 1
@@ -4706,7 +4713,7 @@ public class RelationMutationTest {
     public func testSetProfileSameChildNoDelete(): Unit {
         let conn = CaptureConnection()
         conn.stmt.queryResult = profileResult(5, "old", 1)
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let user = UserWithRel()
         user.id = 1
@@ -4726,7 +4733,7 @@ public class RelationMutationTest {
     public func testSetProfileNewChildWithOldClears(): Unit {
         let conn = CaptureConnection()
         conn.stmt.queryResult = profileResult(5, "old", 1)
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let user = UserWithRel()
         user.id = 1
@@ -4742,7 +4749,7 @@ public class RelationMutationTest {
     @TestCase
     public func testAddCommentsStringPkNewChildInserts(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let post = UuidPostWithRel()
         post.id = 1
@@ -4757,7 +4764,7 @@ public class RelationMutationTest {
     @TestCase
     public func testAddCommentsStringPkPersistedChildUpdates(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let post = UuidPostWithRel()
         post.id = 1
@@ -4836,7 +4843,7 @@ public class DocSyncSyntaxTest {
     @TestCase
     public func testDocSyntaxHasManyMethodsWork(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let post = DocRelPost()
         post.id = 1
@@ -4853,7 +4860,7 @@ public class DocSyncSyntaxTest {
     @TestCase
     public func testDocSyntaxIncludeTwoArg(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let q = DocRelBook.query()
             .select([Column("id")])

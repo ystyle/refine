@@ -184,19 +184,26 @@ class MockDriver <: Driver {
 
 @Test
 public class DbTest {
+    // DB 收敛为纯连接层：裸 Session 无方言，getDialect() 抛明确错误
+    //（DB 是纯连接，ORM 渲染需经 Refine 绑定）。
     @TestCase
     public func testSessionGetDialect(): Unit {
         let conn = MockConnection()
         let session = Session(conn)
-        let dialect = session.getDialect()
-        @Expect(dialect.name(), "sqlite")
+        try {
+            session.getDialect()
+            @Fail("expected RefineException")
+        } catch (e: RefineException) {
+            @Expect(e.message, "bare DB session has no dialect, use Refine for ORM queries")
+        }
     }
 
     @TestCase
     public func testSessionConstruct(): Unit {
         let conn = MockConnection()
         let session = Session(conn)
-        @Expect(session.getDialect().name(), "sqlite")
+        @Expect(session.getRef().isNone(), true)
+        @Expect(session.getParamOffset(), 0)
     }
 
     @TestCase
@@ -634,14 +641,15 @@ public class DbTest {
         let ds = MockDatasource()
         let db = DB(ds)
         let session = db.session()
-        @Expect(session.getDialect().name(), "sqlite")
+        @Expect(session.getParamOffset(), 0)
+        session.close()
     }
 
     @TestCase
-    public func testDBOpenSQLite(): Unit {
+    public func testDBGetParamOffsetDefaultIsZero(): Unit {
         let ds = MockDatasource()
         let db = DB(ds)
-        @Expect(db.getDialect().name(), "sqlite")
+        @Expect(db.getParamOffset(), 0)
     }
 
     @TestCase
@@ -812,91 +820,124 @@ public class DbTest {
     }
 
     @TestCase
-    public func testDBWithMySQLDialect(): Unit {
-        let db = DB(MockDatasource(), MySQLDialect())
-        @Expect(db.getDialect().name(), "mysql")
-    }
-
-    @TestCase
-    public func testDBWithPostgreSQLDialect(): Unit {
-        let db = DB(MockDatasource(), PostgreSQLDialect())
-        @Expect(db.getDialect().name(), "postgresql")
-    }
-
-    @TestCase
-    public func testDBDefaultDialectIsSQLite(): Unit {
+    public func testDBSessionBareGetDialectThrows(): Unit {
         let db = DB(MockDatasource())
-        @Expect(db.getDialect().name(), "sqlite")
+        let s = db.session()
+        try {
+            s.getDialect()
+            @Fail("expected RefineException")
+        } catch (e: RefineException) {
+            @Expect(e.message, "bare DB session has no dialect, use Refine for ORM queries")
+        }
+        s.close()
+    }
+
+    // DB 纯连接层事务：action 内 Tx 同样无方言，getDialect() 抛错。
+    @TestCase
+    public func testDBTransactionBareTxGetDialectThrows(): Unit {
+        let db = DB(MockDatasource())
+        try {
+            db.transaction({ tx => tx.getDialect() })
+            @Fail("expected RefineException")
+        } catch (e: RefineException) {
+            @Expect(e.message, "bare DB session has no dialect, use Refine for ORM queries")
+        }
     }
 
     @TestCase
-    public func testDBFullInitWithParamOffsetAndDialect(): Unit {
-        let db = DB(MockDatasource(), 1, MySQLDialect())
-        @Expect(db.getDialect().name(), "mysql")
+    public func testDBFullInitWithParamOffset(): Unit {
+        let db = DB(MockDatasource(), 1)
+        @Expect(db.getParamOffset(), 1)
         let s = db.session()
         @Expect(s.getParamOffset(), 1)
         s.close()
     }
 
+    // 裸 Session（DB 路径）ref 为 None——DB 是纯连接，不绑定 ORM 实例。
     @TestCase
-    public func testDBSessionCarriesDialect(): Unit {
-        let db = DB(MockDatasource(), MySQLDialect())
+    public func testDBSessionIsBare(): Unit {
+        let db = DB(MockDatasource())
         let s = db.session()
-        @Expect(s.getDialect().name(), "mysql")
+        @Expect(s.getRef().isNone(), true)
         s.close()
     }
 
+    // 裸 Tx（DB 路径）ref 为 None——DB.transaction 无 ref 注入，AfterFind 等
+    // hook 相关逻辑不触发（ORM 语义归属 Refine.transaction）。
     @TestCase
-    public func testDBTransactionCarriesDialect(): Unit {
-        let db = DB(MockDatasource(), PostgreSQLDialect())
-        let name = db.transaction({ tx => tx.getDialect().name() })
-        @Expect(name, "postgresql")
+    public func testDBTransactionIsBare(): Unit {
+        let db = DB(MockDatasource())
+        let refSeen = RFlag()
+        db.transaction({ tx =>
+            match (tx.getRef()) {
+                case Some(_) => refSeen.v = true
+                case None => ()
+            }
+            42
+        })
+        @Expect(refSeen.v, false)
     }
 
+    // DB.migrator() 已移除，迁移器选择归属 ORM 层：Refine.migrator() 按方言返回对应迁移器。
     @TestCase
-    public func testDBMigratorWithMySQLDialect(): Unit {
-        let db = DB(MockDatasource(), MySQLDialect())
-        let m = db.migrator()
+    public func testRefineMigratorWithMySQLDialect(): Unit {
+        let rf = Refine(MockDatasource(), MySQLDialect(), 0)
+        let m = rf.migrator()
         let isMySql = match (m) { case _: MySQLMigrator => true; case _ => false }
         @Expect(isMySql, true)
+        rf.close()
     }
 
     @TestCase
-    public func testDBMigratorWithPostgreSQLDialect(): Unit {
-        let db = DB(MockDatasource(), PostgreSQLDialect())
-        let m = db.migrator()
+    public func testRefineMigratorWithPostgreSQLDialect(): Unit {
+        let rf = Refine(MockDatasource(), PostgreSQLDialect(), 0)
+        let m = rf.migrator()
         let isPg = match (m) { case _: PostgreSQLMigrator => true; case _ => false }
         @Expect(isPg, true)
+        rf.close()
     }
 
     @TestCase
-    public func testDBMigratorDefaultIsSQLite(): Unit {
-        let db = DB(MockDatasource())
-        let m = db.migrator()
+    public func testRefineMigratorDefaultIsSQLite(): Unit {
+        let rf = Refine(MockDatasource(), SQLiteDialect(), 0)
+        let m = rf.migrator()
         let isSqlite = match (m) { case _: SQLiteMigrator => true; case _ => false }
         @Expect(isSqlite, true)
+        rf.close()
     }
 
+    // Session 经 Refine 绑定后才携带方言（getDialect 经 ref 传播到 ORM 层）。
     @TestCase
-    public func testSessionWithDialect(): Unit {
-        let s = Session(MockConnection(), 0, MySQLDialect())
+    public func testSessionCarriesRefineDialect(): Unit {
+        let rf = Refine(MockDatasource(), MySQLDialect(), 0)
+        let s = rf.session()
         @Expect(s.getDialect().name(), "mysql")
+        @Expect(s.getRef().isSome(), true)
+        s.close()
+        rf.close()
     }
 
+    // 裸 Tx 的 getDialect() 抛明确错误——DB 路径无 ORM 方言。
     @TestCase
     public func testTxWithDialect(): Unit {
-        let tx = Tx(MockConnection(), 0, PostgreSQLDialect())
+        let tx = Tx(MockConnection())
         tx.begin()
-        @Expect(tx.getDialect().name(), "postgresql")
+        try {
+            tx.getDialect()
+            @Fail("expected RefineException")
+        } catch (e: RefineException) {
+            @Expect(e.message, "bare DB session has no dialect, use Refine for ORM queries")
+        }
     }
 
+    // DB.open 收敛为纯连接：不再 detectDialect，只建 datasource + paramOffset。
     @TestCase
     public func testDBOpenWithMySQLURL(): Unit {
         DriverManager.deregister("mysql")
         DriverManager.register("mysql", MockDriver())
         try {
             let db = DB.open("mysql://localhost:3306/testdb")
-            @Expect(db.getDialect().name(), "mysql")
+            @Expect(db.getParamOffset(), 0)
             db.close()
         } finally {
             DriverManager.deregister("mysql")
@@ -909,13 +950,14 @@ public class DbTest {
         DriverManager.register("postgresql", MockDriver())
         try {
             let db = DB.open("postgresql://localhost:5432/testdb")
-            @Expect(db.getDialect().name(), "postgresql")
+            @Expect(db.getParamOffset(), 0)
             db.close()
         } finally {
             DriverManager.deregister("postgresql")
         }
     }
 
+    // mariadb 驱动为 1-based 参数/结果索引，paramOffset 由连接层（DB）持有。
     @TestCase
     public func testDBOpenWithMariaDBURL(): Unit {
         let realDrv = DriverManager.getDriver("mariadb")
@@ -923,7 +965,7 @@ public class DbTest {
         DriverManager.register("mariadb", MockDriver())
         try {
             let db = DB.open("mariadb://localhost:3306/testdb")
-            @Expect(db.getDialect().name(), "mysql")
+            @Expect(db.getParamOffset(), 1)
             let s = db.session()
             @Expect(s.getParamOffset(), 1)
             s.close()
@@ -936,11 +978,29 @@ public class DbTest {
         }
     }
 
+    // R-M7 行为变化：DB 收敛为纯连接层后，裸 Tx.setIsolation 经 getDialect() 抛
+    // "bare DB session has no dialect"——隔离级别属 ORM 语义，需经
+    // Refine.transaction(level:)。原 DB 路径的 SQLite/MySQL 差异断言迁移到
+    // Refine 层（testTxSetIsolationRefinePathMySQL / refine_test 的
+    // testTransactionIsolationUnsupported）。
     @TestCase
-    public func testTxSetIsolationDBPathMySQL(): Unit {
+    public func testTxSetIsolationBareDBThrowsNoDialect(): Unit {
+        let db = DB(MockDatasource())
+        try {
+            db.transaction({ tx => tx.setIsolation(IsolationLevel.Serializable) })
+            @Fail("expected RefineException")
+        } catch (e: RefineException) {
+            @Expect(e.message, "bare DB session has no dialect, use Refine for ORM queries")
+        }
+    }
+
+    // 隔离级别支持路径（MySQL）：经 Refine.transaction(level:) 设置到底层事务。
+    // 这是 testTxSetIsolationDBPathMySQL 的 ORM 层等价覆盖——DB 不再持有方言。
+    @TestCase
+    public func testTxSetIsolationRefinePathMySQL(): Unit {
         let ds = MockDatasource()
-        let db = DB(ds, MySQLDialect())
-        db.transaction({ tx => tx.setIsolation(IsolationLevel.Serializable) })
+        let rf = Refine(ds, MySQLDialect(), 0)
+        rf.transaction(IsolationLevel.Serializable) { tx: Tx => 42 }
         @Expect(ds.createdConns.size, 1)
         if (ds.createdConns.size > 0) {
             let conn = ds.createdConns.get(0).getOrThrow()
@@ -951,18 +1011,7 @@ public class DbTest {
                 @Expect(txn.isoLevelSet.getOrThrow(), TransactionIsoLevel.Serializable)
             }
         }
-    }
-
-    @TestCase
-    public func testTxSetIsolationDBPathSQLite(): Unit {
-        let db = DB(MockDatasource())
-        try {
-            db.transaction({ tx => tx.setIsolation(IsolationLevel.Serializable) })
-            @Expect(false, true)
-        } catch (e: RefineException) {
-            // M5: 错误信息方言感知（dialect.name() 小写 sqlite），不再硬编码 "SQLite"
-            @Expect(e.message, "sqlite does not support transaction isolation levels")
-        }
+        rf.close()
     }
 
     @TestCase
@@ -970,7 +1019,7 @@ public class DbTest {
         let conn = MockConnection()
         conn.queryColumnInfos = [MockColumnInfo("id"), MockColumnInfo("name")]
         conn.queryRow = true
-        let s = Session(conn, 1, MySQLDialect())
+        let s = Session(conn, 1)
         let seen = ArrayList<HashMap<String, Int64>>()
         s.queryAll("SELECT * FROM t", [],
             { r: QueryResult, cm: HashMap<String, Int64> => seen.add(cm); 0 })
@@ -987,7 +1036,7 @@ public class DbTest {
         let conn = MockConnection()
         conn.queryColumnInfos = [MockColumnInfo("id"), MockColumnInfo("name")]
         conn.queryRow = true
-        let tx = Tx(conn, 1, PostgreSQLDialect())
+        let tx = Tx(conn, 1)
         tx.begin()
         let seen = ArrayList<HashMap<String, Int64>>()
         tx.queryOne("SELECT * FROM t", [],

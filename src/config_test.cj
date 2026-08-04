@@ -141,7 +141,7 @@ public class ConfigTest {
     }
 
     @TestCase
-    public func testConfigToDBWithMySQLDriver(): Unit {
+    public func testConfigToRefineWithMySQLDriver(): Unit {
         DriverManager.deregister("mysql")
         DriverManager.register("mysql", MockDriver())
         try {
@@ -149,19 +149,17 @@ public class ConfigTest {
             cfg.driver = "mysql"
             cfg.dsn = "mysql://localhost:3306/testdb"
             cfg.database = Some("testdb")
-            let db = cfg.toDB()
-            @Expect(db.getDialect().name(), "mysql")
-            let s = db.session()
-            @Expect(s.getParamOffset(), 0)
-            s.close()
-            db.close()
+            let rf = cfg.toRefine()
+            @Expect(rf.getDialect().name(), "mysql")
+            @Expect(rf.getParamOffset(), 0)
+            rf.close()
         } finally {
             DriverManager.deregister("mysql")
         }
     }
 
     @TestCase
-    public func testConfigToDBWithMariaDBDriver(): Unit {
+    public func testConfigToRefineWithMariaDBDriver(): Unit {
         let realDrv = DriverManager.getDriver("mariadb")
         DriverManager.deregister("mariadb")
         DriverManager.register("mariadb", MockDriver())
@@ -169,12 +167,10 @@ public class ConfigTest {
             let cfg = DatabaseConfig()
             cfg.driver = "mariadb"
             cfg.dsn = "mariadb://localhost:3306/testdb"
-            let db = cfg.toDB()
-            @Expect(db.getDialect().name(), "mysql")
-            let s = db.session()
-            @Expect(s.getParamOffset(), 1)
-            s.close()
-            db.close()
+            let rf = cfg.toRefine()
+            @Expect(rf.getDialect().name(), "mysql")
+            @Expect(rf.getParamOffset(), 1)
+            rf.close()
         } finally {
             DriverManager.deregister("mariadb")
             if (let Some(drv) <- realDrv) {

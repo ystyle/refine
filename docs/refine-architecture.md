@@ -2,6 +2,8 @@
 
 > 本设计在 `docs/design.md` 基础上，将 `DB`（连接管理）与 `Refine`（运行时配置）合并为统一的 `Refine` 实例。
 
+> **已落地（2026-08-03 DB 收敛）**：本设计已完整执行——`DB` 收敛为纯连接层（仅 datasource + paramOffset + 连接池，不再持有 dialect/migrator），`Refine` 独占 ORM 职责（持有 DB + dialect + hookRegistry + idGenerator），`session()`/`transaction()` 注入 ref，`DatabaseRegistry` 存 `Refine`，`Query.using(DB)` 移除。详见 `docs/plans/2026-08-03-db-converge.md`。
+
 ---
 
 ## 目标

@@ -41,6 +41,13 @@ private func checkStr(v: Any, expected: String): Bool {
     }
 }
 
+// DB 收敛为纯连接层后，Session/Tx 的 SQL 渲染方言经 ref 绑定 Refine 获取——裸
+// Session/Tx 不再持有方言（getDialect() 抛 RefineException）。测试助手：新建绑定
+// SQLite 方言 Refine 的 Session/Tx，供仅需默认 SQLite 语义的 SQL 生成测试使用。
+func sqliteRefine(): Refine { Refine(MockDatasource(), SQLiteDialect(), 0) }
+func sqliteTx(conn: Connection): Tx { Tx(conn, sqliteRefine(), 0) }
+func sqliteSession(conn: Connection): Session { Session(conn, sqliteRefine(), 0) }
+
 @Test
 public class QueryTest {
     @TestCase
@@ -263,7 +270,7 @@ public class QueryTest {
     @TestCase
     public func testExistsUsesSelectOneLimitOne(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         conn.stmt.queryResult = RowQueryResult(1)
         let q = Query<Int64>()
@@ -284,7 +291,7 @@ public class QueryTest {
     @TestCase
     public func testExistsFalseWhenNoRows(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         conn.stmt.queryResult = MapperMockQueryResult([], [])
         let q = Query<Int64>()
@@ -326,7 +333,7 @@ public class QueryTest {
     @TestCase
     public func testOneStripsExistingLimitAndOffset(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         conn.stmt.queryResult = MapperMockQueryResult([], [])
         let q = Query<Int64>()
@@ -345,7 +352,7 @@ public class QueryTest {
     @TestCase
     public func testOneWithOnlyOffsetStillLimitsOne(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         conn.stmt.queryResult = MapperMockQueryResult([], [])
         let q = Query<Int64>()
@@ -463,7 +470,7 @@ public class QueryTest {
     @TestCase
     public func testAllPropagatesMapperException(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let cols: Array<SqlColumnInfo> = [MapperMockColumnInfo("id", false)]
         conn.stmt.queryResult = MapperMockQueryResult(cols, [Array<Any>(1, {i => 1})])
@@ -484,7 +491,7 @@ public class QueryTest {
     @TestCase
     public func testAllPropagatesMapperExceptionOnLaterRow(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let cols: Array<SqlColumnInfo> = [MapperMockColumnInfo("id", false)]
         let rows = [
@@ -517,7 +524,7 @@ public class QueryTest {
             throw QueryException("hook boom")
         }
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let cols: Array<SqlColumnInfo> = [MapperMockColumnInfo("id", false)]
         conn.stmt.queryResult = MapperMockQueryResult(cols, [Array<Any>(1, {i => 1})])
@@ -544,7 +551,7 @@ public class QueryTest {
             scope.abort(QueryException("hook abort"))
         }
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let cols: Array<SqlColumnInfo> = [MapperMockColumnInfo("id", false)]
         conn.stmt.queryResult = MapperMockQueryResult(cols, [Array<Any>(1, {i => 1})])
@@ -562,30 +569,27 @@ public class QueryTest {
         }
     }
 
-    // I14: 裸 Query（未绑定 Refine 实例）不触发 AfterFind —— 钩子只挂在实例级注册表上
+    // DB 收敛为纯连接层后：裸 Tx（无 Refine 绑定）无方言，using(tx) 无法渲染 SQL，
+    // 抛明确错误提示走 Refine 路径。原"裸 Query 不触发 AfterFind"的负向语义随裸
+    // 执行上下文可渲染 SQL 的能力一起消失——ORM 查询必须绑定 Refine。
     @TestCase
-    public func testBareQueryDoesNotFireAfterFind(): Unit {
-        let rf = Refine(RMockDS(), SQLiteDialect(), 0)
-        let flag = HookFlag()
-        rf.hook<Int64>("BareAfterFind", HookKind.AfterFind) { scope: Scope<Int64> =>
-            flag.called = true
-        }
+    public func testUsingBareTxThrowsNoDialect(): Unit {
         let conn = CaptureConnection()
         let tx = Tx(conn)
         tx.begin()
-        let cols: Array<SqlColumnInfo> = [MapperMockColumnInfo("id", false)]
-        conn.stmt.queryResult = MapperMockQueryResult(cols, [Array<Any>(1, {i => 1})])
         let q = Query<Int64>()
             .select([Expr.Column("id")])
             .from("t")
-            .using(tx)
-        q.typeName = "BareAfterFind"
-        let rows = q.all({ r: QueryResult, cm: HashMap<String, Int64> => 0 })
-        @Expect(rows.size, 1)
-        @Expect(flag.called, false)
+        try {
+            q.using(tx)
+            @Fail("expected RefineException")
+        } catch (e: RefineException) {
+            @Expect(e.message, "bare DB session has no dialect, use Refine for ORM queries")
+        }
     }
 
-    // I14: 同一查询绑定 Refine 实例后 AfterFind 正常触发（与裸 Query 对照）
+    // I14: 同一查询绑定 Refine 实例后 AfterFind 正常触发（与裸 Query 对照）。
+    // tx 经 ref 绑定 rf，using(tx) 传播 ref（R-I1）后 AfterFind 触发。
     @TestCase
     public func testBoundQueryFiresAfterFind(): Unit {
         let rf = Refine(RMockDS(), SQLiteDialect(), 0)
@@ -594,7 +598,7 @@ public class QueryTest {
             flag.called = true
         }
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = Tx(conn, rf, 0)
         tx.begin()
         let cols: Array<SqlColumnInfo> = [MapperMockColumnInfo("id", false)]
         conn.stmt.queryResult = MapperMockQueryResult(cols, [Array<Any>(1, {i => 1})])
@@ -603,7 +607,6 @@ public class QueryTest {
             .from("t")
             .using(tx)
         q.typeName = "BoundAfterFind"
-        q.ref = Some(rf)
         let rows = q.all({ r: QueryResult, cm: HashMap<String, Int64> => 0 })
         @Expect(rows.size, 1)
         @Expect(flag.called, true)
@@ -635,28 +638,21 @@ public class QueryTest {
         s.close()
     }
 
-    // R-I1 延续: 裸 Session（无 ref）不得触发 AfterFind，镜像裸 Tx 约束。
+    // DB 收敛为纯连接层后：裸 Session（无 Refine 绑定）无方言，using(s) 抛明确错误。
+    // 原"裸 Session 不触发 AfterFind"的负向语义随裸执行上下文可渲染 SQL 的能力消失。
     @TestCase
-    public func testBareSessionDoesNotFireAfterFind(): Unit {
+    public func testUsingBareSessionThrowsNoDialect(): Unit {
         let conn = CaptureConnection()
-        let rf = Refine(RMockDS(), SQLiteDialect(), 0)
-        let flag = HookFlag()
-        rf.hook<Int64>("BareSessionAfterFind", HookKind.AfterFind) { scope: Scope<Int64> =>
-            flag.called = true
-        }
         let s = Session(conn)
-        let cols: Array<SqlColumnInfo> = [MapperMockColumnInfo("id", false)]
-        conn.stmt.queryResult = MapperMockQueryResult(cols, [Array<Any>(1, {i => 1})])
         let q = Query<Int64>()
             .select([Expr.Column("id")])
             .from("t")
-            .using(s)
-        q.typeName = "BareSessionAfterFind"
-        q.setMapper({ r: QueryResult, cm: HashMap<String, Int64> => 0 })
-        let rows = q.all()
-        @Expect(rows.size, 1)
-        @Expect(flag.called, false)
-        s.close()
+        try {
+            q.using(s)
+            @Fail("expected RefineException")
+        } catch (e: RefineException) {
+            @Expect(e.message, "bare DB session has no dialect, use Refine for ORM queries")
+        }
     }
 
     // I14 回归：using(rf) 直接执行路径（rf.session() 持有真实连接）在 AfterFind 钩子
@@ -712,7 +708,7 @@ public class QueryTest {
     @TestCase
     public func testPageNoMapperThrowsFriendlyError(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let q = Query<Int64>()
             .select([Expr.Column("id")])
@@ -757,7 +753,7 @@ public class QueryTest {
     @TestCase
     public func testRefToIncludeIssuesBatchQuery(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         // 主查询：postWithRel 自身列（user_id=99）
         let mainCols: Array<SqlColumnInfo> = [
@@ -792,7 +788,7 @@ public class QueryTest {
     @TestCase
     public func testHasManyIncludeAssemblesBatch(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let mainCols: Array<SqlColumnInfo> = [
             MapperMockColumnInfo("id", false),
@@ -841,7 +837,7 @@ public class QueryTest {
     @TestCase
     public func testProcessIncludedRefMany(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let mainCols: Array<SqlColumnInfo> = [
             MapperMockColumnInfo("id", false),
@@ -875,7 +871,7 @@ public class QueryTest {
     @TestCase
     public func testRefManyIncludeAssemblesBatch(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let mainCols: Array<SqlColumnInfo> = [
             MapperMockColumnInfo("id", false),
@@ -916,7 +912,7 @@ public class QueryTest {
     @TestCase
     public func testRefManyIncludeEmptyNoJunctionRows(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let mainCols: Array<SqlColumnInfo> = [
             MapperMockColumnInfo("id", false),
@@ -942,7 +938,7 @@ public class QueryTest {
     @TestCase
     public func testRefManyIncludeMergesSameViaTarget(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let mainCols: Array<SqlColumnInfo> = [
             MapperMockColumnInfo("id", false),
@@ -978,7 +974,7 @@ public class QueryTest {
     @TestCase
     public func testRefManyIncludeOrphanJunctionSkipped(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let mainCols: Array<SqlColumnInfo> = [
             MapperMockColumnInfo("id", false),
@@ -1014,7 +1010,7 @@ public class QueryTest {
     @TestCase
     public func testRefManyIncludeStringPkMainEntity(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let mainCols: Array<SqlColumnInfo> = [
             MapperMockColumnInfo("id", false),
@@ -1049,7 +1045,7 @@ public class QueryTest {
     @TestCase
     public func testRefManyIncludeMissingJunctionTargetColThrows(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let mainCols: Array<SqlColumnInfo> = [
             MapperMockColumnInfo("id", false),
@@ -1075,7 +1071,7 @@ public class QueryTest {
     @TestCase
     public func testRefManyIncludeWithoutSourceTableThrows(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let mainCols: Array<SqlColumnInfo> = [MapperMockColumnInfo("id", false)]
         let mainRows = [Array<Any>(1, {i => 1})]
@@ -1101,7 +1097,7 @@ public class QueryTest {
     @TestCase
     public func testHasManyAndRefManyMixedInclude(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let mainCols: Array<SqlColumnInfo> = [
             MapperMockColumnInfo("id", false),
@@ -1165,7 +1161,7 @@ public class QueryTest {
     @TestCase
     public func testHasOneIncludeAssemblesBatch(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let mainCols: Array<SqlColumnInfo> = [
             MapperMockColumnInfo("id", false),
@@ -1252,7 +1248,8 @@ public class QueryTest {
     public func testUpdateWhereWithoutJoinStillWorks(): Unit {
         let conn = CaptureConnection()
         conn.stmt.mockRowCount = 3
-        let tx = Tx(conn, 0, MySQLDialect())
+        let rf = Refine(MockDatasource(), MySQLDialect(), 0)
+        let tx = Tx(conn, rf, 0)
         tx.begin()
         let q = Query<Int64>()
         q.from("users")
@@ -1271,7 +1268,8 @@ public class QueryTest {
     public func testDeleteWhereWithoutJoinStillWorks(): Unit {
         let conn = CaptureConnection()
         conn.stmt.mockRowCount = 2
-        let tx = Tx(conn, 0, MySQLDialect())
+        let rf = Refine(MockDatasource(), MySQLDialect(), 0)
+        let tx = Tx(conn, rf, 0)
         tx.begin()
         let q = Query<Int64>()
         q.from("users")
@@ -1338,7 +1336,7 @@ public class C4PageCollectionTest {
     @TestCase
     public func testPageWithHasManyIncludeBatch(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         conn.stmt.queryResultQueue.add(RowQueryResult(2))
         let cols: Array<SqlColumnInfo> = [
@@ -1380,7 +1378,7 @@ public class C4PageCollectionTest {
     @TestCase
     public func testPageWithHasManyIncludeCountUsesStar(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         conn.stmt.queryResultQueue.add(RowQueryResult(2))
         let cols: Array<SqlColumnInfo> = [
@@ -1404,7 +1402,7 @@ public class C4PageCollectionTest {
     @TestCase
     public func testPageWithoutCollectionStillWorks(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         conn.stmt.queryResultQueue.add(RowQueryResult(3))
         let cols: Array<SqlColumnInfo> = [
@@ -1429,7 +1427,7 @@ public class C4PageCollectionTest {
             scope.entity.body = "hooked"
         }
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         conn.stmt.queryResultQueue.add(RowQueryResult(1))
         let cols: Array<SqlColumnInfo> = [
@@ -1452,7 +1450,7 @@ public class C4PageCollectionTest {
     @TestCase
     public func testPageWithRefToIncludeBatch(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         conn.stmt.queryResultQueue.add(RowQueryResult(1))
         let mainCols: Array<SqlColumnInfo> = [
@@ -1491,7 +1489,7 @@ public class C4PageCollectionTest {
     @TestCase
     public func testRefToIncludeSkipsMissingTarget(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let mainCols: Array<SqlColumnInfo> = [
             MapperMockColumnInfo("id", false),
@@ -1517,7 +1515,7 @@ public class C4PageCollectionTest {
     @TestCase
     public func testHasManyIncludeNoMatchingChildren(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let cols: Array<SqlColumnInfo> = [
             MapperMockColumnInfo("id", false),
@@ -1547,7 +1545,7 @@ public class C4PageCollectionTest {
     @TestCase
     public func testRefToIncludeMissingTargetDefaultMapperNoCrash(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let mainCols: Array<SqlColumnInfo> = [
             MapperMockColumnInfo("id", false),
@@ -1572,7 +1570,7 @@ public class C4PageCollectionTest {
     @TestCase
     public func testRefToIncludeMultipleEntitiesBatch(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let mainCols: Array<SqlColumnInfo> = [
             MapperMockColumnInfo("id", false),
@@ -1608,7 +1606,7 @@ public class C4PageCollectionTest {
     @TestCase
     public func testRefToIncludeEmptyFkSetSkipsBatch(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let mainCols: Array<SqlColumnInfo> = [
             MapperMockColumnInfo("id", false),
@@ -1634,7 +1632,7 @@ public class C4PageCollectionTest {
     @TestCase
     public func testRefToIncludeMissingFkColumnThrows(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let cols: Array<SqlColumnInfo> = [
             MapperMockColumnInfo("id", false),
@@ -1660,7 +1658,7 @@ public class C4PageCollectionTest {
     @TestCase
     public func testRefToIncludeMissingFkColumnEmptyRowsStillThrows(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let cols: Array<SqlColumnInfo> = [
             MapperMockColumnInfo("id", false),
@@ -1682,7 +1680,7 @@ public class C4PageCollectionTest {
     @TestCase
     public func testRefToIncludeFkSelectedStillWorks(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let mainCols: Array<SqlColumnInfo> = [
             MapperMockColumnInfo("id", false),
@@ -1716,7 +1714,7 @@ public class C4PageCollectionTest {
     @TestCase
     public func testNestedRefToIncludeMissingFkColumnThrows(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let mainCols: Array<SqlColumnInfo> = [
             MapperMockColumnInfo("id", false),
@@ -1749,7 +1747,7 @@ public class C4PageCollectionTest {
     @TestCase
     public func testRefToIncludeEmptyEntitiesSkipsBatch(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let mainCols: Array<SqlColumnInfo> = [
             MapperMockColumnInfo("id", false),
@@ -1769,7 +1767,7 @@ public class C4PageCollectionTest {
     @TestCase
     public func testRefToIncludeMergesSameTargetTable(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let mainCols: Array<SqlColumnInfo> = [
             MapperMockColumnInfo("id", false),
@@ -1819,7 +1817,7 @@ public class C4PageCollectionTest {
     @TestCase
     public func testRefToIncludeMergedFieldUnion(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let mainCols: Array<SqlColumnInfo> = [
             MapperMockColumnInfo("id", false),
@@ -1874,7 +1872,7 @@ public class C4PageCollectionTest {
     @TestCase
     public func testHasOneIncludeAssembled(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let cols: Array<SqlColumnInfo> = [
             MapperMockColumnInfo("id", false),
@@ -1917,7 +1915,7 @@ public class C4CollectionIncludeOrderTest {
         // 批量协议：主查询行序即返回顺序（每行一个主实体，无 JOIN 展开/去重），
         // comments 按 fk 分组回填后仍保持该顺序。
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let cols: Array<SqlColumnInfo> = [
             MapperMockColumnInfo("id", false),
@@ -1971,7 +1969,7 @@ public class C4CollectionBatchTest {
     @TestCase
     public func testHasManyIncludeIgnoresForeignFkRows(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let mainCols: Array<SqlColumnInfo> = [
             MapperMockColumnInfo("id", false),
@@ -2003,7 +2001,7 @@ public class C4CollectionBatchTest {
     @TestCase
     public func testHasManyIncludeEmptyChildrenStaysEmpty(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let mainCols: Array<SqlColumnInfo> = [
             MapperMockColumnInfo("id", false),
@@ -2029,7 +2027,7 @@ public class C4CollectionBatchTest {
     @TestCase
     public func testHasManyIncludeMergesSameTargetTable(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let mainCols: Array<SqlColumnInfo> = [
             MapperMockColumnInfo("id", false),
@@ -2077,7 +2075,7 @@ public class C4CollectionBatchTest {
     @TestCase
     public func testHasManyIncludeOne(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let mainCols: Array<SqlColumnInfo> = [
             MapperMockColumnInfo("id", false),
@@ -2107,7 +2105,7 @@ public class C4CollectionBatchTest {
     @TestCase
     public func testHasOneIncludeEmptyStaysNone(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let mainCols: Array<SqlColumnInfo> = [
             MapperMockColumnInfo("id", false),
@@ -2131,7 +2129,7 @@ public class C4CollectionBatchTest {
     @TestCase
     public func testHasOneIncludeMultipleTargetsTakesFirst(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let mainCols: Array<SqlColumnInfo> = [
             MapperMockColumnInfo("id", false),
@@ -2162,7 +2160,7 @@ public class C4CollectionBatchTest {
     @TestCase
     public func testCollectionIncludeWithoutRawIdExtractorThrows(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let rel: IRelation = HasMany<Int64>("posts", "user_id",
             [Col<Any>("id")], "posts", dummyMapper, dummySetter, dummyTargetIdExtractor)
@@ -2188,7 +2186,7 @@ public class C4CollectionBatchTest {
     @TestCase
     public func testHasManyIncludeStringPkMainEntity(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let mainCols: Array<SqlColumnInfo> = [MapperMockColumnInfo("key", false)]
         let mainRows = [Array<Any>(1, {i => "p-a"})]
@@ -2235,7 +2233,7 @@ public class C4CollectionBatchTest {
     @TestCase
     public func testCollectionIncludeMissingPkColumnThrows(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let cols: Array<SqlColumnInfo> = [MapperMockColumnInfo("title", false)]
         let rows = [Array<Any>(1, {i => "p1"})]
@@ -2253,7 +2251,7 @@ public class C4CollectionBatchTest {
     @TestCase
     public func testHasManyIncludeSkipsNullFkRow(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let mainCols: Array<SqlColumnInfo> = [
             MapperMockColumnInfo("id", false),
@@ -2320,7 +2318,7 @@ public class NestedIncludeTest {
     @TestCase
     public func testNestedRefToThenHasOne(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let mainCols: Array<SqlColumnInfo> = [
             MapperMockColumnInfo("id", false),
@@ -2367,7 +2365,7 @@ public class NestedIncludeTest {
     @TestCase
     public func testNestedRefToThenHasMany(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let mainCols: Array<SqlColumnInfo> = [
             MapperMockColumnInfo("id", false),
@@ -2411,7 +2409,7 @@ public class NestedIncludeTest {
     @TestCase
     public func testNestedThreeLevels(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let mainCols: Array<SqlColumnInfo> = [
             MapperMockColumnInfo("id", false),
@@ -2462,7 +2460,7 @@ public class NestedIncludeTest {
     @TestCase
     public func testNestedSharedTargetDedup(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let mainCols: Array<SqlColumnInfo> = [
             MapperMockColumnInfo("id", false),
@@ -2503,7 +2501,7 @@ public class NestedIncludeTest {
     @TestCase
     public func testNestedHasManyTopLevel(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let mainCols: Array<SqlColumnInfo> = [
             MapperMockColumnInfo("id", false),
@@ -2541,7 +2539,7 @@ public class NestedIncludeTest {
     @TestCase
     public func testNestedFieldSubset(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let mainCols: Array<SqlColumnInfo> = [
             MapperMockColumnInfo("id", false),
@@ -2580,7 +2578,7 @@ public class NestedIncludeTest {
     @TestCase
     public func testNestedRefToThenRefTo(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let mainCols: Array<SqlColumnInfo> = [
             MapperMockColumnInfo("id", false),
@@ -2627,7 +2625,7 @@ public class NestedIncludeTest {
     @TestCase
     public func testNestedRefToThenRefMany(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let mainCols: Array<SqlColumnInfo> = [
             MapperMockColumnInfo("id", false),
@@ -2671,7 +2669,7 @@ public class NestedIncludeTest {
     @TestCase
     public func testNestedRefManySharedTargetDedup(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let mainCols: Array<SqlColumnInfo> = [
             MapperMockColumnInfo("id", false),
@@ -2728,7 +2726,7 @@ public class NestedIncludeTest {
     @TestCase
     public func testRefManyDuplicateJunctionRowDedup(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let mainCols: Array<SqlColumnInfo> = [
             MapperMockColumnInfo("id", false),
@@ -2762,7 +2760,7 @@ public class NestedIncludeTest {
     @TestCase
     public func testNestedRefManySharedTargetNoDeepDuplicate(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let mainCols: Array<SqlColumnInfo> = [
             MapperMockColumnInfo("id", false),
@@ -2829,7 +2827,7 @@ public class NestedIncludeTest {
     @TestCase
     public func testDiamondIncludeSharedTargetHasManyNoDuplicate(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let mainCols: Array<SqlColumnInfo> = [
             MapperMockColumnInfo("id", false),
@@ -2885,7 +2883,7 @@ public class NestedIncludeTest {
     @TestCase
     public func testDiamondIncludeDistinctTargetsNoDataLoss(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let mainCols: Array<SqlColumnInfo> = [
             MapperMockColumnInfo("id", false),
@@ -2939,7 +2937,7 @@ public class NestedIncludeTest {
     @TestCase
     public func testNestedCycleDepthGuard(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let mainCols: Array<SqlColumnInfo> = [
             MapperMockColumnInfo("id", false),
@@ -3046,7 +3044,7 @@ public class StringPathIncludeTest {
     @TestCase
     public func testIncludeAllSinglePath(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let mainCols: Array<SqlColumnInfo> = [
             MapperMockColumnInfo("id", false),
@@ -3080,7 +3078,7 @@ public class StringPathIncludeTest {
     @TestCase
     public func testIncludeAllNestedPath(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let mainCols: Array<SqlColumnInfo> = [
             MapperMockColumnInfo("id", false),
@@ -3120,7 +3118,7 @@ public class StringPathIncludeTest {
     @TestCase
     public func testIncludeAllMultiplePaths(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let mainCols: Array<SqlColumnInfo> = [
             MapperMockColumnInfo("id", false),
@@ -3160,7 +3158,7 @@ public class StringPathIncludeTest {
     @TestCase
     public func testIncludeAllDeepPath(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let mainCols: Array<SqlColumnInfo> = [
             MapperMockColumnInfo("id", false),
@@ -3208,7 +3206,7 @@ public class StringPathIncludeTest {
     @TestCase
     public func testIncludeAllRefManyNested(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         let mainCols: Array<SqlColumnInfo> = [
             MapperMockColumnInfo("id", false),
@@ -3249,10 +3247,10 @@ public class StringPathIncludeTest {
     @TestCase
     public func testIncludeAllEqualsWithIncludeChain(): Unit {
         let connA = CaptureConnection()
-        let txA = Tx(connA)
+        let txA = sqliteTx(connA)
         txA.begin()
         let connB = CaptureConnection()
-        let txB = Tx(connB)
+        let txB = sqliteTx(connB)
         txB.begin()
         for (conn in [connA, connB]) {
             let mainCols: Array<SqlColumnInfo> = [
@@ -3375,7 +3373,7 @@ public class AggregateQueryTest {
     @TestCase
     public func testSumRendersQuotedColumnAndReadsValue(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         conn.stmt.queryResultQueue.add(MapperMockQueryResult([], [Array<Any>(1, {i => 42})]))
         let q = Query<Int64>().from("posts").using(tx)
@@ -3387,7 +3385,7 @@ public class AggregateQueryTest {
     @TestCase
     public func testAvgReadsFloatValue(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         conn.stmt.queryResultQueue.add(MapperMockQueryResult([], [Array<Any>(1, {i => 2.5})]))
         let q = Query<Int64>().from("posts").using(tx)
@@ -3398,7 +3396,7 @@ public class AggregateQueryTest {
     @TestCase
     public func testMinStringReturnsString(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         conn.stmt.queryResultQueue.add(MapperMockQueryResult([], [Array<Any>(1, {i => "abc"})]))
         let q = Query<Int64>().from("posts").using(tx)
@@ -3409,7 +3407,7 @@ public class AggregateQueryTest {
     @TestCase
     public func testMaxStringEmptyResultReturnsEmptyString(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         conn.stmt.queryResultQueue.add(MapperMockQueryResult([], []))
         let q = Query<Int64>().from("posts").using(tx)
@@ -3420,7 +3418,7 @@ public class AggregateQueryTest {
     @TestCase
     public func testMaxInt64EmptyResultReturnsZero(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         conn.stmt.queryResultQueue.add(MapperMockQueryResult([], []))
         let q = Query<Int64>().from("posts").using(tx)
@@ -3441,7 +3439,7 @@ public class R5GroupedQueryTest {
     @TestCase
     public func testCountWithGroupByCountsGroups(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         // 3 个分组 → COUNT(*) 每组一行，3 行
         conn.stmt.queryResult = MapperMockQueryResult(
@@ -3461,7 +3459,7 @@ public class R5GroupedQueryTest {
     @TestCase
     public func testCountWithGroupByAndHavingRendersBoth(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         conn.stmt.queryResult = MapperMockQueryResult(
             [MapperMockColumnInfo("COUNT(*)", false)],
@@ -3482,7 +3480,7 @@ public class R5GroupedQueryTest {
     @TestCase
     public func testPageWithGroupByTotalCountsGroups(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         // 分组 count：4 行 = 4 个分组
         conn.stmt.queryResultQueue.add(MapperMockQueryResult(
@@ -3515,7 +3513,7 @@ public class R5GroupedQueryTest {
     @TestCase
     public func testExistsWithGroupByCarriesGroupBy(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         conn.stmt.queryResult = RowQueryResult(1)
         let q = Query<Int64>()
@@ -3532,7 +3530,7 @@ public class R5GroupedQueryTest {
     @TestCase
     public func testAggregateWithGroupByCarriesGroupBy(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         conn.stmt.queryResult = MapperMockQueryResult(
             [MapperMockColumnInfo("SUM(\"salary\")", false)],
@@ -3552,7 +3550,7 @@ public class R5GroupedQueryTest {
     @TestCase
     public func testCountWithoutGroupByStillReadsFirstRowValue(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         conn.stmt.queryResult = MapperMockQueryResult(
             [MapperMockColumnInfo("COUNT(*)", false)],
@@ -3572,7 +3570,7 @@ public class R5GroupedQueryTest {
     @TestCase
     public func testCountWithGroupByEmptyReturnsZero(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         conn.stmt.queryResult = MapperMockQueryResult(
             [MapperMockColumnInfo("COUNT(*)", false)],
@@ -3591,7 +3589,7 @@ public class R5GroupedQueryTest {
     @TestCase
     public func testPageWithGroupByEmptyTotalZero(): Unit {
         let conn = CaptureConnection()
-        let tx = Tx(conn)
+        let tx = sqliteTx(conn)
         tx.begin()
         conn.stmt.queryResultQueue.add(MapperMockQueryResult(
             [MapperMockColumnInfo("COUNT(*)", false)],

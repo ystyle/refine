@@ -479,6 +479,42 @@ public class RefineTest {
         @Expect(detectDialect("unknown").name(), "sqlite")
     }
 
+    // DB 收敛为纯连接层后，URL 方言/paramOffset 探测归属 Refine.open
+    // （DB.open 只建 datasource + offset，不再 detectDialect）。
+    @TestCase
+    public func testRefineOpenDetectsDialect(): Unit {
+        let realMysql = DriverManager.getDriver("mysql")
+        let realPg = DriverManager.getDriver("postgresql")
+        let realMaria = DriverManager.getDriver("mariadb")
+        DriverManager.deregister("mysql")
+        DriverManager.register("mysql", MockDriver())
+        DriverManager.deregister("postgresql")
+        DriverManager.register("postgresql", MockDriver())
+        DriverManager.deregister("mariadb")
+        DriverManager.register("mariadb", MockDriver())
+        try {
+            let rf1 = Refine.open("mysql://localhost:3306/testdb")
+            @Expect(rf1.getDialect().name(), "mysql")
+            @Expect(rf1.getParamOffset(), 0)
+            rf1.close()
+            let rf2 = Refine.open("postgresql://localhost:5432/testdb")
+            @Expect(rf2.getDialect().name(), "postgresql")
+            @Expect(rf2.getParamOffset(), 0)
+            rf2.close()
+            let rf3 = Refine.open("mariadb://localhost:3306/testdb")
+            @Expect(rf3.getDialect().name(), "mysql")
+            @Expect(rf3.getParamOffset(), 1)
+            rf3.close()
+        } finally {
+            DriverManager.deregister("mysql")
+            DriverManager.deregister("postgresql")
+            DriverManager.deregister("mariadb")
+            if (let Some(drv) <- realMysql) { DriverManager.register("mysql", drv) }
+            if (let Some(drv) <- realPg) { DriverManager.register("postgresql", drv) }
+            if (let Some(drv) <- realMaria) { DriverManager.register("mariadb", drv) }
+        }
+    }
+
     // I9: Refine.all 不得修改调用方 Query 的状态（queryDialect/columnOffset/executor）。
     @TestCase
     public func testAllDoesNotMutateQuery(): Unit {
@@ -770,7 +806,8 @@ public class RefineTest {
         rf2.close()
     }
 
-    // R-M11: q.using(db) 预绑定 Session（database.session()），rf.all(q) 时同样关闭。
+    // R-M11: q.using(session) 预绑定 Session（db.session() 裸会话 + 注入 ref，
+    // 原 using(DB) 缺陷 API 已随 DB 收敛移除，显式建会话等价），rf.all(q) 时同样关闭。
     @TestCase
     public func testAllClosesPreboundSessionFromUsingDb(): Unit {
         let ds = RMockCountDS()
@@ -780,7 +817,9 @@ public class RefineTest {
         q.select([Expr.Column("id")])
         q.from("t")
         q.setMapper({ result: QueryResult, cm: HashMap<String, Int64> => 0 })
-        q.using(db)
+        let s = db.session()
+        s.ref = Some(rf)
+        q.using(s)
         let result = rf.all(q)
         @Expect(result.size, 0)
         @Expect(ds.created.size, 1)

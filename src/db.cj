@@ -19,7 +19,6 @@ internal enum TxState {
 public class DB {
     private var datasource: Datasource
     private var paramOffset: Int64 = 0
-    var dialect: Dialect = SQLiteDialect()
     public mut prop maxPoolSize: Int32 { get() { _maxPoolSize } set(v) { _maxPoolSize = v } }
     public mut prop connectionTimeout: Int64 { get() { _connectionTimeout } set(v) { _connectionTimeout = v } }
     public mut prop idleTimeout: Int64 { get() { _idleTimeout } set(v) { _idleTimeout = v } }
@@ -38,17 +37,6 @@ public class DB {
         this.paramOffset = paramOffset
     }
 
-    public init(datasource: Datasource, dialect: Dialect) {
-        this.datasource = datasource
-        this.dialect = dialect
-    }
-
-    public init(datasource: Datasource, paramOffset: Int64, dialect: Dialect) {
-        this.datasource = datasource
-        this.paramOffset = paramOffset
-        this.dialect = dialect
-    }
-
     public static func open(url: String): DB {
         open(url, [])
     }
@@ -57,21 +45,49 @@ public class DB {
         let driverName = extractDriver(url)
         let drv = DriverManager.getDriver(driverName).getOrThrow()
         let ds = drv.open(url, opts)
-        DB(PooledDatasource(ds), detectParamOffset(driverName), detectDialect(driverName))
+        DB(PooledDatasource(ds), detectParamOffset(driverName))
     }
 
     public func session(): Session {
-        Session(datasource.connect(), paramOffset, this.dialect)
+        Session(datasource.connect(), paramOffset)
     }
 
-    public func getDialect(): Dialect {
-        this.dialect
+    public func getParamOffset(): Int64 { paramOffset }
+
+    // R-M11/closeExecutor 之外的外部调用方需要原始连接的通道（内部用）；
+    // 裸连接生命周期由调用方负责。
+    public func getRawConn(): Connection {
+        datasource.connect()
     }
 
+    // R-M12: 事务包装核心。ref 注入 Refine 实例后，action 内创建的 Tx 经
+    // getDialect() 返回 ORM 方言并触发 hooks；裸事务（ref=None）仅做连接层事务
+    // 语义（M19 状态守卫 + R-M12 isActive 判断 + best-effort 回滚），不触碰 ORM。
+    // level 仅由 Refine.transaction(level:) 传入（内部路径），在 begin 之前
+    // setIsolation，与历史 Refine 行为一致。
     public func transaction<T>(action: (Tx) -> T): T {
+        runTransaction(None, None, action)
+    }
+
+    internal func transaction<T>(action: (Tx) -> T, ref: Option<Refine>): T {
+        runTransaction(ref, None, action)
+    }
+
+    internal func transaction<T>(action: (Tx) -> T, ref: Option<Refine>, level: IsolationLevel): T {
+        runTransaction(ref, Some(level), action)
+    }
+
+    private func runTransaction<T>(ref: Option<Refine>, level: Option<IsolationLevel>, action: (Tx) -> T): T {
         let conn = datasource.connect()
         try {
-            let tx = Tx(conn, paramOffset, this.dialect)
+            let tx = match (ref) {
+                case Some(rf) => Tx(conn, rf, paramOffset)
+                case None => Tx(conn, paramOffset)
+            }
+            match (level) {
+                case Some(l) => tx.setIsolation(l)
+                case None => ()
+            }
             tx.begin()
             try {
                 let result = action(tx)
@@ -107,7 +123,6 @@ public class Session {
     private var closed: Bool = false
     var paramOffset: Int64 = 0
     public var ref: Option<Refine> = None
-    var dialectOpt: Option<Dialect> = None
 
     public init(connection: Connection) {
         this.connection = connection
@@ -122,12 +137,6 @@ public class Session {
         this.connection = connection
         this.ref = Some(ref)
         this.paramOffset = paramOffset
-    }
-
-    public init(connection: Connection, paramOffset: Int64, dialect: Dialect) {
-        this.connection = connection
-        this.paramOffset = paramOffset
-        this.dialectOpt = Some(dialect)
     }
 
     public func prepareStatement(sql: String): SqlStatement {
@@ -153,11 +162,8 @@ public class Session {
     public func getDialect(): Dialect {
         match (this.ref) {
             case Some(rf) => rf.getDialect()
-            case None =>
-                match (this.dialectOpt) {
-                    case Some(d) => d
-                    case None => SQLiteDialect()
-                }
+            case None => throw RefineException(
+                "bare DB session has no dialect, use Refine for ORM queries")
         }
     }
 
@@ -178,7 +184,6 @@ public class Tx {
     private var paramOffset: Int64 = 0
     private var state: TxState = TxState.Unbegun
     public var ref: Option<Refine> = None
-    var dialectOpt: Option<Dialect> = None
 
     public init(connection: Connection) {
         this.connection = connection
@@ -196,13 +201,6 @@ public class Tx {
         this.transaction = connection.createTransaction()
         this.ref = Some(ref)
         this.paramOffset = paramOffset
-    }
-
-    public init(connection: Connection, paramOffset: Int64, dialect: Dialect) {
-        this.connection = connection
-        this.transaction = connection.createTransaction()
-        this.paramOffset = paramOffset
-        this.dialectOpt = Some(dialect)
     }
 
     // M19: 状态守卫。execute/query/savepoint/commit/rollback 仅在 Active 状态合法。
@@ -285,11 +283,8 @@ public class Tx {
     public func getDialect(): Dialect {
         match (this.ref) {
             case Some(rf) => rf.getDialect()
-            case None =>
-                match (this.dialectOpt) {
-                    case Some(d) => d
-                    case None => SQLiteDialect()
-                }
+            case None => throw RefineException(
+                "bare DB session has no dialect, use Refine for ORM queries")
         }
     }
 
@@ -355,12 +350,6 @@ extend Session <: ExecutionContext {
 }
 extend Tx <: ExecutionContext {
     public func getRef(): Option<Refine> { ref }
-}
-
-extend DB {
-    public func migrator(): Migrator {
-        this.dialect.migrator(this)
-    }
 }
 
 func dispatchSet(stmt: SqlStatement, index: Int, value: Any): Unit {
