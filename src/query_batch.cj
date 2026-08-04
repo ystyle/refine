@@ -2,6 +2,7 @@ package refine
 
 import std.collection.ArrayList
 import std.collection.HashMap
+import std.collection.HashSet
 import std.database.sql.QueryResult
 
 // M20: Query<T> 批量 include 装配方法组（727 行，原 query.cj 的膨胀主体）。
@@ -319,18 +320,80 @@ extend<T> Query<T> {
         //    下一层 sourceTable = 父关系的 targetTable（当前层实体的表），供嵌套 ref_many
         //    推导 junction 源列 `<当前层表>_id`；下一层 sourceColumnMap = 父批量查询的
         //    columnMap（targetColumnMap），供嵌套 ref_to 的 fk 列守卫使用。
-        //    已知限制（diamond include，Task 6 batch-include 记档延期）：同一层两条关系
-        //    指向同一目标表且带相同嵌套 include（如 author.withInclude(profile) +
-        //    editor.withInclude(profile)，两个用户目标相同时）会对该表发两条冗余批量
-        //    查询、嵌套 has_many 可能重复装配。按「目标表」去重的朴素守卫会把目标不同
-        //    （author≠editor）时第二条递归整体跳过造成漏数据，正确做法需按目标表合并
-        //    pairs 的目标与嵌套关系并去重，改动大，故记档延期。
-        for ((rel, targets, targetColumnMap) in pairs) {
-            let nested = rel.getNested()
-            if (nested.size == 0) { continue }
-            let targetIds = collectTargetIds(rel, targets)
-            let (_, _, nextSourceTable, _, _, _) = rel.resolve()
-            assembleRecursive(exec, dialect, targets, nested, targetIds, targetColumnMap, nextSourceTable, depth + 1)
+        // 3.1 R-M10：先按「下一层源表」合并 pairs。diamond include（同一层两条关系指向
+        //     同一目标表且带相同嵌套 include，如 author.withInclude(profile) +
+        //     editor.withInclude(profile)，author/editor 指向同一个用户）下，逐对递归会
+        //     对共享目标实例跑两次嵌套装配——嵌套 has_many 的 setter .add() 把子项重复
+        //     追加成两份（同一实例被两个 pair 的目标列表同时持有，见 assembleRefTo 的
+        //     identity-map 缓存与 assembleCollections/assembleRefMany 的 targetSeen 注释）。
+        //     合并后每个目标表只递归一次：
+        //       - targets 取各 pair 并集，按 refEq（对象引用）去重——只有「同一实例」才
+        //         会重复装配；has_one/has_many 不同 fk 指向同一行的独立实例 refEq 不相等，
+        //         各自保留并递归，不会误删嵌套装配（若按 target id 去重会把第二条独立
+        //         实例漏掉，导致其父关系看到空嵌套）；
+        //       - nested 取各 pair 的嵌套关系并集，按结构 key 去重——宏层 getNested 每次
+        //         返回新 IRelation 实例，同一逻辑关系须按 (kind,name,table,fk,via,fields)
+        //         归一化识别（见 nestedRelationKey）；
+        //       - sourceColumnMap 取各 pair 列名并集（嵌套 ref_to 的 fk 列守卫只查
+        //         contains，任一源查询选中该列即通过；目标实例来自多条批量查询时按并集
+        //         放行是安全超集，对齐 assembleRefTo 的 fail-open 语义）。
+        //     单层各关系的 setter 回填仍逐关系执行（第 2 步已按主实体完成），合并只作用于
+        //     递归层，不改变当前层每个关系的回填语义。
+        var recGroups = ArrayList<(String, ArrayList<(IRelation, Array<Any>, HashMap<String, Int64>)>)>()
+        for (pair in pairs) {
+            let (rel, _, _) = pair
+            if (rel.getNested().size == 0) { continue }
+            let (_, _, nextTable, _, _, _) = rel.resolve()
+            var found = false
+            for (i in 0..recGroups.size) {
+                if (recGroups[i][0] == nextTable) {
+                    recGroups[i][1].add(pair)
+                    found = true
+                    break
+                }
+            }
+            if (!found) {
+                let pl = ArrayList<(IRelation, Array<Any>, HashMap<String, Int64>)>()
+                pl.add(pair)
+                recGroups.add((nextTable, pl))
+            }
+        }
+
+        // 3.2 每组合并目标/嵌套/列映射后递归一次
+        for (g in recGroups) {
+            let nextTable = g[0]
+            let groupPairs = g[1]
+            var mergedTargets = ArrayList<Any>()
+            var targetSeen = ArrayList<Object>()
+            var mergedNested = ArrayList<IRelation>()
+            var nestedSeen = HashMap<String, Bool>()
+            var mergedColMap = HashMap<String, Int64>()
+            for (pair in groupPairs) {
+                let (rel, targets, colMap) = pair
+                for (t in targets) {
+                    match (t as Object) {
+                        case Some(o) =>
+                            if (!visitedContains(targetSeen, o)) {
+                                targetSeen.add(o)
+                                mergedTargets.add(t)
+                            }
+                        case None =>
+                            // 目标不是引用类型（理论上的值类型目标，正常实体恒为类实例）：
+                            // 无法按引用去重，直接保留
+                            mergedTargets.add(t)
+                    }
+                }
+                for (name in colMap.keys()) {
+                    if (!mergedColMap.contains(name)) { mergedColMap[name] = colMap.get(name).getOrThrow() }
+                }
+                for (n in rel.getNested()) {
+                    let nk = nestedRelationKey(n)
+                    if (!nestedSeen.contains(nk)) { nestedSeen[nk] = true; mergedNested.add(n) }
+                }
+            }
+            let firstRel = groupPairs[0][0]
+            let targetIds = collectTargetIds(firstRel, mergedTargets.toArray())
+            assembleRecursive(exec, dialect, mergedTargets.toArray(), mergedNested.toArray(), targetIds, mergedColMap, nextTable, depth + 1)
         }
     }
 
@@ -340,6 +403,25 @@ extend<T> Query<T> {
         var ids = ArrayList<Any>()
         for (t in targets) { ids.add(extractor(t)) }
         ids.toArray()
+    }
+
+    // R-M10: 嵌套关系的结构归一化 key。宏层 getNested() 每次返回新 IRelation 实例，
+    // 同一逻辑关系（如两次 withInclude 挂的同一 NestedUserRel.comments）是不同对象，
+    // 不能用实例引用相等去重——按 resolve() 的结构分量 (kind,name,table,fk,via,fields)
+    // 归一化（对齐 Relation.hasNested 的 (kind,name,table,fk,via) 比较，并追加 fields
+    // 列名以区分字段子集包装器 FieldOverrideRelation）。不同逻辑关系（同表不同嵌套，
+    // 如 profile 与 orders）key 不同，均保留并一次递归装配完全。
+    private func nestedRelationKey(rel: IRelation): String {
+        let (kind, name, table, fk, via, fields) = rel.resolve()
+        var viaStr = ""
+        match (via) {
+            case Some(v) => viaStr = v
+            case None => ()
+        }
+        var fieldParts = ArrayList<String>()
+        for (c in fields) { fieldParts.add(c.name) }
+        kind.toString() + "|" + name + "|" + table + "|" + fk + "|" + viaStr + "|" +
+            String.join(fieldParts.toArray(), delimiter: ",")
     }
 
     // 是否有需要批量装配的集合 include（has_one / has_many / ref_many）。
@@ -693,6 +775,12 @@ extend<T> Query<T> {
             let targetMapper = rels2[0].getTargetMapper()
             var groupMap = HashMap<String, ArrayList<Any>>()
             var targetInstanceCache = HashMap<String, Any>()
+            // R-M9: 组内按目标 id 去重——重复 junction 行（同一 (源id, 目标id) 出现多行，
+            // 只能由 DB 数据损坏或手工 INSERT 触发；正常 save 的 append 每次只写一行）会把
+            // 同一目标实例 add 进组两次，单层 setter 对同一父实体 .add() 两次、目标列表出现
+            // 同实例两份。用 targetInstanceCache 已保证同目标映射到同一实例，此处仅阻止该
+            // 实例被重复 add 进同一源分组（跨源组共享实例的语义不变）。
+            var groupTargetSeen = HashMap<String, HashSet<String>>()
             while (result2.next()) {
                 let keyOpt: Option<String> = if (isStringPk) {
                     match (result2.getOrNull<String>(srcIdx)) {
@@ -707,6 +795,10 @@ extend<T> Query<T> {
                 }
                 match (keyOpt) {
                     case Some(key) =>
+                        let tKey = match (result2.getOrNull<String>(idIdx)) {
+                            case Some(v) => v
+                            case None => result2.getOrNull<Int64>(idIdx).getOrThrow().toString()
+                        }
                         var group = match (groupMap.get(key)) {
                             case Some(g) => g
                             case None =>
@@ -714,10 +806,15 @@ extend<T> Query<T> {
                                 groupMap[key] = ng
                                 ng
                         }
-                        let tKey = match (result2.getOrNull<String>(idIdx)) {
-                            case Some(v) => v
-                            case None => result2.getOrNull<Int64>(idIdx).getOrThrow().toString()
+                        var seenIds = match (groupTargetSeen.get(key)) {
+                            case Some(s) => s
+                            case None =>
+                                let ns = HashSet<String>()
+                                groupTargetSeen[key] = ns
+                                ns
                         }
+                        if (seenIds.contains(tKey)) { continue }
+                        seenIds.add(tKey)
                         match (targetInstanceCache.get(tKey)) {
                             case Some(shared) => group.add(shared)
                             case None =>

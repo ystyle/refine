@@ -35,27 +35,38 @@ public class MySQLDialect <: AbstractDialect {
         }
         for (c in columns) {
             // M14: 主键/冲突列不进入 DO UPDATE SET——冲突行匹配的就是这些列，更新它们恒为
-            // 原值（VALUES(col) 即 col），纯噪音且无任何语义（SQLite 保留原行为，见 M14 决策）
+            // 原值（new.col 即 col），纯噪音且无任何语义（SQLite 保留原行为，见 M14 决策）
             if (conflictColumns.contains(c)) { continue }
             if (auditCreateCols.contains(c)) { continue }
             if (c == versionCol) {
-                updates.add(quoteIdentifier(c) + " = " + quoteIdentifier(c) + " + 1")
+                // R-M19: 行别名 `AS new` 存在时，DO UPDATE SET 里裸列名会产生歧义（现有行
+                // 与 new 行都有该列）。version 冲突自增引用「现有行」的当前值，RHS 须表限定
+                // （LHS 赋值目标保持裸列名，MySQL 允许；语义同 SQLite 裸列 RHS 与 PG 的
+                // `"version" = "table"."version" + 1`，见 R-C1）。
+                updates.add(quoteIdentifier(c) + " = " + quoteIdentifier(table) + "." + quoteIdentifier(c) + " + 1")
             } else if (auditUpdateCols.contains(c)) {
                 updates.add(quoteIdentifier(c) + " = ?")
                 extraParamCount++
             } else {
-                updates.add(quoteIdentifier(c) + " = VALUES(" + quoteIdentifier(c) + ")")
+                // R-M19: 冲突行的「新插入值」引用从 `VALUES(col)` 迁到行别名 `new.col`
+                // （MySQL 8.0.20 起 VALUES() 已废弃，未来版本会移除；经真实 MySQL 9.7 验证）。
+                // VALUES 列表后挂 `AS new` 行别名，DO UPDATE SET 用 `new."col"` 引用新行值，
+                // 语义与 VALUES(col) 完全一致（同 ON DUPLICATE KEY UPDATE 更新冲突行为新值）。
+                updates.add(quoteIdentifier(c) + " = new." + quoteIdentifier(c))
             }
         }
         // M14 防御：全部列都是冲突列（纯关联表直接 upsert）时 UPDATE SET 为空，MySQL 的
-        // ON DUPLICATE KEY UPDATE 必须至少一条赋值，用首列无操作更新（col = col）保语法合法
+        // ON DUPLICATE KEY UPDATE 必须至少一条赋值，用首列无操作更新保语法合法。
+        // R-M19: 行别名 AS new 存在时裸列名歧义，无操作更新的 RHS 用表限定引用现有行
+        //（冲突列上 new.col 恒等于现有列值，表限定与 new 限定语义等价，取表限定更字面）。
         var updateClause: String
         if (updates.size == 0) {
-            updateClause = " ON DUPLICATE KEY UPDATE " + quoteIdentifier(columns[0]) + " = " + quoteIdentifier(columns[0])
+            updateClause = " ON DUPLICATE KEY UPDATE " + quoteIdentifier(columns[0]) +
+                " = " + quoteIdentifier(table) + "." + quoteIdentifier(columns[0])
         } else {
             updateClause = " ON DUPLICATE KEY UPDATE " + String.join(updates.toArray(), delimiter: ", ")
         }
-        ("INSERT INTO " + quoteIdentifier(table) + " (" + String.join(cols.toArray(), delimiter: ", ") + ") VALUES (" + String.join(placeholders.toArray(), delimiter: ", ") + ")" + updateClause, extraParamCount)
+        ("INSERT INTO " + quoteIdentifier(table) + " (" + String.join(cols.toArray(), delimiter: ", ") + ") VALUES (" + String.join(placeholders.toArray(), delimiter: ", ") + ") AS new" + updateClause, extraParamCount)
     }
 
     public func dataTypeOf(st: StorageType): String {

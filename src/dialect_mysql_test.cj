@@ -286,14 +286,19 @@ public class MySQLDialectTest {
         @Expect(extraCount, 0)
     }
 
+    // R-M19: DO UPDATE SET 引用新行值改用行别名 new.col（VALUES(col) 已废弃），
+    // 生成 SQL 的 VALUES 列表后带 `AS new`。
     @TestCase
     public func testRenderUpsertVersionAudit(): Unit {
         let dialect = MySQLDialect()
         let (sql, extraCount) = dialect.upsertSQL("users", ["id", "name", "created_at", "updated_at", "version"], ["id"], ["created_at"], ["updated_at"], "version")
-        @Expect(sql.contains("`version` = `version` + 1"), true)
+        // R-M19: 行别名 AS new 下 version 自增 RHS 须表限定（裸列名与新行歧义）
+        @Expect(sql.contains("`version` = `users`.`version` + 1"), true)
+        @Expect(sql.contains("`version` = `version` + 1"), false)
         @Expect(sql.contains("`updated_at` = ?"), true)
         @Expect(sql.contains("`created_at` = VALUES(`created_at`)"), false)
-        @Expect(sql.contains("`name` = VALUES(`name`)"), true)
+        @Expect(sql.contains("`name` = new.`name`"), true)
+        @Expect(sql.contains("AS new"), true)
         @Expect(extraCount, 1)
     }
 
@@ -321,13 +326,15 @@ public class MySQLDialectTest {
     }
 
     // M14: 主键/冲突列不进入 DO UPDATE SET（pk 冲突时不会变化，写入纯噪音）
+    // R-M19: 普通列引用行别名 new.col
     @TestCase
     public func testUpsertSkipsPrimaryKeyInUpdateSet(): Unit {
         let dialect = MySQLDialect()
         let (sql, _) = dialect.upsertSQL("users", ["id", "name", "email"], ["id"], [], [], "")
-        @Expect(sql.contains("`id` = VALUES(`id`)"), false)
-        @Expect(sql.contains("`name` = VALUES(`name`)"), true)
-        @Expect(sql.contains("`email` = VALUES(`email`)"), true)
+        @Expect(sql.contains("`id` = new.`id`"), false)
+        @Expect(sql.contains("`name` = new.`name`"), true)
+        @Expect(sql.contains("`email` = new.`email`"), true)
+        @Expect(sql.contains("VALUES(`id`)"), false)
     }
 
     // 复合主键：两个冲突列都不应进入 DO UPDATE SET
@@ -335,18 +342,19 @@ public class MySQLDialectTest {
     public func testUpsertSkipsAllConflictColumnsInUpdateSet(): Unit {
         let dialect = MySQLDialect()
         let (sql, _) = dialect.upsertSQL("order_tags", ["order_id", "tag_id", "quantity"], ["order_id", "tag_id"], [], [], "")
-        @Expect(sql.contains("`order_id` = VALUES(`order_id`)"), false)
-        @Expect(sql.contains("`tag_id` = VALUES(`tag_id`)"), false)
-        @Expect(sql.contains("`quantity` = VALUES(`quantity`)"), true)
+        @Expect(sql.contains("`order_id` = new.`order_id`"), false)
+        @Expect(sql.contains("`tag_id` = new.`tag_id`"), false)
+        @Expect(sql.contains("`quantity` = new.`quantity`"), true)
     }
 
     // 全部列都是冲突列（纯关联表直接 upsert）时 UPDATE SET 为空：
-    // MySQL 的 ON DUPLICATE KEY UPDATE 必须至少一条赋值，用首列无操作更新保语法合法
+    // MySQL 的 ON DUPLICATE KEY UPDATE 必须至少一条赋值，用首列无操作更新保语法合法。
+    // R-M19: 行别名 AS new 下裸列名歧义，无操作更新的 RHS 用表限定引用现有行。
     @TestCase
     public func testUpsertAllColumnsAreConflictProducesValidNoop(): Unit {
         let dialect = MySQLDialect()
         let (sql, extraCount) = dialect.upsertSQL("junc", ["a_id", "b_id"], ["a_id", "b_id"], [], [], "")
-        @Expect(sql.contains("ON DUPLICATE KEY UPDATE `a_id` = `a_id`"), true)
+        @Expect(sql.contains("ON DUPLICATE KEY UPDATE `a_id` = `junc`.`a_id`"), true)
         @Expect(extraCount, 0)
     }
 
@@ -479,5 +487,36 @@ public class MySQLDialectTest {
         dialect.initialize(DB(MockDatasource()))
         // I5: defaultValueOf 按存储类型返回默认值字面量（不再是空串死方法）
         @Expect(dialect.defaultValueOf(StorageType.Integer), "0")
+    }
+
+    // R-M16: FOR UPDATE + LIMIT/OFFSET 串行交互（镜像 PG 的 testRenderForUpdateWithLimitOffset）
+    // ——renderLimitOffset 先组装分页段再经 hasLockSupport 追加 FOR UPDATE，两钩子不互相干扰。
+    @TestCase
+    public func testRenderForUpdateWithLimitOffset(): Unit {
+        let dialect = MySQLDialect()
+        let stmt = Statement()
+        stmt.addClause(SelectClause([Column("x")]))
+        stmt.addClause(FromClause("t"))
+        stmt.addClause(LimitClause(5))
+        stmt.addClause(OffsetClause(10))
+        stmt.addClause(LockClause)
+        let (sql, params) = dialect.render(stmt)
+        @Expect(sql, "SELECT `x` FROM `t` LIMIT 5 OFFSET 10 FOR UPDATE")
+        @Expect(params.size, 0)
+    }
+
+    // R-M16 补充：裸 OFFSET（无 LIMIT）哨兵 + FOR UPDATE 组合——I3 哨兵先于 FOR UPDATE
+    // 追加（LIMIT 哨兵在前、FOR UPDATE 在后，MySQL 语法合法）。
+    @TestCase
+    public func testRenderForUpdateWithBareOffsetSentinel(): Unit {
+        let dialect = MySQLDialect()
+        let stmt = Statement()
+        stmt.addClause(SelectClause([Column("x")]))
+        stmt.addClause(FromClause("t"))
+        stmt.addClause(OffsetClause(10))
+        stmt.addClause(LockClause)
+        let (sql, params) = dialect.render(stmt)
+        @Expect(sql, "SELECT `x` FROM `t` LIMIT 18446744073709551615 OFFSET 10 FOR UPDATE")
+        @Expect(params.size, 0)
     }
 }

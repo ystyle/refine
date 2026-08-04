@@ -334,6 +334,64 @@ public class MySQLIntegrationTest {
             case None => @Expect(true, true)
         }
     }
+
+    // ─── R-M19: MySQL upsert 从 VALUES(col) 迁到行别名 new.col（真实 MySQL） ─────
+    // MySQL 8.0.20 起 VALUES(col) 已废弃，迁移为 `INSERT ... VALUES (...) AS new
+    // ON DUPLICATE KEY UPDATE col = new.col`。真实 MySQL 链路：save 插入 → 改值
+    // upsert 同主键 → DO UPDATE SET 命中，title/content 被 new.col 刷新、行数不增长。
+    @TestCase
+    public func testPlainUpsertUpdatesOnConflict(): Unit {
+        match (tryMySQL()) {
+            case Some(rf) =>
+                rf.transaction { tx: Tx =>
+                    tx.execute("DROP TABLE IF EXISTS `post`", [])
+                }
+                rf.migrator().autoMigrate([PostSchema()])
+                let p = Post()
+                p.title = "a"
+                p.content = "c1"
+                rf.transaction { tx: Tx => tx.save(p) }
+                let pid = p.id
+                @Expect(pid > 0, true)
+                p.title = "b"
+                p.content = "c2"
+                rf.transaction { tx: Tx => tx.upsert(p) }
+                let found = Post.query().using(rf).filter(Post.col().title == "b").one()
+                @Expect(found.isSome(), true)
+                @Expect(found.getOrThrow().content, "c2")
+                let all = Post.query().using(rf).all()
+                @Expect(all.size, 1)
+                rf.transaction { tx: Tx => tx.execute("DROP TABLE IF EXISTS `post`", []) }
+                rf.close()
+            case None => @Expect(true, true)
+        }
+    }
+
+    // R-M19 补充：versioned 实体 MySQL upsert——冲突时 version 列 `version = version + 1`
+    // （LHS/RHS 均裸列名，不经过 new 别名），与 new.col 分支共存，真实 MySQL 验证。
+    @TestCase
+    public func testVersionedUpsertIncrementsVersion(): Unit {
+        match (tryMySQL()) {
+            case Some(rf) =>
+                rf.transaction { tx: Tx =>
+                    tx.execute("DROP TABLE IF EXISTS `versionedPost`", [])
+                }
+                rf.migrator().autoMigrate([VersionedPostSchema()])
+                let p = VersionedPost()
+                p.title = "v1"
+                rf.transaction { tx: Tx => tx.save(p) }
+                @Expect(p.version, 1)
+                let pid = p.id
+                @Expect(pid > 0, true)
+                rf.transaction { tx: Tx => tx.upsert(p) }
+                let found = VersionedPost.query().using(rf).filter(VersionedPost.col().id == pid).one()
+                @Expect(found.isSome(), true)
+                @Expect(found.getOrThrow().version, 2)
+                rf.transaction { tx: Tx => tx.execute("DROP TABLE IF EXISTS `versionedPost`", []) }
+                rf.close()
+            case None => @Expect(true, true)
+        }
+    }
 }
 
 // ─── Query 集成测试 ────────────────────────────────────

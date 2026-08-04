@@ -511,6 +511,41 @@ public class NestedTeamRef {
     var name: String = ""
 }
 
+// R-M10: diamond include 回归 fixture。DiamondPost 声明两个 ref_to 指向同一目标表
+// diamondUser（author 用 author_id、editor 用 editor_id），各自带相同的嵌套 has_many
+// include（DiamondUser.skills）。author/editor 指向同一个用户时（ref_to identity-map
+// 共享同一实例），递归层对共享目标实例只装配一次，skills 不会被 setter .add() 重复
+// 追加成两份（修复前对每对 pair 各递归一次）。
+@Refine
+public class DiamondUser {
+    var id: Int64 = 0
+    var name: String = ""
+
+    @Rel[has_many, DiamondSkill, user_id]
+    var skills: ArrayList<DiamondSkill> = ArrayList<DiamondSkill>()
+}
+
+@Refine
+public class DiamondSkill {
+    var id: Int64 = 0
+    var name: String = ""
+    var user_id: Int64 = 0
+}
+
+@Refine
+public class DiamondPost {
+    var id: Int64 = 0
+    var title: String = ""
+    var author_id: Int64 = 0
+    var editor_id: Int64 = 0
+
+    @Ref[DiamondUser, author_id]
+    var author: Option<DiamondUser> = None
+
+    @Ref[DiamondUser, editor_id]
+    var editor: Option<DiamondUser> = None
+}
+
 @Refine
 public class SoftDeleteParent {
     var id: Int64 = 0
@@ -1157,7 +1192,9 @@ public class MacroSaveTest {
 
         @Expect(conn.stmt.capturedSql.contains("INSERT INTO `post` (`id`, `title`, `content`)"), true)
         @Expect(conn.stmt.capturedSql.contains("ON DUPLICATE KEY UPDATE"), true)
-        @Expect(conn.stmt.capturedSql.contains("`title` = VALUES(`title`)"), true)
+        // R-M19: 引用新行值改用行别名 new.col（VALUES(col) 已废弃）
+        @Expect(conn.stmt.capturedSql.contains("`title` = new.`title`"), true)
+        @Expect(conn.stmt.capturedSql.contains("VALUES(`title`)"), false)
     }
 
     @TestCase
@@ -2217,7 +2254,9 @@ public class VersionedEntityTest {
         @Expect(p.version, 1)
         @Expect(conn.stmt.capturedSql.contains("INSERT INTO `versionedPost` (`id`, `title`, `created_at`, `updated_at`, `version`)"), true)
         @Expect(conn.stmt.capturedSql.contains("ON DUPLICATE KEY UPDATE"), true)
-        @Expect(conn.stmt.capturedSql.contains("`version` = `version` + 1"), true)
+        // R-M19: 行别名 AS new 下 version 自增 RHS 须表限定（裸列名与新行歧义）
+        @Expect(conn.stmt.capturedSql.contains("`version` = `versionedPost`.`version` + 1"), true)
+        @Expect(conn.stmt.capturedSql.contains("`version` = `version` + 1"), false)
         @Expect(conn.stmt.capturedSql.contains("`updated_at` = ?"), true)
         @Expect(conn.stmt.capturedSql.contains("`created_at` = VALUES(`created_at`)"), false)
         @Expect(conn.stmt.capturedSetValues.size, 6)
@@ -2283,7 +2322,9 @@ public class VersionedEntityTest {
 
         @Expect(e.version, 1)
         @Expect(conn.stmt.capturedSql.contains("INSERT INTO `versionedEvent` (`id`, `name`, `version`)"), true)
-        @Expect(conn.stmt.capturedSql.contains("`version` = `version` + 1"), true)
+        // R-M19: 行别名 AS new 下 version 自增 RHS 须表限定（裸列名与新行歧义）
+        @Expect(conn.stmt.capturedSql.contains("`version` = `versionedEvent`.`version` + 1"), true)
+        @Expect(conn.stmt.capturedSql.contains("`version` = `version` + 1"), false)
     }
 }
 

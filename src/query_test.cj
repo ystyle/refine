@@ -707,6 +707,25 @@ public class QueryTest {
         @Expect(ds.conn.closedCount, 1)
     }
 
+    // R-M4: page() 未挂 auto-mapper 时抛带说明的 QueryException（与 all()/one() 一致），
+    // 而非 Option.getOrThrow 的裸错误。
+    @TestCase
+    public func testPageNoMapperThrowsFriendlyError(): Unit {
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        tx.begin()
+        let q = Query<Int64>()
+            .select([Expr.Column("id")])
+            .from("t")
+            .using(tx)
+        try {
+            q.page(1, 10)
+            @Fail("expected QueryException for missing auto-mapper")
+        } catch (e: QueryException) {
+            @Expect(e.message.contains("No auto-mapper"), true)
+        }
+    }
+
     @TestCase
     public func testAfterFindThrowClosesSessionPage(): Unit {
         let ds = QueryTrackDatasource()
@@ -1128,15 +1147,15 @@ public class QueryTest {
     }
 
     @TestCase
-    public func testProcessIncludedEmptySourceTable(): Unit {
-        // Task 2: processIncluded 已是 no-op，无 FROM 或任何查询都不产生 include JOIN
+    public func testIncludeDoesNotGenerateJoin(): Unit {
+        // Task 2: include 走批量装配，不生成 include JOIN（原 processIncluded 无 JOIN 挂接，
+        // R-M3 已删除该 no-op 方法，此处保留「include 不改写主查询」的回归断言）
         let q = Query<Int64>()
         q.select([Expr.Column("id")])
         let fk = Col<Any>("user_id")
         let rel: IRelation = RefTo<Int64>("author", fk, [Col<Any>("id")], "users", dummyMapper, dummySetter, dummyFkExtractor, dummyTargetIdExtractor)
         q.include(rel)
         let dialect = SQLiteDialect()
-        q.processIncluded(dialect)
         let (sql, _) = dialect.render(q.stmt)
         @Expect(sql.contains("LEFT JOIN"), false)
     }
@@ -1172,17 +1191,6 @@ public class QueryTest {
         @Expect(entities[0].profile.getOrThrow().id, 1)
         @Expect(entities[0].profile.getOrThrow().bio, "dev")
         @Expect(entities[0].profile.getOrThrow().user_id, 7)
-    }
-
-    @TestCase
-    public func testProcessIncludedNoopWhenNoIncludes(): Unit {
-        let q = Query<Int64>()
-        q.select([Expr.Column("id")])
-        q.from("users")
-        let countBefore = q.stmt.clauses.size
-        let dialect = SQLiteDialect()
-        q.processIncluded(dialect)
-        @Expect(q.stmt.clauses.size, countBefore)
     }
 
     // ─── updateWhere / deleteWhere / forUpdate 渲染 ───
@@ -2776,6 +2784,120 @@ public class NestedIncludeTest {
         @Expect(entities[0].tags[0].notes[1].items.size, 1)
         @Expect(entities[0].tags[0].notes[1].items[0].id, 1001)
         @Expect(entities[0].tags[0].notes[1].items[0].name, "i2")
+    }
+
+    // R-M10: diamond include —— 同一层两条 ref_to（DiamondPost.author/editor）指向同一
+    // 目标表且带相同嵌套 has_many include，author 与 editor 指向同一个用户（ref_to
+    // identity-map 共享同一实例）。修复前递归层对每对 pair 各跑一次嵌套装配，共享目标
+    // 实例的 skills 被 setter .add() 追加成两份（查询次数也翻倍）。修复后按目标表合并
+    // 递归：skills 每目标只装配一次，author/editor 因是同一实例都可见完整 skills。
+    @TestCase
+    public func testDiamondIncludeSharedTargetHasManyNoDuplicate(): Unit {
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        tx.begin()
+        let mainCols: Array<SqlColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("title", false),
+            MapperMockColumnInfo("author_id", false),
+            MapperMockColumnInfo("editor_id", false),
+        ]
+        let mainRow = Array<Any>(4, {i =>
+            if (i == 0) { 1 } else if (i == 1) { "p1" } else if (i == 2) { 99 } else { 99 }})
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(mainCols, [mainRow]))
+        let userCols: Array<SqlColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("name", false),
+        ]
+        let userRow = Array<Any>(2, {i => if (i == 0) { 99 } else { "Alice" }})
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(userCols, [userRow]))
+        let skillCols: Array<SqlColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("user_id", false),
+            MapperMockColumnInfo("name", false),
+        ]
+        let skillRows = [
+            Array<Any>(3, {i => if (i == 0) { 10 } else if (i == 1) { 99 } else { "s1" }}),
+            Array<Any>(3, {i => if (i == 0) { 11 } else if (i == 1) { 99 } else { "s2" }}),
+        ]
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(skillCols, skillRows))
+        let q = DiamondPost.query()
+            .include(DiamondPostRel.author.withInclude(DiamondUserRel.skills))
+            .include(DiamondPostRel.editor.withInclude(DiamondUserRel.skills))
+            .using(tx)
+        let entities = q.all()
+        // 主查询 + author/editor 合并批量（同一目标表）+ skills 一次 = 三次查询
+        @Expect(conn.stmt.capturedSqlHistory.size, 3)
+        @Expect(conn.stmt.capturedSqlHistory[1].contains("FROM \"diamondUser\""), true)
+        @Expect(conn.stmt.capturedSqlHistory[2].contains("FROM \"diamondSkill\""), true)
+        @Expect(entities.size, 1)
+        let author = entities[0].author.getOrThrow()
+        let editor = entities[0].editor.getOrThrow()
+        @Expect(author.id, 99)
+        @Expect(author.skills.size, 2)
+        @Expect(author.skills[0].id, 10)
+        @Expect(author.skills[0].name, "s1")
+        @Expect(author.skills[1].id, 11)
+        @Expect(author.skills[1].name, "s2")
+        // ref_to identity-map：author 与 editor 是同一实例，skills 同样可见且不重复
+        @Expect(editor.skills.size, 2)
+        @Expect(editor.skills[0].id, 10)
+    }
+
+    // R-M10 回归：同一目标表的两个 ref_to 带相同嵌套 include，但目标不同（author=用户A、
+    // editor=用户B）——合并后同一递归层装配两个目标，各自的 skills 互不串扰、不丢失
+    // （防「按目标表去重的朴素守卫把第二条目标整体跳过」的漏数据回归）。
+    @TestCase
+    public func testDiamondIncludeDistinctTargetsNoDataLoss(): Unit {
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        tx.begin()
+        let mainCols: Array<SqlColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("title", false),
+            MapperMockColumnInfo("author_id", false),
+            MapperMockColumnInfo("editor_id", false),
+        ]
+        let mainRow = Array<Any>(4, {i =>
+            if (i == 0) { 1 } else if (i == 1) { "p1" } else if (i == 2) { 99 } else { 100 }})
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(mainCols, [mainRow]))
+        let userCols: Array<SqlColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("name", false),
+        ]
+        let userRows = [
+            Array<Any>(2, {i => if (i == 0) { 99 } else { "Alice" }}),
+            Array<Any>(2, {i => if (i == 0) { 100 } else { "Bob" }}),
+        ]
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(userCols, userRows))
+        let skillCols: Array<SqlColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("user_id", false),
+            MapperMockColumnInfo("name", false),
+        ]
+        let skillRows = [
+            Array<Any>(3, {i => if (i == 0) { 10 } else if (i == 1) { 99 } else { "s1" }}),
+            Array<Any>(3, {i => if (i == 0) { 11 } else if (i == 1) { 99 } else { "s2" }}),
+            Array<Any>(3, {i => if (i == 0) { 12 } else if (i == 1) { 100 } else { "s3" }}),
+        ]
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(skillCols, skillRows))
+        let q = DiamondPost.query()
+            .include(DiamondPostRel.author.withInclude(DiamondUserRel.skills))
+            .include(DiamondPostRel.editor.withInclude(DiamondUserRel.skills))
+            .using(tx)
+        let entities = q.all()
+        // 主查询 + 合并批量（两个目标一次 IN）+ skills 一次 = 三次查询
+        @Expect(conn.stmt.capturedSqlHistory.size, 3)
+        @Expect(entities.size, 1)
+        let author = entities[0].author.getOrThrow()
+        let editor = entities[0].editor.getOrThrow()
+        @Expect(author.id, 99)
+        @Expect(author.skills.size, 2)
+        @Expect(author.skills[0].name, "s1")
+        @Expect(author.skills[1].name, "s2")
+        @Expect(editor.id, 100)
+        @Expect(editor.skills.size, 1)
+        @Expect(editor.skills[0].name, "s3")
     }
 
     // 嵌套 include 环（自定义 IRelation getNested 返回自身）：深度守卫必须终止递归并抛错。
