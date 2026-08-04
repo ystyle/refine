@@ -102,12 +102,25 @@ PostgreSQL 表名若为保留字（如 `user`、`order`）需用 `@Table` 指定
 
 ## 安装
 
+从中心仓安装（推荐）：
+
+```toml
+[dependencies]
+refine = "0.5.1"
+```
+
+或使用 git 依赖（开发版）：
+
 ```toml
 [dependencies]
 refine = { git = "https://atomgit.com/ystyle/refine.git", branch = "master" }
 ```
 
 > GitHub 镜像：[`https://github.com/ystyle/refine`](https://github.com/ystyle/refine)
+
+## 测试
+
+单元 + 集成测试 **937 个全部通过**（`cjpm test`），其中包含针对真实 MySQL 与 PostgreSQL 的连接集成测试。
 
 ## 文档
 

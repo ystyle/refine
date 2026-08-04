@@ -2,6 +2,15 @@
 
 ## 添加依赖
 
+从中心仓安装（推荐）：
+
+```toml
+[dependencies]
+refine = "0.5.1"
+```
+
+或使用 git 依赖（开发版）：
+
 ```toml
 [dependencies]
 refine = { git = "https://atomgit.com/ystyle/refine.git", branch = "master" }
