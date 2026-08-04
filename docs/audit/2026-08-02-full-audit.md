@@ -205,7 +205,7 @@
 - **位置**：`src/macros/relation_gen.cj:17-21`（refToSQL / hasManyLoadSQL / hasManyClearSQL / hasOneLoadSQL / hasOneRemoveSQL）
 - **问题**：这些面向用户的实体管理方法（loadX/clearX/setX/removeX）的 SQL 仍把裸标识符烘焙进编译期字符串——`refToSQL` 用未引号的目标表名 + 裸 `id` 列，has_many/has_one 系列用未引号的 `r.by` fk 列与未引号的目标表名。PG 下驼峰表名/fk 列折叠小写无法命中（与 I2/I19 同模式）。I19/I20/I21 已覆盖主实体写路径与 ref_many junction，此路径仍遗漏。
 - **修法**：与 I21 相同——SQL 改为运行时 `tx.getDialect().quoteIdentifier`（这些方法均带 `tx: Tx` 参数，dialect 可得）。
-- **备注**：由 I21 修复后同类排查发现（2026-08-03），列为后续排期。
+- **✅ 已解决（2026-08-03，对应 R-I6）**：`relation_gen.cj` 五条管理方法 SQL 的目标表名、`id`、`r.by` fk 列全部经 `tx.getDialect().quoteIdentifier` 运行时引号化，新增三方言 SQL 断言 + 真实 PG/MySQL 集成 `testCamelCaseManagementMethods`。原「备注：列为后续排期」随修复移除。
 
 ---
 

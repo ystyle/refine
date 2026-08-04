@@ -3,7 +3,7 @@
 > 审查日期：2026-08-03
 > 审查范围：0.5.0 版本全部改动（3 天、~140 提交）——batch include 重构、C/I 系列 Critical/Important、M 系列修复、M18 方言基类抽取、M20 Query 拆分
 > 审查方式：三路并行深度审查（核心运行时 / 方言+迁移器 / 宏生成层），真实 PG/MySQL 容器验证 + 逐行核对
-> 状态：**Not ready for release** — 存在 2 个 Critical + 9 个 Important + 若干 Minor，修复后需补测试沉淀。进度：**R-C1/R-C2 已修复（2026-08-03）**；**R-I1~R-I9 已修复（2026-08-03）**（R-I7 按 controller 裁决落地宏错误守卫、Option<DateTime> 完整支持延后 F4；R-I9 落地运行时预检 + 文档）；Minor 记录待处理。
+> 状态：**Not ready for release** — 存在 2 个 Critical + 9 个 Important + 若干 Minor，修复后需补测试沉淀。进度：**R-C1/R-C2 已修复（2026-08-03）**；**R-I1~R-I9 已修复（2026-08-03）**（R-I7 按 controller 裁决落地宏错误守卫、Option<DateTime> 完整支持延后 F4；R-I9 落地运行时预检 + 文档）；**R-M1~R-M20 已修复（2026-08-04，0.5.1 Minor 批次）**（R-M11/R-M12 属 0.5.0 已修复项）。
 
 ---
 
@@ -89,26 +89,48 @@
 
 ## 四、Minor（Nice to Have）
 
+> 进度：**R-M1~R-M20 已处理（2026-08-04，0.5.1 Minor 批次）**，R-M11/R-M12 已在 0.5.0 修复。两项真实行为修复（R-M10 diamond include 去重、R-M19 MySQL VALUES→行别名）均补单元测试 + 真实数据库集成验证。
+
 - **R-M1** `keyExtractor` 是 write-only 死代码（query.cj:29,77,144；rawIdExtractor 取代后无人读）。
+  - **✅ 已解决（2026-08-04）**：核实无任何读取（grep 全库仅写入/宏挂载，测试未用 setKeyExtractor），删除字段 + copy() 行 + setKeyExtractor setter + 宏层 buildKeyExtractor 全套（refine_macro.cj / method_gen.cj）。
 - **R-M2** `Query.db` 字段 write-only 死代码（query_include.cj:143-147）。
+  - **✅ 已解决（2026-08-04）**：删除字段 + copy() 行；`using(DB)` 公开 API 保留（仍绑定会话为执行上下文，只是不再存储 db 字段）。
 - **R-M3** `processIncluded` 是 public no-op（query_include.cj:161-163），死 API 面。
+  - **✅ 已解决（2026-08-04）**：删除方法 + all/one/page 三处调用；两个直接调用它的测试改造/移除（保留「include 不改写主查询」的回归断言）。
 - **R-M4** `page()` 缺 "No auto-mapper" 友好守卫（query_exec.cj:38 用 raw Option 错误，all/one 有 QueryException）。
+  - **✅ 已解决（2026-08-04）**：page() 补 `match (this.mapper)` 守卫，抛带说明的 QueryException；新增 testPageNoMapperThrowsFriendlyError。
 - **R-M5** Session/Tx `queryAll`/`queryOne` 两个逐字节相同的 extend 块（db.cj:312-354）。
+  - **✅ 已解决（2026-08-04）**：收敛为 ExecutionContext 接口默认方法（Session/Tx 经 `<: ExecutionContext` 继承），删除两处重复 extend。
 - **R-M6** `formatAny` 缺 Int8/Int16/UInt*/Float32（log.cj:81-100）。
+  - **✅ 已解决（2026-08-04）**：补齐 Int8/Int16/UInt8/UInt16/UInt32/UInt64（Float32 已存在）；新增 7 例 formatAny 测试。
 - **R-M7** `setIsolation` post-commit 未守卫（M19 有意为之，但调用无效果，补注释）。
+  - **✅ 已解决（2026-08-04）**：方法上加注释说明 M19 有意不加守卫（Refine.transaction(level:) 在 begin 前调用）。
 - **R-M8** `Page.totalPages` `(total + size - 1)` Int64 溢出（page.cj:21）。
+  - **✅ 已解决（2026-08-04）**：改饱和公式 `(total - 1) / size + 1`（语义等价 ceil(total/size)，全程无溢出）；新增近 Int64 max 回归测试。
 - **R-M9** `assembleRefMany` 重复 junction 行 → 同组同实例两次（需 DB 损坏触发，注释）。
+  - **✅ 已解决（2026-08-04）**：组内按目标 id 去重（groupTargetSeen），防同一实例被 .add() 两次；附 R-M9 注释。
 - **R-M10** Diamond include 重复嵌套 has_many 子对象（query_batch.cj:287-292，已记档延期）。
+  - **✅ 已解决（2026-08-04）**：递归前按「下一层源表」合并 pairs——targets 取并集按 refEq（对象引用）去重、nested 取并集按结构 key 去重、sourceColumnMap 取列名并集。共享目标只递归一次，嵌套 has_many 不再重复追加；不同 fk 指向同一行的独立实例各自保留（不误删）。新增 testDiamondIncludeSharedTargetHasManyNoDuplicate / testDiamondIncludeDistinctTargetsNoDataLoss。
 - **R-M11** 预绑定 query + Refine.all/one 连接泄漏组合（refine.cj:131-138 + query_include.cj:149-155）。
+  - **✅ 已解决（2026-08-03，0.5.0）**。
 - **R-M12** 手动 commit 后外层 commit 抛 "not active"（refine.cj:54-56；wrapper 只处理 throw-after-manual-commit 情况）。
+  - **✅ 已解决（2026-08-03，0.5.0）**。
 - **R-M13** 迁移器标识符未转义，与 C9 方言层不一致（migrator_*.cj 用裸 `"`/`` ` `` 包裹）。
+  - **✅ 已解决（2026-08-04）**：MySQL/PG 迁移器全部标识符改经 `dialect.quoteIdentifier`；SQLite 静态构建器新增私有 `qi()` 统一走 `SQLiteDialect().quoteIdentifier`（含 PRAGMA table_info）。
 - **R-M14** PG `alterColumn` 忽略 `_old`，主键变更语义不完整（migrator_postgres.cj:125-139）。
+  - **✅ 已解决（2026-08-04）**：加注释记录限制（autoMigrate 只加不改，仅显式 API 触达，调用方需自行保证完整语义）。
 - **R-M15** SQLite `defaultValueOf(Timestamp)="0"` 与 TEXT 列语义不一致（dialect_sqlite.cj:75，建议 `'1970-01-01 00:00:00'`）。
+  - **✅ 已解决（2026-08-04）**：SQLite Timestamp 默认值改 `'1970-01-01 00:00:00'`（对齐 PG），更新 addColumnSQL 与 defaultValueOf 断言。
 - **R-M16** MySQL 无「裸 OFFSET 哨兵 + FOR UPDATE」组合测试（dialect_base.cj:150-151）。
+  - **✅ 已解决（2026-08-04）**：新增 testRenderForUpdateWithLimitOffset（镜像 PG）+ testRenderForUpdateWithBareOffsetSentinel。
 - **R-M17** 空 schema 生成 `CREATE TABLE IF NOT EXISTS "empty" ()`（migrator_sqlite.cj:39-49，SQLite 非法 DDL）。
+  - **✅ 已解决（2026-08-04）**：三迁移器 createTableSQL 对空 columns 抛 MigrationException（带表名的明确错误）；原 testCreateTableSQLEmpty 改为 testCreateTableSQLEmptyThrows。
 - **R-M18** SQLite `getExistingIndexNames` 读到 `sqlite_autoindex_*`（migrator_sqlite.cj:178）。
+  - **✅ 已解决（2026-08-04）**：过滤 `sqlite_autoindex_` 前缀（SQLite 为 UNIQUE/主键约束自动创建的内部索引）。
 - **R-M19** MySQL `VALUES(col)` 已废弃（dialect_mysql.cj:47，8.0.20 起废弃，应迁 `INSERT ... AS new`）。
+  - **✅ 已解决（2026-08-04）**：迁到 `INSERT ... VALUES (...) AS new ON DUPLICATE KEY UPDATE col = new.col`。行别名下裸列名歧义，version 自增与纯关联表 noop 的 RHS 改表限定（真实 MySQL 9.7 验证）；新增真实 MySQL 集成 testPlainUpsertUpdatesOnConflict / testVersionedUpsertIncrementsVersion + dialect/宏层断言更新。
 - **R-M20** 审计文档状态头行与正文矛盾：状态行称 "I23 已修复"，正文与代码均为"未修复、后续排期"（2026-08-02-full-audit.md:6）。
+  - **✅ 已解决（2026-08-04）**：I23 正文备注更新为已修复（对应 R-I6 落地），状态行与正文一致。
 
 ---
 
@@ -131,5 +153,5 @@
   R-I9  ref_many String-pk 目标运行期类型错误（运行时预检）      ✅ 已修复
 
 第三优先级（Minor）：
-  R-M1 ~ R-M20（记录，择机处理）
+  R-M1 ~ R-M20                                                      ✅ 已修复（2026-08-04）
 ```
