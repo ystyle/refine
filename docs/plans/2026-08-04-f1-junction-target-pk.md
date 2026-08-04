@@ -82,8 +82,8 @@ public func columns(): Array<ColumnDef> {
 4. **db/relation 测试**：移除 R-I9 预检后，原抛 RefineException 的测试改为断言成功路径
 
 ## 完成定义
-- [ ] junction 目标列类型运行时从目标实体 Schema 读取
-- [ ] String-pk 目标 ref_many 端到端可用（append/load/clear/count）
-- [ ] R-I9 预检移除（保留目标 id 空 precheck）
-- [ ] 现有 Int64 场景无回归，全量测试通过
-- [ ] 审计 F1 标记已解决 + 真实 DB 验证记录
+- [x] junction 目标列类型运行时从目标实体 Schema 读取
+- [x] String-pk 目标 ref_many 端到端可用（append/load/clear/count）
+- [x] R-I9 预检移除（保留目标 id 空 precheck）
+- [x] 现有 Int64 场景无回归，全量测试通过（956 全绿）
+- [x] 审计 F1 标记已解决 + 真实 DB 验证记录（PG/MySQL roundtrip 各 2 例，information_schema 列类型断言通过）

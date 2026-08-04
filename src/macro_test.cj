@@ -305,6 +305,26 @@ public class BoolPkPost {
     var tags: ArrayList<Tag> = ArrayList<Tag>()
 }
 
+// F1 回归 fixture：Bool-pk 目标（BoolPkTag，storageOverride `Bool`）的 ref_many。
+// junction 目标列类型运行时从目标实体 Schema 读取——应得 StorageType.`Bool`，
+// 验证 Bool 关键字在运行时推断路径不被硬编码 Integer 覆盖。
+@Refine
+public class BoolPkTag {
+    @Id[auto, true]
+    @Field[`Bool`]
+    var id: Int64 = 0
+    var name: String = ""
+}
+
+@Refine
+public class BoolPkTagPost {
+    var id: Int64 = 0
+    var title: String = ""
+
+    @Ref[BoolPkTag, via: bool_pk_tag_post_tags]
+    var tags: ArrayList<BoolPkTag> = ArrayList<BoolPkTag>()
+}
+
 @Refine
 public class UnderscoreFieldEntity {
     var id: Int64 = 0
@@ -3522,13 +3542,13 @@ public class RefManyTableOverrideTest {
     @TestCase
     public func testJunctionSourceColStringWhenUuidSourcePkString(): Unit {
         // UuidKeyTagPost 主键 String → 源列 String；目标 UuidTag 亦 String-pk，
-        // 但目标列类型宏层无法跨类内省 → 保持 Integer（已文档化限制）
+        // F1 起目标列类型运行时从目标实体 Schema 读取 → 应为 String（此前硬编码 Integer）
         let js = UuidKeyTagPost_TagsJunctionSchema()
         let cols = js.columns()
         @Expect(cols[0].name, "uuidKeyTagPost_id")
         @Expect(cols[0].storageType, StorageType.String)
         @Expect(cols[1].name, "uuidTag_id")
-        @Expect(cols[1].storageType, StorageType.Integer)
+        @Expect(cols[1].storageType, StorageType.String)
     }
 
     // F1 回归：Bool storageOverride 主键的 junction 源列应为 StorageType.`Bool`
@@ -3585,10 +3605,9 @@ public class RefManyStringPkTargetTest {
     }
 
     @TestCase
-    public func testAppendSavedStringPkTargetThrowsUnimplemented(): Unit {
-        // R-I9: junction 目标列硬编码 Integer（宏层无法跨类内省目标主键类型），
-        // String-pk 目标会把 String id 绑进 INTEGER 列 → 真实 DB 类型错误。
-        // 修复后执行前抛明确 RefineException（而非 DB 层报错），Int64-pk 目标不受影响。
+    public func testAppendSavedStringPkTargetSucceeds(): Unit {
+        // F1: junction 目标列类型运行时从目标实体 Schema 读取（UuidTag String-pk →
+        // String 列），append 不再抛 R-I9 RefineException，String id 正常绑进 junction 表。
         let conn = CaptureConnection()
         let tx = sqliteTx(conn)
         tx.begin()
@@ -3596,19 +3615,15 @@ public class RefManyStringPkTargetTest {
         p.id = 42
         let t = UuidTag()
         t.id = "uuid-tag-1"
-        try {
-            p.appendTags(tx, t)
-            @Fail("expected RefineException for String-pk target append")
-        } catch (e: RefineException) {
-            @Expect(e.message.contains("String primary key"), true)
-            @Expect(e.message.contains("Integer"), true)
-        }
-        // 守卫在 tx.execute 之前抛出：不允许触达 DB（capturedSql 保持空）
-        @Expect(conn.stmt.capturedSql, "")
+        p.appendTags(tx, t)
+        @Expect(conn.stmt.capturedSql.contains("INSERT INTO \"uuid_tag_post_tags\""), true)
+        @Expect(conn.stmt.capturedSetValues.size, 2)
+        @Expect(capturedInt64(conn.stmt.capturedSetValues, 0), 42)
+        @Expect(capturedString(conn.stmt.capturedSetValues, 1), "uuid-tag-1")
     }
 
     @TestCase
-    public func testDeleteSavedStringPkTargetThrowsUnimplemented(): Unit {
+    public func testDeleteSavedStringPkTargetSucceeds(): Unit {
         let conn = CaptureConnection()
         let tx = sqliteTx(conn)
         tx.begin()
@@ -3616,17 +3631,15 @@ public class RefManyStringPkTargetTest {
         p.id = 42
         let t = UuidTag()
         t.id = "uuid-tag-1"
-        try {
-            p.deleteTags(tx, t)
-            @Fail("expected RefineException for String-pk target delete")
-        } catch (e: RefineException) {
-            @Expect(e.message.contains("String primary key"), true)
-        }
-        @Expect(conn.stmt.capturedSql, "")
+        p.deleteTags(tx, t)
+        @Expect(conn.stmt.capturedSql.contains("DELETE FROM \"uuid_tag_post_tags\""), true)
+        @Expect(conn.stmt.capturedSetValues.size, 2)
+        @Expect(capturedInt64(conn.stmt.capturedSetValues, 0), 42)
+        @Expect(capturedString(conn.stmt.capturedSetValues, 1), "uuid-tag-1")
     }
 
     @TestCase
-    public func testReplaceStringPkTargetThrowsUnimplemented(): Unit {
+    public func testReplaceStringPkTargetSucceeds(): Unit {
         let conn = CaptureConnection()
         let tx = sqliteTx(conn)
         tx.begin()
@@ -3635,12 +3648,73 @@ public class RefManyStringPkTargetTest {
         let t = UuidTag()
         t.id = "uuid-tag-1"
         let arr = [t]
-        try {
-            p.replaceTags(tx, arr)
-            @Fail("expected RefineException for String-pk target replace")
-        } catch (e: RefineException) {
-            @Expect(e.message.contains("String primary key"), true)
-        }
+        p.replaceTags(tx, arr)
+        @Expect(conn.stmt.capturedSqlHistory.size, 2)
+        @Expect(conn.stmt.capturedSqlHistory[0].contains("DELETE FROM \"uuid_tag_post_tags\""), true)
+        @Expect(conn.stmt.capturedSqlHistory[1].contains("INSERT INTO \"uuid_tag_post_tags\""), true)
+    }
+}
+
+// F1: String-pk 源（UuidKeyTagPost）+ String-pk 目标（UuidTag）ref_many 完整生命周期。
+// 修复前 R-I9 守卫在 append 时抛 RefineException，String-pk 目标功能不可用；F1 移除守卫后
+// append/count/load/clear/delete 全部走正常路径（mock 层断言 SQL 与绑定值）。
+@Test
+public class RefManyStringPkBothEndsTest {
+    @TestCase
+    public func testStringPkBothEndsLifecycle(): Unit {
+        let conn = CaptureConnection()
+        let tx = sqliteTx(conn)
+        tx.begin()
+        let p = UuidKeyTagPost()
+        p.id = "p-1"
+        let t1 = UuidTag(); t1.id = "t-1"; t1.name = "n1"
+        let t2 = UuidTag(); t2.id = "t-2"; t2.name = "n2"
+
+        // append 两个目标：源 String id 与目标 String id 分别绑定
+        p.appendTags(tx, [t1, t2])
+        @Expect(conn.stmt.capturedSqlHistory.size, 2)
+        @Expect(conn.stmt.capturedSqlHistory[0].contains("INSERT INTO \"uuid_key_tag_post_tags\""), true)
+        @Expect(conn.stmt.capturedSqlHistory[1].contains("INSERT INTO \"uuid_key_tag_post_tags\""), true)
+        @Expect(conn.stmt.capturedSetValues.size, 4)
+        @Expect(capturedString(conn.stmt.capturedSetValues, 0), "p-1")
+        @Expect(capturedString(conn.stmt.capturedSetValues, 1), "t-1")
+        @Expect(capturedString(conn.stmt.capturedSetValues, 2), "p-1")
+        @Expect(capturedString(conn.stmt.capturedSetValues, 3), "t-2")
+
+        // count 不抛
+        conn.stmt.queryResult = MapperMockQueryResult(
+            [MapperMockColumnInfo("COUNT(*)", false)], [Array<Any>(1, {i => 2})])
+        @Expect(p.countTags(tx), 2)
+
+        // load 空结果不抛（返回空列表）
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(
+            [MapperMockColumnInfo("id", false), MapperMockColumnInfo("name", false)], []))
+        let loaded = p.loadTags(tx)
+        @Expect(loaded.size, 0)
+
+        // delete 单目标不抛
+        p.deleteTags(tx, t1)
+        @Expect(conn.stmt.capturedSql.contains("DELETE FROM \"uuid_key_tag_post_tags\""), true)
+
+        // clear 不抛
+        p.clearTags(tx)
+        @Expect(conn.stmt.capturedSql.contains("DELETE FROM \"uuid_key_tag_post_tags\""), true)
+    }
+}
+
+// F1: Bool-pk 目标 junction 目标列运行时读到 StorageType.`Bool`（storageOverride 生效），
+// 验证 Bool 关键字在运行时推断路径的转义与赋值（此前目标列硬编码 Integer）。
+@Test
+public class RefManyBoolPkTargetTest {
+    @TestCase
+    public func testJunctionTargetColBoolWhenTargetPkBool(): Unit {
+        let js = BoolPkTagPost_TagsJunctionSchema()
+        let cols = js.columns()
+        @Expect(cols.size, 2)
+        @Expect(cols[0].name, "boolPkTagPost_id")
+        @Expect(cols[0].storageType, StorageType.Integer)
+        @Expect(cols[1].name, "boolPkTag_id")
+        @Expect(cols[1].storageType, StorageType.`Bool`)
     }
 }
 

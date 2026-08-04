@@ -20,12 +20,6 @@ func tryPostgres(): Option<Refine> {
     }
 }
 
-// R-I9 真实 PG 探针：闭包内无法改外层局部 var（值捕获），用类字段记录守卫是否触发
-class R9ThrowProbe {
-    var threw: Bool = false
-    public init() {}
-}
-
 struct PgSchema <: TableSchema {
     var t: String
     var c: Array<ColumnDef>
@@ -1028,12 +1022,12 @@ public class PostgreSQLIntegrationTest {
         }
     }
 
-    // ─── R-I9: String-pk 目标 junction append 执行前抛 RefineException（真实 PG） ──
-    // 修复前 appendTags 把 String id 绑进 INTEGER 目标列 → 真实 DB 类型错误。修复后
-    // 宏生成守卫在 tx.execute 之前抛明确 RefineException，junction 表保持 0 行。
-    // Int64-pk 目标（Tag）不受影响，由既有 testRefManyIncludeAssembles 等覆盖。
+    // ─── F1: String-pk 目标 junction 端到端 roundtrip（真实 PG） ──────────────────
+    // 修复前 junction 目标列硬编码 Integer → BIGINT，String id 写入即 DB 类型错误，
+    // 且 R-I9 守卫在执行前抛 RefineException 使 append 不可用。修复后目标列运行时从
+    // UuidTagSchema 读到 String → VARCHAR(255)，append/count/load/include/clear 全可用。
     @TestCase
-    public func testStringPkTargetAppendThrowsBeforeDb(): Unit {
+    public func testStringPkTargetJunctionRoundtrip(): Unit {
         match (tryPostgres()) {
             case Some(rf) =>
                 rf.transaction { tx: Tx =>
@@ -1045,23 +1039,105 @@ public class PostgreSQLIntegrationTest {
                 m.autoMigrate([UuidTagPostSchema(), UuidTagSchema(), UuidTagPost_TagsJunctionSchema()])
                 let p = UuidTagPost(); p.id = 42; p.title = "t"
                 let t = UuidTag(); t.id = "ut-1"; t.name = "n"
-                rf.transaction { tx: Tx => tx.save(p) }
-                rf.transaction { tx: Tx => tx.save(t) }
-                let probe = R9ThrowProbe()
                 rf.transaction { tx: Tx =>
-                    try {
-                        p.appendTags(tx, t)
-                    } catch (e: RefineException) {
-                        @Expect(e.message.contains("String primary key"), true)
-                        probe.threw = true
+                    tx.save(p)
+                    tx.save(t)
+                }
+                rf.transaction { tx: Tx => p.appendTags(tx, t) }
+                rf.transaction { tx: Tx => @Expect(p.countTags(tx), 1) }
+                // 目标列建表类型正确（VARCHAR 而非 BIGINT）+ junction 行值可读
+                rf.transaction { tx: Tx =>
+                    let r = tx.query("SELECT data_type FROM information_schema.columns WHERE table_name = ? AND column_name = ?", ["uuid_tag_post_tags", "uuidTag_id"])
+                    if (r.next()) {
+                        @Expect(r.get<String>(0), "character varying")
+                    } else {
+                        @Expect(true, false)
+                    }
+                    let r2 = tx.query("SELECT \"uuidTag_id\" FROM \"uuid_tag_post_tags\"", [])
+                    if (r2.next()) {
+                        @Expect(r2.get<String>(0), "ut-1")
+                    } else {
+                        @Expect(true, false)
                     }
                 }
-                @Expect(probe.threw, true)
-                // 守卫在执行前抛出，junction 表必须保持 0 行
+                // loadX 读回关联目标
+                let loaded = rf.transaction { tx: Tx => p.loadTags(tx) }
+                @Expect(loaded.size, 1)
+                @Expect(loaded[0].id, "ut-1")
+                @Expect(loaded[0].name, "n")
+                // include 批量装配读回
+                let found = UuidTagPost.query().include(UuidTagPostRel.tags).using(rf).filter(UuidTagPost.col().title == "t").one()
+                @Expect(found.isSome(), true)
+                @Expect(found.getOrThrow().tags.size, 1)
+                @Expect(found.getOrThrow().tags[0].id, "ut-1")
+                // delete / clear 验证
                 rf.transaction { tx: Tx =>
-                    let r = tx.query("SELECT COUNT(*) FROM \"uuid_tag_post_tags\"", [])
-                    r.next()
-                    @Expect(r.get<Int64>(0), 0)
+                    p.deleteTags(tx, t)
+                    @Expect(p.countTags(tx), 0)
+                }
+                rf.transaction { tx: Tx =>
+                    p.appendTags(tx, t)
+                    @Expect(p.countTags(tx), 1)
+                    p.clearTags(tx)
+                    @Expect(p.countTags(tx), 0)
+                }
+                rf.close()
+            case None => @Expect(true, true)
+        }
+    }
+
+    // ─── F1: String-pk 源 + String-pk 目标 ref_many 端到端（真实 PG） ─────────────
+    // UuidKeyTagPost（String-pk 源）→ UuidTag（String-pk 目标）：junction 两列均 String
+    //（源列跟随源主键、目标列运行时读取），完整 roundtrip 验证两端 String id 均可写读。
+    @TestCase
+    public func testStringPkSourceAndTargetJunctionRoundtrip(): Unit {
+        match (tryPostgres()) {
+            case Some(rf) =>
+                rf.transaction { tx: Tx =>
+                    tx.execute("DROP TABLE IF EXISTS \"uuid_key_tag_post_tags\"", [])
+                    tx.execute("DROP TABLE IF EXISTS \"uuidKeyTagPost\"", [])
+                    tx.execute("DROP TABLE IF EXISTS \"uuidTag\"", [])
+                }
+                let m = rf.migrator()
+                m.autoMigrate([UuidKeyTagPostSchema(), UuidTagSchema(), UuidKeyTagPost_TagsJunctionSchema()])
+                let p = UuidKeyTagPost(); p.id = "p-1"; p.title = "t"
+                let t = UuidTag(); t.id = "ut-1"; t.name = "n"
+                rf.transaction { tx: Tx =>
+                    tx.save(p)
+                    tx.save(t)
+                }
+                rf.transaction { tx: Tx => p.appendTags(tx, t) }
+                rf.transaction { tx: Tx => @Expect(p.countTags(tx), 1) }
+                // junction 两列类型均非 BIGINT（源 VARCHAR + 目标 VARCHAR）
+                rf.transaction { tx: Tx =>
+                    let r = tx.query("SELECT data_type FROM information_schema.columns WHERE table_name = ? AND column_name = ?", ["uuid_key_tag_post_tags", "uuidKeyTagPost_id"])
+                    if (r.next()) {
+                        @Expect(r.get<String>(0), "character varying")
+                    } else {
+                        @Expect(true, false)
+                    }
+                    let r2 = tx.query("SELECT data_type FROM information_schema.columns WHERE table_name = ? AND column_name = ?", ["uuid_key_tag_post_tags", "uuidTag_id"])
+                    if (r2.next()) {
+                        @Expect(r2.get<String>(0), "character varying")
+                    } else {
+                        @Expect(true, false)
+                    }
+                }
+                let loaded = rf.transaction { tx: Tx => p.loadTags(tx) }
+                @Expect(loaded.size, 1)
+                @Expect(loaded[0].id, "ut-1")
+                let found = UuidKeyTagPost.query().include(UuidKeyTagPostRel.tags).using(rf).filter(UuidKeyTagPost.col().title == "t").one()
+                @Expect(found.isSome(), true)
+                @Expect(found.getOrThrow().tags.size, 1)
+                rf.transaction { tx: Tx =>
+                    p.deleteTags(tx, t)
+                    @Expect(p.countTags(tx), 0)
+                }
+                rf.transaction { tx: Tx =>
+                    p.appendTags(tx, t)
+                    @Expect(p.countTags(tx), 1)
+                    p.clearTags(tx)
+                    @Expect(p.countTags(tx), 0)
                 }
                 rf.close()
             case None => @Expect(true, true)

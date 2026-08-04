@@ -270,6 +270,7 @@
 - **问题**：`buildJunctionSchema` 把中间表**两列都**硬编码 `StorageType.Integer`，未跟随源/目标主键类型。当 ref_many 目标主键为 String 时 DDL 类型不匹配（VARCHAR 列建表成 INTEGER）。**由 Task 5 批量 include 暴露（2026-08-02）：源主键为 String 同样受影响**——`UuidKeyTagPost`（String-pk 源）fixture 的中间表源列 `uuidKeyTagPost_id` 也会建成 BIGINT。junction 的源列与目标列都应跟随各自主键类型，任一方向为 String-pk 即建表失败。
 - **修法**：需宏层获取源/目标主键类型（跨类内省），或退化为运行时约束 + 文档说明。
 - **备注**：Task 5 的 String-pk ref_many 读路径（`assembleRefMany` 的 isStringPk 分支）仅在 mock 上验证通过，**真实 DB 上未验证**——junction 列建成 BIGINT 后 String id 的 INSERT/读取会失败，须等本项修复后补真实 DB 验证。
+- **✅ 已解决（2026-08-04，F1）**：源列跟随源主键类型（宏层可内省，先前批次已落地）；目标列改为**运行时从目标实体 Schema 读取**——宏层无法跨类内省目标主键类型（仓颉宏无全局符号表），但 ref_many 依赖目标实体被 `@Refine` 修饰，`$(target)Schema()` 类必然存在，`buildJunctionSchema` 生成的 `columns()` 运行时取目标主键列 `storageType`（复合主键取第一个 pk 列、找不到回退 Integer、`@Field` storageOverride 自动生效）。目标实体未 `@Refine` 时 `$(target)Schema` 不存在 → 编译期失败（比运行时预检更早）。R-I9 运行时预检（append/delete 对 String-pk 目标抛 RefineException）随之移除，保留目标 id 空 precheck。真实 DB 验证：PG/MySQL 各 2 例 String-pk 目标 roundtrip（Int64-pk 源→String-pk 目标、String-pk 源→String-pk 目标），含 information_schema 列类型断言、append/count/load/include/delete/clear 全链路。设计见 `docs/plans/2026-08-04-f1-junction-target-pk.md`。
 
 ### F2. cascadeDelete 无 pk 死代码分支 + 复合 pk 键测试 + visited O(n) 优化
 - **位置**：`relation_gen.cj:214`（`if (pkFields.size == 0)` 分支）

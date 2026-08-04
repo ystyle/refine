@@ -185,7 +185,7 @@ public macro Refine(input: Tokens): Tokens {
     var junctionRelNames = ArrayList<String>()
     // F1: junction 源列类型跟随本类主键类型（宏层可内省）。复合主键取第一个 pk 字段；
     // 单主键即 id 字段（junction SQL 均以 this.id 为源列值）。目标列类型不可跨类内省，
-    // 由 buildJunctionSchema 保持 Integer（见其注释的已文档化限制）。
+    // 由 buildJunctionSchema 生成代码运行时从目标实体 Schema 读取（见 schema_gen.cj）。
     // Bool storageOverride 转义：与 buildSchemaClass:44-46 对齐——storageOverride == "Bool"
     // 时输出 StorageType.`Bool`（Bool 是仓颉关键字，裸 StorageType.Bool 生成代码编译失败）。
     var sourcePkStorage = "StorageType.Integer"

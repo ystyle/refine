@@ -95,6 +95,18 @@ public class SQLiteMigratorTest {
             "PRIMARY KEY (\"postWithRel_id\", \"tag_id\"))")
     }
 
+    // F1: junction 目标列类型运行时从目标实体 Schema 读取——UuidTagPost 的
+    // 目标 UuidTag 是 String-pk，uuidTag_id 建为 TEXT（修复前硬编码 Integer → INTEGER）。
+    // 源列 uuidTagPost_id 跟随源主键 Int64，仍为 INTEGER。
+    @TestCase
+    public func testCreateTableSQLJunctionTargetStringPk(): Unit {
+        let sql = SQLiteMigrator.createTableSQL(UuidTagPost_TagsJunctionSchema())
+        @Expect(sql, "CREATE TABLE IF NOT EXISTS \"uuid_tag_post_tags\" (" +
+            "\"uuidTagPost_id\" INTEGER NOT NULL, " +
+            "\"uuidTag_id\" TEXT NOT NULL, " +
+            "PRIMARY KEY (\"uuidTagPost_id\", \"uuidTag_id\"))")
+    }
+
     @TestCase
     public func testAddColumnSQL(): Unit {
         let sql = SQLiteMigrator.addColumnSQL("user", ColumnDef("nickname", StorageType.Text, false, false, true))

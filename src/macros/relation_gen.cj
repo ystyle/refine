@@ -80,8 +80,6 @@ func buildRelationMethods(className: String, rels: ArrayList<RelInfo>, cd: Class
             let countName = Token(TokenKind.IDENTIFIER, "count" + prefix)
             let unsavedMsg = Token(TokenKind.STRING_LITERAL,
                 "ref_many " + r.fieldName + ": target " + r.target + " has empty id, save it first")
-            let stringPkMsg = Token(TokenKind.STRING_LITERAL,
-                "ref_many " + r.fieldName + ": target " + r.target + " uses String primary key but junction target column is Integer — unimplemented, see audit R-I9")
             let insertSQL = quote(
                 "INSERT INTO " + tx.getDialect().quoteIdentifier($(viaLit)) + " (" + tx.getDialect().quoteIdentifier($(sourceSchemaIdent)().tableName() + "_id") + ", " + tx.getDialect().quoteIdentifier($(targetColLit)) + ") VALUES (?, ?)"
             )
@@ -102,15 +100,6 @@ func buildRelationMethods(className: String, rels: ArrayList<RelInfo>, cd: Class
                     case _ => false
                 }
                 if (isEmpty) { throw Exception($(unsavedMsg)) }
-                // R-I9: junction 目标列硬编码 Integer（schema_gen.cj buildJunctionSchema，
-                // 宏层无法跨类内省目标主键类型），String-pk 目标会把 String id 绑进 INTEGER
-                // 列 → 真实 DB 类型错误。执行前抛明确 RefineException（fail-fast，替代
-                // DB 层报错）。Int64-pk 目标不受影响（case _ 分支）。has_many/has_one 走
-                // fk 回填不涉及 junction 目标列，无此限制。
-                match (anyId) {
-                    case _: String => throw RefineException($(stringPkMsg))
-                    case _ => ()
-                }
             )
             cd.body.decls.add(FuncDecl(quote(
                 public func $(appendName)(tx: Tx, $(targetParam): $(targetType)): $(cn) {

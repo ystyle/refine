@@ -84,6 +84,7 @@
 - **问题**：junction 目标列硬编码 Integer，String-pk 目标时绑定 String id → 真实 DB 插入 String 进 INTEGER 列报错。已文档化（schema_gen.cj:66-69）+ schema 级测试，但失败模式是运行期 SQL 类型错误而非编译期拦截，无端到端测试。
 - **修法**：宏层无法内省目标类时，对 String-pk 目标场景加文档红线或运行时预检。
 - **✅ 已解决（2026-08-03，controller 裁决：运行时预检 + 文档）**：`relation_gen.cj` 的 ref_many append/delete 生成代码在 `targetIdCheck` 内追加 String-pk 守卫——目标 id 为 String 时在 `tx.execute` 之前抛明确 `RefineException("ref_many <field>: target <Target> uses String primary key but junction target column is Integer — unimplemented, see audit R-I9")`（把 DB 类型错误转成清晰 ORM 错误；Int64-pk 目标 `case _` 分支不受影响）。`RefManyStringPkTargetTest` 新增 3 例（append/delete/replace 抛 RefineException 且 `capturedSql` 为空证明未触达 DB）+ 真实 PG 集成 `testStringPkTargetAppendThrowsBeforeDb`（守卫执行前抛出，junction 表保持 0 行）。`buildJunctionSchema` 注释同步更新。Int64 目标回归由既有 I21 junction 测试覆盖。
+- **✅ 根因修复（2026-08-04，F1）**：junction 目标列类型改为**运行时从目标实体 Schema 读取**（`schema_gen.cj` `buildJunctionSchema` 生成 `columns()` 调用 `$(target)Schema().columns()` 取主键列 storageType，复合主键取第一个 pk 列、找不到回退 Integer、`@Field` storageOverride 自动生效）——String-pk 目标 junction 目标列正确建成 String/TEXT，本 R-I9 的运行时预检（String-pk 目标 append/delete 抛 RefineException）已**移除**，保留目标 id 空 precheck（unsavedMsg）。原 3 例 mock 断言（抛 RefineException + capturedSql 空）改为成功路径（append/delete/replace 正常执行 SQL 并绑定 String id）；原 PG `testStringPkTargetAppendThrowsBeforeDb` 改为端到端 roundtrip。新增宏 schema 断言（String/Bool 目标列）、三方言 DDL 断言（SQLite TEXT / PG+MySQL VARCHAR）、String-pk 源+String-pk 目标 mock 全生命周期、PG/MySQL 真实 DB roundtrip 各 2 例。目标未 `@Refine` 时编译期失败（`$(target)Schema` 不存在），文档说明。
 
 ---
 

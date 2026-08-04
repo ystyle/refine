@@ -85,6 +85,18 @@ public class MySQLMigratorTest {
             "PRIMARY KEY (`postWithRel_id`, `tag_id`))")
     }
 
+    // F1: junction 目标列类型运行时从目标实体 Schema 读取——UuidTagPost 的目标
+    // UuidTag 是 String-pk，uuidTag_id 建为 VARCHAR(255)（修复前硬编码 Integer → BIGINT）。
+    @TestCase
+    public func testCreateTableSQLJunctionTargetStringPk(): Unit {
+        let d = MySQLDialect()
+        let sql = MySQLMigrator.createTableSQL(UuidTagPost_TagsJunctionSchema(), d)
+        @Expect(sql, "CREATE TABLE IF NOT EXISTS `uuid_tag_post_tags` (" +
+            "`uuidTagPost_id` BIGINT NOT NULL, " +
+            "`uuidTag_id` VARCHAR(255) NOT NULL, " +
+            "PRIMARY KEY (`uuidTagPost_id`, `uuidTag_id`))")
+    }
+
     @TestCase
     public func testConstructAndCreate(): Unit {
         let db = DB(MockDatasource())

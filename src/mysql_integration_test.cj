@@ -719,6 +719,117 @@ public class MySQLIncludeIntegrationTest {
         }
     }
 
+    // ─── F1: String-pk 目标 junction 端到端 roundtrip（真实 MySQL） ───────────────
+    // 修复前 junction 目标列硬编码 Integer → BIGINT，String id 写入即 DB 类型错误，
+    // 且 R-I9 守卫使 append 不可用。修复后目标列运行时读到 String → VARCHAR(255)。
+    @TestCase
+    public func testStringPkTargetJunctionRoundtrip(): Unit {
+        match (tryMySQL()) {
+            case Some(rf) =>
+                rf.transaction { tx: Tx =>
+                    tx.execute("DROP TABLE IF EXISTS `uuid_tag_post_tags`", [])
+                    tx.execute("DROP TABLE IF EXISTS `uuidTagPost`", [])
+                    tx.execute("DROP TABLE IF EXISTS `uuidTag`", [])
+                }
+                let m = rf.migrator()
+                m.autoMigrate([UuidTagPostSchema(), UuidTagSchema(), UuidTagPost_TagsJunctionSchema()])
+                let p = UuidTagPost(); p.id = 42; p.title = "t"
+                let t = UuidTag(); t.id = "ut-1"; t.name = "n"
+                rf.transaction { tx: Tx =>
+                    tx.save(p)
+                    tx.save(t)
+                }
+                rf.transaction { tx: Tx => p.appendTags(tx, t) }
+                rf.transaction { tx: Tx => @Expect(p.countTags(tx), 1) }
+                // 目标列建表类型正确（varchar 而非 bigint）+ junction 行值可读
+                //（MySQL 驱动 QueryResult.get 为 1 起始下标，见本文件既有测试约定）
+                rf.transaction { tx: Tx =>
+                    let r = tx.query("SELECT DATA_TYPE FROM information_schema.COLUMNS WHERE table_schema = DATABASE() AND table_name = ? AND COLUMN_NAME = ?", ["uuid_tag_post_tags", "uuidTag_id"])
+                    if (r.next()) {
+                        @Expect(r.get<String>(1), "varchar")
+                    } else {
+                        @Expect(true, false)
+                    }
+                    let r2 = tx.query("SELECT `uuidTag_id` FROM `uuid_tag_post_tags`", [])
+                    if (r2.next()) {
+                        @Expect(r2.get<String>(1), "ut-1")
+                    } else {
+                        @Expect(true, false)
+                    }
+                }
+                let loaded = rf.transaction { tx: Tx => p.loadTags(tx) }
+                @Expect(loaded.size, 1)
+                @Expect(loaded[0].id, "ut-1")
+                @Expect(loaded[0].name, "n")
+                let found = UuidTagPost.query().include(UuidTagPostRel.tags).using(rf).filter(UuidTagPost.col().title == "t").one()
+                @Expect(found.isSome(), true)
+                @Expect(found.getOrThrow().tags.size, 1)
+                rf.transaction { tx: Tx =>
+                    p.deleteTags(tx, t)
+                    @Expect(p.countTags(tx), 0)
+                }
+                rf.transaction { tx: Tx =>
+                    p.appendTags(tx, t)
+                    @Expect(p.countTags(tx), 1)
+                    p.clearTags(tx)
+                    @Expect(p.countTags(tx), 0)
+                }
+                rf.close()
+            case None => @Expect(true, true)
+        }
+    }
+
+    // ─── F1: String-pk 源 + String-pk 目标 ref_many 端到端（真实 MySQL） ──────────
+    // UuidKeyTagPost（String-pk 源）→ UuidTag（String-pk 目标）：junction 两列均 String，
+    // 完整 roundtrip 验证两端 String id 均可写读。
+    @TestCase
+    public func testStringPkSourceAndTargetJunctionRoundtrip(): Unit {
+        match (tryMySQL()) {
+            case Some(rf) =>
+                rf.transaction { tx: Tx =>
+                    tx.execute("DROP TABLE IF EXISTS `uuid_key_tag_post_tags`", [])
+                    tx.execute("DROP TABLE IF EXISTS `uuidKeyTagPost`", [])
+                    tx.execute("DROP TABLE IF EXISTS `uuidTag`", [])
+                }
+                let m = rf.migrator()
+                m.autoMigrate([UuidKeyTagPostSchema(), UuidTagSchema(), UuidKeyTagPost_TagsJunctionSchema()])
+                let p = UuidKeyTagPost(); p.id = "p-1"; p.title = "t"
+                let t = UuidTag(); t.id = "ut-1"; t.name = "n"
+                rf.transaction { tx: Tx =>
+                    tx.save(p)
+                    tx.save(t)
+                }
+                rf.transaction { tx: Tx => p.appendTags(tx, t) }
+                rf.transaction { tx: Tx => @Expect(p.countTags(tx), 1) }
+                rf.transaction { tx: Tx =>
+                    let r = tx.query("SELECT DATA_TYPE FROM information_schema.COLUMNS WHERE table_schema = DATABASE() AND table_name = ? AND COLUMN_NAME = ?", ["uuid_key_tag_post_tags", "uuidTag_id"])
+                    if (r.next()) {
+                        @Expect(r.get<String>(1), "varchar")
+                    } else {
+                        @Expect(true, false)
+                    }
+                }
+                let loaded = rf.transaction { tx: Tx => p.loadTags(tx) }
+                @Expect(loaded.size, 1)
+                @Expect(loaded[0].id, "ut-1")
+                let found = UuidKeyTagPost.query().include(UuidKeyTagPostRel.tags).using(rf).filter(UuidKeyTagPost.col().title == "t").one()
+                @Expect(found.isSome(), true)
+                @Expect(found.getOrThrow().tags.size, 1)
+                rf.transaction { tx: Tx =>
+                    p.deleteTags(tx, t)
+                    @Expect(p.countTags(tx), 0)
+                }
+                rf.transaction { tx: Tx =>
+                    p.appendTags(tx, t)
+                    @Expect(p.countTags(tx), 1)
+                    p.clearTags(tx)
+                    @Expect(p.countTags(tx), 0)
+                }
+                rf.close()
+            case None => @Expect(true, true)
+        }
+    }
+
     @TestCase
     public func testNestedIncludeRefToThenHasOne(): Unit {
         match (tryMySQL()) {

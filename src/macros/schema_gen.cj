@@ -67,12 +67,13 @@ func buildSchemaClass(className: String, fields: ArrayList<FieldInfo>, tableName
 }
 
 // F1: junction 源列类型跟随源实体主键类型（宏层可内省 className 的 pkFields）。
-// 目标列类型 = 目标实体主键类型，但宏层无法跨类内省目标类字段（同 has_one→String-pk
-// 目标的既有限制），故目标列保持 Integer：Int64-pk 目标正确；String-pk 目标时
-// junction 目标列需 TEXT 而宏层无法推导，属已文档化限制（需手工迁移或用 Int64-pk 目标）。
-// R-I9: 该限制的失败模式已收敛——relation_gen.cj 的 ref_many append/delete 生成守卫，
-// 目标 id 为 String 时在 tx.execute 之前抛明确 RefineException（而非 String 绑进
-// INTEGER 列的真实 DB 类型错误）。读路径（loadX/countX/include 批量装配）不受影响。
+// 目标列类型运行时从目标实体 Schema 读取——宏层无法跨类内省目标类主键类型
+//（仓颉宏无全局符号表，已从官方文档确认），但 ref_many 依赖目标实体被 @Refine 修饰
+//（其 Schema/query 方法），故 $(target)Schema() 类必然存在。columns() 运行时取目标
+// 主键列 storageType：复合主键取第一个 pk 列（与源侧 refine_macro.cj:186-197 一致），
+// 找不到主键列回退 Integer（防御）。目标主键 @Field storageOverride 自动生效
+//（读的是 ColumnDef.storageType 最终值）。目标实体未 @Refine 时 $(target)Schema 不存在
+// → 编译期失败（比 R-I9 的运行时预检更早暴露，语义也正确）。
 func buildJunctionSchema(className: String, rel: RelInfo, tableName: String, sourcePkStorage: String): Tokens {
     let sourceTable = tableName
     let viaLit = Token(TokenKind.STRING_LITERAL, rel.via)
@@ -82,14 +83,21 @@ func buildJunctionSchema(className: String, rel: RelInfo, tableName: String, sou
     let srcStParts = sourcePkStorage.split(".")
     let srcStorageTypeTok = Token(TokenKind.IDENTIFIER, srcStParts[0])
     let srcStorageNameTok = Token(TokenKind.IDENTIFIER, srcStParts[1])
+    let targetSchemaTok = Token(TokenKind.IDENTIFIER, rel.target + "Schema")
     // M24: junction 两列（源/目标 fk）构成复合主键——同一 (src,tgt) 关联天然唯一，
     // 防重复关联行；createTableSQL 对 ≥2 主键列的表渲染表级 `PRIMARY KEY (col1, col2)`。
     quote(
         public class $(schemaName) <: TableSchema {
             public func tableName(): String { $(viaLit) }
             public func columns(): Array<ColumnDef> {
+                let targetSchema = $(targetSchemaTok)()
+                var targetPkType = StorageType.Integer
+                let tcols = targetSchema.columns()
+                for (c in tcols) {
+                    if (c.primaryKey) { targetPkType = c.storageType; break }
+                }
                 [ColumnDef($(srcColLit), $(srcStorageTypeTok).$(srcStorageNameTok), true, false, false),
-                 ColumnDef($(tgtColLit), StorageType.Integer, true, false, false)]
+                 ColumnDef($(tgtColLit), targetPkType, true, false, false)]
             }
             public func indexes(): Array<IndexDef> { [] }
         }
