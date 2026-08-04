@@ -2,7 +2,7 @@
   cjc-version = "1.1.0"
   name = "refine"
   description = "A compile-time type-safe ORM for Cangjie"
-  version = "0.5.0"
+  version = "0.5.1"
   license = ["MIT"]
   authors = ["ystyle"]
   repository = "https://atomgit.com/ystyle/refine"
