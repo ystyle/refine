@@ -106,7 +106,7 @@ PostgreSQL 表名若为保留字（如 `user`、`order`）需用 `@Table` 指定
 
 ```toml
 [dependencies]
-refine = "0.5.1"
+refine = "0.6.0"
 ```
 
 或使用 git 依赖（开发版）：
