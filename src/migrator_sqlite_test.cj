@@ -106,7 +106,7 @@ public class SQLiteMigratorTest {
         @Expect(SQLiteMigrator.addColumnSQL("user", ColumnDef("blob", StorageType.Bytes, false, false, false)),
             "ALTER TABLE \"user\" ADD COLUMN \"blob\" BLOB NOT NULL DEFAULT X''")
         @Expect(SQLiteMigrator.addColumnSQL("user", ColumnDef("created_at", StorageType.Timestamp, false, false, false)),
-            "ALTER TABLE \"user\" ADD COLUMN \"created_at\" TEXT NOT NULL DEFAULT 0")
+            "ALTER TABLE \"user\" ADD COLUMN \"created_at\" TEXT NOT NULL DEFAULT '1970-01-01 00:00:00'")
     }
 
     // I5: 可空列、主键列不加 DEFAULT（主键列不允许普通默认值，可空列用 NULL 即可）

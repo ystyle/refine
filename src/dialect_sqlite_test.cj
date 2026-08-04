@@ -412,7 +412,8 @@ public class DialectTest {
         @Expect(d.defaultValueOf(StorageType.Text), "''")
         @Expect(d.defaultValueOf(StorageType.Json), "'{}'")
         @Expect(d.defaultValueOf(StorageType.Bytes), "X''")
-        @Expect(d.defaultValueOf(StorageType.Timestamp), "0")
+        // R-M15: Timestamp 列存储为 TEXT，默认值须为 TEXT 字面量（对齐 PG 的 epoch 文本）
+        @Expect(d.defaultValueOf(StorageType.Timestamp), "'1970-01-01 00:00:00'")
     }
 
     @TestCase

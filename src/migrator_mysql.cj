@@ -11,9 +11,11 @@ public class MySQLMigrator <: Migrator {
         this.dialect = MySQLDialect()
     }
 
+    // R-M13: 标识符统一经方言 quoteIdentifier 引号化（MySQL 反引号 + 内嵌反引号转义，
+    // 对齐 C9 封闭标识符逃逸注入通道；静态构建器用传入的 d，实例方法用 this.dialect）。
     public static func columnDefSQL(col: ColumnDef, d: MySQLDialect): String {
         var parts = ArrayList<String>()
-        parts.add("`" + col.name + "`")
+        parts.add(d.quoteIdentifier(col.name))
         parts.add(d.dataTypeOf(col.storageType))
         if (col.primaryKey && col.autoIncrement) { parts.add("AUTO_INCREMENT PRIMARY KEY") }
         else if (col.primaryKey) { parts.add("PRIMARY KEY") }
@@ -23,6 +25,12 @@ public class MySQLMigrator <: Migrator {
 
     public static func createTableSQL(schema: TableSchema, d: MySQLDialect): String {
         let cols = schema.columns()
+        // R-M17: 空 schema（columns() 为空）生成的零列 CREATE TABLE 是 MySQL 非法 DDL，
+        // fail-fast 抛带表名的明确错误（三迁移器一致）。
+        if (cols.size == 0) {
+            throw MigrationException("cannot create table '" + schema.tableName() +
+                "': TableSchema.columns() is empty (a table needs at least one column)")
+        }
         var pkNames = ArrayList<String>()
         for (col in cols) { if (col.primaryKey) { pkNames.add(col.name) } }
         // M24: ≥2 主键列（junction 复合主键）时列级不追加 PRIMARY KEY，改表级约束
@@ -33,11 +41,11 @@ public class MySQLMigrator <: Migrator {
             else { colDefs.add(columnDefSQL(col, d)) }
         }
         var parts = ArrayList<String>()
-        parts.add("CREATE TABLE IF NOT EXISTS `" + schema.tableName() + "` (")
+        parts.add("CREATE TABLE IF NOT EXISTS " + d.quoteIdentifier(schema.tableName()) + " (")
         let colDefsSQL = String.join(colDefs.toArray(), delimiter: ", ")
         if (composite) {
             var pkParts = ArrayList<String>()
-            for (name in pkNames) { pkParts.add("`" + name + "`") }
+            for (name in pkNames) { pkParts.add(d.quoteIdentifier(name)) }
             parts.add(colDefsSQL + ", PRIMARY KEY (" + String.join(pkParts.toArray(), delimiter: ", ") + ")")
         } else {
             parts.add(colDefsSQL)
@@ -50,7 +58,7 @@ public class MySQLMigrator <: Migrator {
     // 允许自增列作前缀列），可空性按列声明输出（junction 列 nullable=false → NOT NULL）。
     private static func compositePkColumnDefSQL(col: ColumnDef, d: MySQLDialect): String {
         var parts = ArrayList<String>()
-        parts.add("`" + col.name + "`")
+        parts.add(d.quoteIdentifier(col.name))
         parts.add(d.dataTypeOf(col.storageType))
         if (col.autoIncrement) { parts.add("AUTO_INCREMENT") }
         if (!col.nullable) { parts.add("NOT NULL") }
@@ -70,7 +78,7 @@ public class MySQLMigrator <: Migrator {
     public func dropTable(schema: TableSchema): Unit {
         let s = db.session()
         try {
-            s.execute("DROP TABLE IF EXISTS `" + schema.tableName() + "`", [])
+            s.execute("DROP TABLE IF EXISTS " + dialect.quoteIdentifier(schema.tableName()), [])
         } finally {
             s.close()
         }
@@ -90,7 +98,7 @@ public class MySQLMigrator <: Migrator {
     public func addColumn(table: String, col: ColumnDef): Unit {
         let s = db.session()
         try {
-            s.execute("ALTER TABLE `" + table + "` ADD COLUMN " + columnDefSQL(col, dialect), [])
+            s.execute("ALTER TABLE " + dialect.quoteIdentifier(table) + " ADD COLUMN " + columnDefSQL(col, dialect), [])
         } finally {
             s.close()
         }
@@ -98,10 +106,10 @@ public class MySQLMigrator <: Migrator {
 
     public func addIndex(table: String, idx: IndexDef): Unit {
         var colParts = ArrayList<String>()
-        for (c in idx.columns) { colParts.add("`" + c + "`") }
+        for (c in idx.columns) { colParts.add(dialect.quoteIdentifier(c)) }
         let s = db.session()
         try {
-            s.execute("CREATE INDEX `" + idx.name + "` ON `" + table + "` (" + String.join(colParts.toArray(), delimiter: ", ") + ")", [])
+            s.execute("CREATE INDEX " + dialect.quoteIdentifier(idx.name) + " ON " + dialect.quoteIdentifier(table) + " (" + String.join(colParts.toArray(), delimiter: ", ") + ")", [])
         } finally {
             s.close()
         }
@@ -110,7 +118,7 @@ public class MySQLMigrator <: Migrator {
     public func dropColumn(table: String, colName: String): Unit {
         let s = db.session()
         try {
-            s.execute("ALTER TABLE `" + table + "` DROP COLUMN `" + colName + "`", [])
+            s.execute("ALTER TABLE " + dialect.quoteIdentifier(table) + " DROP COLUMN " + dialect.quoteIdentifier(colName), [])
         } finally {
             s.close()
         }
@@ -119,7 +127,7 @@ public class MySQLMigrator <: Migrator {
     public func alterColumn(table: String, _old: ColumnDef, new: ColumnDef): Unit {
         let s = db.session()
         try {
-            s.execute("ALTER TABLE `" + table + "` MODIFY COLUMN " + columnDefSQL(new, dialect), [])
+            s.execute("ALTER TABLE " + dialect.quoteIdentifier(table) + " MODIFY COLUMN " + columnDefSQL(new, dialect), [])
         } finally {
             s.close()
         }

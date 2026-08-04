@@ -73,7 +73,10 @@ public class SQLiteDialect <: AbstractDialect {
             case Text => "''"
             case Json => "'{}'"
             case Bytes => "X''"
-            case Timestamp => "0"
+            // R-M15: Timestamp 列存储为 TEXT（dataTypeOf 映射），默认值须为 TEXT 字面量——
+            // 修复前 `"0"` 是数值字面量，SQLite 亲和性把 0 存成 INTEGER，与列内 TEXT 值混存、
+            // 读回/比较语义不一致。用 epoch 文本（对齐 PG 的 '1970-01-01 00:00:00'）。
+            case Timestamp => "'1970-01-01 00:00:00'"
         }
     }
 }

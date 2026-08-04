@@ -182,11 +182,18 @@ public class MigratorTest {
         @Expect(sql, expected)
     }
 
+    // R-M17: 空 schema 生成的零列 CREATE TABLE 是非法 DDL（SQLite/MySQL/PG 均如此），
+    // createTableSQL 必须 fail-fast 抛带表名的明确错误，而非产出 `"empty" ()`。
     @TestCase
-    public func testCreateTableSQLEmpty(): Unit {
+    public func testCreateTableSQLEmptyThrows(): Unit {
         let schema = EmptySchema()
-        let sql = SQLiteMigrator.createTableSQL(schema)
-        @Expect(sql, "CREATE TABLE IF NOT EXISTS \"empty\" ()")
+        try {
+            let _ = SQLiteMigrator.createTableSQL(schema)
+            @Fail("expected MigrationException for empty schema")
+        } catch (e: MigrationException) {
+            @Expect(e.message.contains("empty"), true)
+            @Expect(e.message.contains("TableSchema.columns"), true)
+        }
     }
 
     @TestCase

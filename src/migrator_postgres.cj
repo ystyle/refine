@@ -11,9 +11,11 @@ public class PostgreSQLMigrator <: Migrator {
         this.dialect = PostgreSQLDialect()
     }
 
+    // R-M13: 标识符统一经方言 quoteIdentifier 引号化（PG ANSI 双引号 + 内嵌 `"` → `""`
+    // 转义，对齐 C9 封闭标识符逃逸注入通道；静态构建器用传入的 d，实例方法用 this.dialect）。
     public static func columnDefSQL(col: ColumnDef, d: PostgreSQLDialect): String {
         var parts = ArrayList<String>()
-        parts.add("\"" + col.name + "\"")
+        parts.add(d.quoteIdentifier(col.name))
         if (col.primaryKey && col.autoIncrement) {
             parts.add("BIGSERIAL PRIMARY KEY")
         } else {
@@ -26,6 +28,12 @@ public class PostgreSQLMigrator <: Migrator {
 
     public static func createTableSQL(schema: TableSchema, d: PostgreSQLDialect): String {
         let cols = schema.columns()
+        // R-M17: 空 schema（columns() 为空）生成的零列 CREATE TABLE 是 PG 非法 DDL，
+        // fail-fast 抛带表名的明确错误（三迁移器一致）。
+        if (cols.size == 0) {
+            throw MigrationException("cannot create table '" + schema.tableName() +
+                "': TableSchema.columns() is empty (a table needs at least one column)")
+        }
         var pkNames = ArrayList<String>()
         for (col in cols) { if (col.primaryKey) { pkNames.add(col.name) } }
         // M24: ≥2 主键列（junction 复合主键）时列级不追加 PRIMARY KEY，改表级约束
@@ -36,11 +44,11 @@ public class PostgreSQLMigrator <: Migrator {
             else { colDefs.add(columnDefSQL(col, d)) }
         }
         var parts = ArrayList<String>()
-        parts.add("CREATE TABLE IF NOT EXISTS \"" + schema.tableName() + "\" (")
+        parts.add("CREATE TABLE IF NOT EXISTS " + d.quoteIdentifier(schema.tableName()) + " (")
         let colDefsSQL = String.join(colDefs.toArray(), delimiter: ", ")
         if (composite) {
             var pkParts = ArrayList<String>()
-            for (name in pkNames) { pkParts.add("\"" + name + "\"") }
+            for (name in pkNames) { pkParts.add(d.quoteIdentifier(name)) }
             parts.add(colDefsSQL + ", PRIMARY KEY (" + String.join(pkParts.toArray(), delimiter: ", ") + ")")
         } else {
             parts.add(colDefsSQL)
@@ -54,7 +62,7 @@ public class PostgreSQLMigrator <: Migrator {
     // nullable=false → NOT NULL）。
     private static func compositePkColumnDefSQL(col: ColumnDef, d: PostgreSQLDialect): String {
         var parts = ArrayList<String>()
-        parts.add("\"" + col.name + "\"")
+        parts.add(d.quoteIdentifier(col.name))
         if (col.autoIncrement) {
             parts.add("BIGSERIAL")
         } else {
@@ -77,7 +85,7 @@ public class PostgreSQLMigrator <: Migrator {
     public func dropTable(schema: TableSchema): Unit {
         let s = db.session()
         try {
-            s.execute("DROP TABLE IF EXISTS \"" + schema.tableName() + "\"", [])
+            s.execute("DROP TABLE IF EXISTS " + dialect.quoteIdentifier(schema.tableName()), [])
         } finally {
             s.close()
         }
@@ -96,7 +104,7 @@ public class PostgreSQLMigrator <: Migrator {
     public func addColumn(table: String, col: ColumnDef): Unit {
         let s = db.session()
         try {
-            s.execute("ALTER TABLE \"" + table + "\" ADD COLUMN " + columnDefSQL(col, dialect), [])
+            s.execute("ALTER TABLE " + dialect.quoteIdentifier(table) + " ADD COLUMN " + columnDefSQL(col, dialect), [])
         } finally {
             s.close()
         }
@@ -104,10 +112,10 @@ public class PostgreSQLMigrator <: Migrator {
 
     public func addIndex(table: String, idx: IndexDef): Unit {
         var colParts = ArrayList<String>()
-        for (c in idx.columns) { colParts.add("\"" + c + "\"") }
+        for (c in idx.columns) { colParts.add(dialect.quoteIdentifier(c)) }
         let s = db.session()
         try {
-            s.execute("CREATE INDEX IF NOT EXISTS \"" + idx.name + "\" ON \"" + table + "\" (" + String.join(colParts.toArray(), delimiter: ", ") + ")", [])
+            s.execute("CREATE INDEX IF NOT EXISTS " + dialect.quoteIdentifier(idx.name) + " ON " + dialect.quoteIdentifier(table) + " (" + String.join(colParts.toArray(), delimiter: ", ") + ")", [])
         } finally {
             s.close()
         }
@@ -116,22 +124,26 @@ public class PostgreSQLMigrator <: Migrator {
     public func dropColumn(table: String, colName: String): Unit {
         let s = db.session()
         try {
-            s.execute("ALTER TABLE \"" + table + "\" DROP COLUMN IF EXISTS \"" + colName + "\"", [])
+            s.execute("ALTER TABLE " + dialect.quoteIdentifier(table) + " DROP COLUMN IF EXISTS " + dialect.quoteIdentifier(colName), [])
         } finally {
             s.close()
         }
     }
 
+    // R-M14: 已知限制——alterColumn 忽略 `_old`（旧列定义），仅按 `new` 调整类型/可空性，
+    // 且不处理主键变更（新增/移除主键需要 ALTER TABLE ADD/DROP PRIMARY KEY，主键列默认值
+    // 迁移等语义也未实现）。autoMigrate 是只加不改的（列不存在才 addColumn，从不调用
+    // alterColumn），只有显式调用该 API 才会触达；调用方需自行保证 old→new 的完整语义。
     public func alterColumn(table: String, _old: ColumnDef, new: ColumnDef): Unit {
         let s = db.session()
         try {
-            s.execute("ALTER TABLE \"" + table + "\" ALTER COLUMN \"" + new.name + "\" TYPE " + dialect.dataTypeOf(new.storageType), [])
+            s.execute("ALTER TABLE " + dialect.quoteIdentifier(table) + " ALTER COLUMN " + dialect.quoteIdentifier(new.name) + " TYPE " + dialect.dataTypeOf(new.storageType), [])
             if (new.primaryKey) {
                 // 主键列保持 NOT NULL，不调整
             } else if (!new.nullable) {
-                s.execute("ALTER TABLE \"" + table + "\" ALTER COLUMN \"" + new.name + "\" SET NOT NULL", [])
+                s.execute("ALTER TABLE " + dialect.quoteIdentifier(table) + " ALTER COLUMN " + dialect.quoteIdentifier(new.name) + " SET NOT NULL", [])
             } else {
-                s.execute("ALTER TABLE \"" + table + "\" ALTER COLUMN \"" + new.name + "\" DROP NOT NULL", [])
+                s.execute("ALTER TABLE " + dialect.quoteIdentifier(table) + " ALTER COLUMN " + dialect.quoteIdentifier(new.name) + " DROP NOT NULL", [])
             }
         } finally {
             s.close()
