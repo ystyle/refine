@@ -249,68 +249,10 @@ func buildRowMapper(className: String, cd: ClassDecl, rels: ArrayList<RelInfo>, 
     )
 }
 
-func buildKeyExtractor(className: String, pkFields: ArrayList<FieldInfo>): Tokens {
-    let funcName = Token(TokenKind.IDENTIFIER, className + "KeyFromResult")
-    let pkSize = pkFields.size
-    if (pkSize == 0) {
-        return quote(
-            func $(funcName)(result: QueryResult, columnMap: HashMap<String, Int64>): String {
-                result.get<Int64>(columnMap.get("id").getOrThrow()).toString()
-            }
-        )
-    } else if (pkSize == 1) {
-        let pk = pkFields.get(0).getOrThrow()
-        let pkNameLit = Token(TokenKind.STRING_LITERAL, pk.name)
-        if (pk.typeName == "String") {
-            return quote(
-                func $(funcName)(result: QueryResult, columnMap: HashMap<String, Int64>): String {
-                    result.get<String>(columnMap.get($(pkNameLit)).getOrThrow())
-                }
-            )
-        } else {
-            return quote(
-                func $(funcName)(result: QueryResult, columnMap: HashMap<String, Int64>): String {
-                    result.get<Int64>(columnMap.get($(pkNameLit)).getOrThrow()).toString()
-                }
-            )
-        }
-    } else {
-        var parts = Tokens()
-        var first = true
-        for (i in 0..pkSize) {
-            let pk = pkFields.get(i).getOrThrow()
-            let pkNameLit = Token(TokenKind.STRING_LITERAL, pk.name)
-            if (first) {
-                parts = parts + Token(TokenKind.IDENTIFIER, "var")
-                parts = parts + Token(TokenKind.IDENTIFIER, "key")
-                parts = parts + Token(TokenKind.ASSIGN)
-            } else {
-                parts = parts + Token(TokenKind.NL)
-                parts = parts + Token(TokenKind.IDENTIFIER, "key")
-                parts = parts + Token(TokenKind.ASSIGN)
-                parts = parts + Token(TokenKind.IDENTIFIER, "key")
-                parts = parts + Token(TokenKind.ADD)
-                parts = parts + Token(TokenKind.STRING_LITERAL, ":")
-                parts = parts + Token(TokenKind.ADD)
-            }
-            if (pk.typeName == "String") {
-                parts = parts + quote(result.get<String>(columnMap.get($(pkNameLit)).getOrThrow()))
-            } else {
-                parts = parts + quote(result.get<Int64>(columnMap.get($(pkNameLit)).getOrThrow()).toString())
-            }
-            first = false
-        }
-        parts = parts + Token(TokenKind.NL)
-        parts = parts + Token(TokenKind.IDENTIFIER, "key")
-        quote(
-            func $(funcName)(result: QueryResult, columnMap: HashMap<String, Int64>): String { $(parts) }
-        )
-    }
-}
-
 // Task 4: has_many/has_one 批量装配的主实体主键原始值提取器。返回 Any（Int64/String 自动上转），
 // 主查询映射循环内逐行收集，供 `WHERE 目标.fk IN (主实体 id)` 批量查询与按 fk 分组回填。
-// keyExtractor 输出 String（复合主键 ":" 拼接），无法直接作为 SQL 参数原值，故另设 rawId。
+// 被 rawIdExtractor 取代的旧 keyExtractor（输出 String「复合主键 ":" 拼接」）无法直接作为
+// SQL 参数原值，故另设 rawId（R-M1 已删除 keyExtractor 全套）。
 // 复合主键（pkSize > 1）不生成：目标 fk 是单列，无法匹配 ":" 拼接键（计划 D6 限制），
 // 返回空 Tokens，refine_macro.cj 亦不 setRawIdExtractor → 装配入口抛 QueryException。
 // 生成的函数内嵌主键列存在性守卫：用户 `.select(...)` 省略主键列时，

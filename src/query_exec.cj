@@ -15,10 +15,15 @@ extend<T> Query<T> {
     public func page(page: Int64, size: Int64): Page<T> {
         if (page < 1) { throw QueryException("page must be >= 1") }
         if (size < 1) { throw QueryException("size must be >= 1") }
+        // R-M4: 与 all()/one() 一致，未挂 auto-mapper 时抛带说明的 QueryException
+        // （修复前 page() 用 raw `this.mapper.getOrThrow()`，报 Option 裸错误）
+        match (this.mapper) {
+            case Some(_) => ()
+            case None => throw QueryException("No auto-mapper. Use findAll() or setMapper().")
+        }
         let exec = requireExecutor()
         try {
             let dialect = getDialect()
-            processIncluded(dialect)
             requireCollectionIdSupport()
             let total = countWith(exec, dialect)
             let pager = Statement()
@@ -55,7 +60,6 @@ extend<T> Query<T> {
         let exec = requireExecutor()
         try {
             let dialect = getDialect()
-            processIncluded(dialect)
             requireCollectionIdSupport()
             let (sql, params) = dialect.render(stmt)
             Logger.logSQL(sql, params)
@@ -86,7 +90,6 @@ extend<T> Query<T> {
         let exec = requireExecutor()
         try {
             let dialect = getDialect()
-            processIncluded(dialect)
             requireCollectionIdSupport()
             let oneStmt = Statement()
             for (clause in stmt.clauses) {

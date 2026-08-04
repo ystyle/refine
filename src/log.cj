@@ -76,16 +76,25 @@ public class Logger {
         }
     }
 
-    // M6: formatAny 对 DateTime/Array 等常见参数类型补齐格式化，不再一律输出 <unknown>。
+    // M6/R-M6: formatAny 对 DateTime/Array 及全部标量数值类型补齐格式化，不再一律输出 <unknown>。
+    // R-M6: 补齐 Int8/Int16/UInt8/UInt16/UInt32/UInt64（修复前漏匹配落入 <unknown>；
+    // Float32 已覆盖）。这些类型是宏层接受的实体字段类型（meta.cj 白名单），日志参数
+    // 出现时必须有可读输出。
     // internal（非 private）：同包测试直接断言格式化结果（宏生成代码不依赖此函数，无需 public）。
     static func formatAny(val: Any): String {
         match (val) {
             case s: String => s
-            case i: Int64 => i.toString()
+            case i: Int8 => i.toString()
+            case i: Int16 => i.toString()
             case i: Int32 => i.toString()
+            case i: Int64 => i.toString()
+            case i: UInt8 => i.toString()
+            case i: UInt16 => i.toString()
+            case i: UInt32 => i.toString()
+            case i: UInt64 => i.toString()
             case b: Bool => if (b) { "true" } else { "false" }
-            case f: Float64 => f.toString()
             case f: Float32 => f.toString()
+            case f: Float64 => f.toString()
             // DateTime 实现 ToString，输出 ISO 8601（如 2024-05-22T12:34:56+08:00）
             case dt: DateTime => dt.toString()
             case bytes: Array<UInt8> =>

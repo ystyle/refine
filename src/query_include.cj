@@ -148,8 +148,9 @@ extend<T> Query<T> {
         this
     }
 
+    // R-M2: 原 using(DB) 把 db 存入 Query.db 字段（write-only 死代码，从未被读取），
+    // 0.5.1 起不再存储——using(DB) 只负责把 DB 会话绑定为执行上下文。
     public func using(database: DB): Query<T> {
-        this.db = Some(database)
         this.executor = Some(database.session())
         this
     }
@@ -160,13 +161,5 @@ extend<T> Query<T> {
         this.columnOffset = rf.getParamOffset()
         this.ref = Some(rf)
         this
-    }
-
-    // Task 2: 主查询分离——include 不再生成 LEFT JOIN/别名 SELECT/限定（qualify）。
-    // 主查询只渲染源表自身（无 JOIN），include 预加载改由批量分步查询协议完成：
-    // ref_to（Task 3）、has_one/has_many（Task 4）、ref_many（Task 5）均已接入
-    // all()/one()/page()，经 assembleIncludes 按各自协议批量装配。此方法保留为 no-op 挂接入口。
-    public func processIncluded(dialect: Dialect): Unit {
-        ()
     }
 }

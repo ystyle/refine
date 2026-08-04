@@ -22,15 +22,14 @@ public class Query<T> {
     var executor: Option<ExecutionContext> = None
     var queryDialect: Option<Dialect> = None
     var mapper: Option<(QueryResult, HashMap<String, Int64>) -> T> = None
-    var db: Option<DB> = None
     var columnOffset: Int64 = 0
     public var typeName: String = ""
     var ref: Option<Refine> = None
-    var keyExtractor: Option<(QueryResult, HashMap<String, Int64>) -> String> = None
     // Task 4: has_many/has_one 批量装配需要主实体主键的「原始值」（Int64/String 上转 Any），
-    // 由宏层生成（XxxRawIdFromResult）在 setKeyExtractor 处一并挂载。keyExtractor 输出
-    // String（复合主键 ":" 拼接），无法直接作为批量 IN 的 SQL 参数原值，故单独存 rawId。
-    // 复合主键主实体不挂载（None），集合 include 装配入口会抛带说明的 QueryException。
+    // 由宏层生成 XxxRawIdFromResult 随 query() 挂载（R-M1：被 rawIdExtractor 取代的旧
+    // keyExtractor 输出 String「复合主键 ":" 拼接」，无法直接作为批量 IN 的 SQL 参数原值，
+    // 已于 0.5.1 删除）。复合主键主实体不挂载（None），集合 include 装配入口会抛带说明的
+    // QueryException。
     var rawIdExtractor: Option<(QueryResult, HashMap<String, Int64>) -> Any> = None
     // Task 7: includeAll 字符串路径 DSL 的顶层关系解析器。宏层随 query() 挂载为
     // `<实体>Rel.forName`（静态方法引用，类型 (String) -> Option<IRelation>）。
@@ -54,9 +53,9 @@ public class Query<T> {
     // I9: 拷贝当前 Query 的全部状态，供 Refine.all/one 在副本上执行 using()，
     // 保证调用方持有的 Query 不被执行上下文（queryDialect/columnOffset/executor）污染。
     // clauses/included 逐项拷贝：Statement 的 clauses 是可变 ArrayList，
-    // Task 2 后 processIncluded 已是 no-op，但深拷贝隔离仍必要——批量装配（Task 3+）
-    // 与执行路径可能在副本上追加/改写 clause，调用方持有的原 Query 必须不受影响；
-    // clause 内部（Expr 数组）在现有代码中不会被原地修改，直接共享即可。
+    // 深拷贝隔离必要——批量装配（Task 3+）与执行路径可能在副本上追加/改写 clause，
+    // 调用方持有的原 Query 必须不受影响；clause 内部（Expr 数组）在现有代码中
+    // 不会被原地修改，直接共享即可。
     // 注意：新增 Query 字段时必须同步更新此处 copy()，否则 Refine.all/one 副本会丢字段。
     public func copy(): Query<T> {
         let q = Query<T>()
@@ -70,11 +69,9 @@ public class Query<T> {
         q.executor = executor
         q.queryDialect = queryDialect
         q.mapper = mapper
-        q.db = db
         q.columnOffset = columnOffset
         q.typeName = typeName
         q.ref = ref
-        q.keyExtractor = keyExtractor
         q.rawIdExtractor = rawIdExtractor
         q.relResolver = relResolver
         q
@@ -138,10 +135,6 @@ public class Query<T> {
 
     public func setMapper(m: (QueryResult, HashMap<String, Int64>) -> T): Unit {
         this.mapper = Some(m)
-    }
-
-    public func setKeyExtractor(k: (QueryResult, HashMap<String, Int64>) -> String): Unit {
-        this.keyExtractor = Some(k)
     }
 
     // Task 4: 主实体主键原始值提取器（宏层 XxxRawIdFromResult 生成，随 query() 挂载）。

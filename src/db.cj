@@ -296,6 +296,10 @@ public class Tx {
     public func getParamOffset(): Int64 { paramOffset }
 
     public func setIsolation(level: IsolationLevel): Unit {
+        // R-M7: 不加 post-commit 状态守卫——M19 有意为之，setIsolation 由
+        // Refine.transaction(level:) 在 begin() 之前调用（见类头注释），对未开始的
+        // 事务设置 isoLevel；若在已提交/已回滚的事务上调用，仅设置无效果（驱动层
+        // 不执行任何 SQL），不构成静默坏数据路径，故保持无守卫。
         // M5: 错误信息方言感知（dialect.name()），避免非 SQLite 方言报错信息张冠李戴
         if (!this.getDialect().hasIsolationSupport()) {
             throw RefineException(this.getDialect().name() + " does not support transaction isolation levels")
@@ -320,6 +324,29 @@ public interface ExecutionContext {
     // 执行上下文传播到 Query 副本，使 rf.transaction { tx => query().using(tx).all() }
     // 等常用路径与 query.using(rf).all() 行为一致。
     func getRef(): Option<Refine>
+
+    // R-M5: queryAll/queryOne 的统一实现。原 Session/Tx 各有一份逐字节相同的 extend 块
+    // （db.cj 旧 312-354），收敛为接口默认方法——Session/Tx 经 `<: ExecutionContext`
+    // 继承，公共 API 不变，消除重复。
+    func queryAll<T>(sql: String, params: Array<Any>,
+                     mapper: (QueryResult, HashMap<String, Int64>) -> T): Array<T> {
+        let result = this.query(sql, params)
+        let offset = this.getParamOffset()
+        let cm = buildColumnMap(result.columnInfos, offset)
+        var entities = ArrayList<T>()
+        while (result.next()) {
+            entities.add(mapper(result, cm))
+        }
+        entities.toArray()
+    }
+
+    func queryOne<T>(sql: String, params: Array<Any>,
+                     mapper: (QueryResult, HashMap<String, Int64>) -> T): Option<T> {
+        let result = this.query(sql, params)
+        let offset = this.getParamOffset()
+        let cm = buildColumnMap(result.columnInfos, offset)
+        if (result.next()) { Some(mapper(result, cm)) } else { None }
+    }
 }
 
 extend Session <: ExecutionContext {
@@ -328,50 +355,6 @@ extend Session <: ExecutionContext {
 }
 extend Tx <: ExecutionContext {
     public func getRef(): Option<Refine> { ref }
-}
-
-extend Tx {
-    public func queryAll<T>(sql: String, params: Array<Any>,
-                            mapper: (QueryResult, HashMap<String, Int64>) -> T): Array<T> {
-        let result = this.query(sql, params)
-        let offset = this.getParamOffset()
-        let cm = buildColumnMap(result.columnInfos, offset)
-        var entities = ArrayList<T>()
-        while (result.next()) {
-            entities.add(mapper(result, cm))
-        }
-        entities.toArray()
-    }
-
-    public func queryOne<T>(sql: String, params: Array<Any>,
-                            mapper: (QueryResult, HashMap<String, Int64>) -> T): Option<T> {
-        let result = this.query(sql, params)
-        let offset = this.getParamOffset()
-        let cm = buildColumnMap(result.columnInfos, offset)
-        if (result.next()) { Some(mapper(result, cm)) } else { None }
-    }
-}
-
-extend Session {
-    public func queryAll<T>(sql: String, params: Array<Any>,
-                            mapper: (QueryResult, HashMap<String, Int64>) -> T): Array<T> {
-        let result = this.query(sql, params)
-        let offset = this.getParamOffset()
-        let cm = buildColumnMap(result.columnInfos, offset)
-        var entities = ArrayList<T>()
-        while (result.next()) {
-            entities.add(mapper(result, cm))
-        }
-        entities.toArray()
-    }
-
-    public func queryOne<T>(sql: String, params: Array<Any>,
-                            mapper: (QueryResult, HashMap<String, Int64>) -> T): Option<T> {
-        let result = this.query(sql, params)
-        let offset = this.getParamOffset()
-        let cm = buildColumnMap(result.columnInfos, offset)
-        if (result.next()) { Some(mapper(result, cm)) } else { None }
-    }
 }
 
 extend DB {

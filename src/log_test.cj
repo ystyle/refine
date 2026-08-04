@@ -52,6 +52,51 @@ public class LoggerFormatAnyTest {
         let v: Float32 = 1.5
         @Expect(Logger.formatAny(v), "1.500000")
     }
+
+    // R-M6: 补齐 Int8/Int16/UInt8/UInt16/UInt32/UInt64 格式化（修复前落入 <unknown>）
+    @TestCase
+    public func testFormatInt8(): Unit {
+        let v: Int8 = -5
+        @Expect(Logger.formatAny(v), "-5")
+    }
+
+    @TestCase
+    public func testFormatInt16(): Unit {
+        let v: Int16 = 1000
+        @Expect(Logger.formatAny(v), "1000")
+    }
+
+    @TestCase
+    public func testFormatUInt8(): Unit {
+        let v: UInt8 = 200
+        @Expect(Logger.formatAny(v), "200")
+    }
+
+    @TestCase
+    public func testFormatUInt16(): Unit {
+        let v: UInt16 = 60000
+        @Expect(Logger.formatAny(v), "60000")
+    }
+
+    @TestCase
+    public func testFormatUInt32(): Unit {
+        let v: UInt32 = 4000000000
+        @Expect(Logger.formatAny(v), "4000000000")
+    }
+
+    @TestCase
+    public func testFormatUInt64(): Unit {
+        let v: UInt64 = 18000000000000000000
+        @Expect(Logger.formatAny(v), "18000000000000000000")
+    }
+
+    // R-M6: 数值类型不再被误判为 Array<UInt8>（Bytes 分支），且不与其它类型串扰
+    @TestCase
+    public func testFormatNumericTypesDistinctFromBytes(): Unit {
+        @Expect(Logger.formatAny(42), "42")
+        @Expect(Logger.formatAny("42"), "42")
+        @Expect(Logger.formatAny(true), "true")
+    }
 }
 
 @Test
