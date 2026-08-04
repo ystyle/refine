@@ -339,6 +339,10 @@ extend<T> Query<T> {
         //         放行是安全超集，对齐 assembleRefTo 的 fail-open 语义）。
         //     单层各关系的 setter 回填仍逐关系执行（第 2 步已按主实体完成），合并只作用于
         //     递归层，不改变当前层每个关系的回填语义。
+        //     R-M10 over-fill：若同表两条关系的嵌套声明不同（如 author 带 profile、
+        //     editor 带 settings），并集让所有目标都装上两套嵌套——从任一关系装配到的目标
+        //     都会看到并集字段（extra 嵌套可能为空列表），无数据丢失/重复，仅多填字段。
+        //     与「union fields」哲学一致（对齐 sourceColumnMap 的安全超集），不做按关系切分。
         var recGroups = ArrayList<(String, ArrayList<(IRelation, Array<Any>, HashMap<String, Int64>)>)>()
         for (pair in pairs) {
             let (rel, _, _) = pair

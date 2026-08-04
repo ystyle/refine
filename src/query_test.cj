@@ -2721,6 +2721,41 @@ public class NestedIncludeTest {
         @Expect(entities[1].tags[0].notes.size, 2)
     }
 
+    // R-M9: 组内按目标 id 去重——同一 (源 id, 目标 id) 的重复 junction 行（DB 数据损坏或
+    // 手工 INSERT 触发；正常 save 的 append 每次只写一行）会把同一目标实例 add 进组两次，
+    // 单层 setter 对同一父实体 .add() 两次、tags 出现同实例两份。mock 返回两条完全相同
+    // （source=1, target=10）的 junction 行：修复前 u1.tags.size == 2，修复后只保留一份。
+    @TestCase
+    public func testRefManyDuplicateJunctionRowDedup(): Unit {
+        let conn = CaptureConnection()
+        let tx = Tx(conn)
+        tx.begin()
+        let mainCols: Array<SqlColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("name", false),
+        ]
+        let mainRows = [
+            Array<Any>(2, {i => if (i == 0) { 1 } else { "u1" }}),
+        ]
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(mainCols, mainRows))
+        let tagCols: Array<SqlColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("name", false),
+            MapperMockColumnInfo("nestedUser_id", false),
+        ]
+        let dupRow = Array<Any>(3, {i => if (i == 0) { 10 } else if (i == 1) { "t1" } else { 1 }})
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(tagCols, [dupRow, dupRow]))
+        let q = NestedUser.query()
+            .include(NestedUserRel.tags)
+            .using(tx)
+        let entities = q.all()
+        // 主查询 + junction 批量 = 两次查询；组内按目标 id 去重后目标只装配一次
+        @Expect(conn.stmt.capturedSqlHistory.size, 2)
+        @Expect(entities.size, 1)
+        @Expect(entities[0].tags.size, 1)
+        @Expect(entities[0].tags[0].id, 10)
+    }
+
     // 共享目标再往下一层（ref_many → has_many → has_many）：修复前嵌套层 assembleCollections
     // 把共享的 note 实例（同一 tag 的两个副本各命中同一分组）重复收集进 targets，items 递归
     // 对同一 note 跑两次 → note.items 被 .add() 追加成 [i1, i1]。修复后每 target id 只装配一次。

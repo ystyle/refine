@@ -93,6 +93,20 @@ public class MySQLMigratorTest {
         @Expect(true, true)
     }
 
+    // R-M17: 空 schema 生成的零列 CREATE TABLE 是 MySQL 非法 DDL，createTableSQL 必须
+    // fail-fast 抛带表名的明确错误，而非产出 `empty ()`（与 SQLite/PG 一致）。
+    @TestCase
+    public func testCreateTableSQLEmptyThrows(): Unit {
+        let d = MySQLDialect()
+        try {
+            let _ = MySQLMigrator.createTableSQL(EmptySchema(), d)
+            @Fail("expected MigrationException for empty schema")
+        } catch (e: MigrationException) {
+            @Expect(e.message.contains("empty"), true)
+            @Expect(e.message.contains("TableSchema.columns"), true)
+        }
+    }
+
     // ─── C8: 反向映射无有损（防迁移翻烙饼）──────────────────
 
     // decimal 之前被有损映射为 Float，导致每轮迁移产生假 diff

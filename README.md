@@ -96,6 +96,8 @@ Refine 的核心特色：按 **拥有** 和 **引用** 二分，四种关联语�
 | PostgreSQL | `Refine.open("postgres://127.0.0.1:5432", [("username","postgres"),("password","secret"),("database","myapp"),("sslmode","disable")])` | ✅ 完整支持（`pgsql` 驱动，需显式 `sslmode=disable`，驱动暂不支持 SSL） |
 | SQLite | — | ⚠️ 方言渲染已实现并有测试，但暂无可用 SQLite 驱动，`Refine.open("sqlite:...")` 暂不可用 |
 
+> **MySQL upsert 版本要求**：`tx.upsert` 使用 `INSERT ... VALUES (...) AS new` 行别名语法，需 MySQL ≥ 8.0.19。`mariadb://` 连接目前走 `MySQLDialect`，但 MariaDB **服务端**不支持该语法（仅支持 `VALUES(col)`）——MariaDB 上 `tx.upsert` 会语法报错，需后续新增 MariaDB 方言分支（见审计 R-M19 跟进）。
+
 PostgreSQL 表名若为保留字（如 `user`、`order`）需用 `@Table` 指定其他表名。
 
 ## 安装

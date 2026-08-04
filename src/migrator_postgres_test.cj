@@ -125,6 +125,20 @@ public class PostgreSQLMigratorTest {
             "PRIMARY KEY (\"postWithRel_id\", \"tag_id\"))")
     }
 
+    // R-M17: 空 schema 生成的零列 CREATE TABLE 是 PG 非法 DDL，createTableSQL 必须
+    // fail-fast 抛带表名的明确错误，而非产出 `"empty" ()`（与 SQLite/MySQL 一致）。
+    @TestCase
+    public func testCreateTableSQLEmptyThrows(): Unit {
+        let d = PostgreSQLDialect()
+        try {
+            let _ = PostgreSQLMigrator.createTableSQL(EmptySchema(), d)
+            @Fail("expected MigrationException for empty schema")
+        } catch (e: MigrationException) {
+            @Expect(e.message.contains("empty"), true)
+            @Expect(e.message.contains("TableSchema.columns"), true)
+        }
+    }
+
     @TestCase
     public func testHasTablePassesOriginalCase(): Unit {
         let ds = CaptureDatasource()

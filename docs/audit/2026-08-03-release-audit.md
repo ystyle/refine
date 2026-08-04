@@ -129,6 +129,7 @@
   - **✅ 已解决（2026-08-04）**：过滤 `sqlite_autoindex_` 前缀（SQLite 为 UNIQUE/主键约束自动创建的内部索引）。
 - **R-M19** MySQL `VALUES(col)` 已废弃（dialect_mysql.cj:47，8.0.20 起废弃，应迁 `INSERT ... AS new`）。
   - **✅ 已解决（2026-08-04）**：迁到 `INSERT ... VALUES (...) AS new ON DUPLICATE KEY UPDATE col = new.col`。行别名下裸列名歧义，version 自增与纯关联表 noop 的 RHS 改表限定（真实 MySQL 9.7 验证）；新增真实 MySQL 集成 testPlainUpsertUpdatesOnConflict / testVersionedUpsertIncrementsVersion + dialect/宏层断言更新。
+  - **📌 跟进（MariaDB 服务端不兼容）**：`INSERT ... VALUES (...) AS new` 是 MySQL 8.0.19+ 语法，MariaDB 服务端不支持（仅支持 `VALUES(col)`）。`detectDialect("mariadb")` 返回 `MySQLDialect`（refine.cj:194），真实 MariaDB 服务端上 `tx.upsert` 将语法报错；CI 仅测 MySQL 9.7，此不兼容不可见。README 支持数据库一节已记录版本要求。**排期**：新增 MariaDBDialect 分支（upsertSQL 退回 `VALUES(col)`）并加 MariaDB 真实集成验证，0.5.1 范围外。
 - **R-M20** 审计文档状态头行与正文矛盾：状态行称 "I23 已修复"，正文与代码均为"未修复、后续排期"（2026-08-02-full-audit.md:6）。
   - **✅ 已解决（2026-08-04）**：I23 正文备注更新为已修复（对应 R-I6 落地），状态行与正文一致。
 
