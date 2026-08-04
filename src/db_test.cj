@@ -3,6 +3,7 @@ package refine
 import std.database.sql.{Connection, Transaction, QueryResult, UpdateResult, ColumnInfo, ConnectionState, TransactionAccessMode, TransactionDeferrableMode, TransactionIsoLevel, SqlDbType, Datasource, DriverManager, Driver}
 import std.database.sql.Statement as SqlStatement
 import std.collection.{HashMap, ArrayList}
+import std.time.DateTime
 import std.unittest.*
 import std.unittest.testmacro.*
 
@@ -528,6 +529,29 @@ public class DbTest {
         dispatchSet(stmt, 4, 3.14)
         @Expect(stmt.lastSetType, "set")
         @Expect(stmt.lastSetIndex, 4)
+    }
+
+    // F4: Option<DateTime> 写路径绑定——Some 解包后 set<DateTime>（软删打时间戳），
+    // None 绑 NULL（未删行）。宏层生成的 allParams.add(entity.deleted_at) 是变量装箱，
+    // 运行时类型保留，dispatchSet 的 case v: Option<DateTime> 分支命中（探针实测）。
+    @TestCase
+    public func testDispatchSetOptionDateTimeSome(): Unit {
+        let stmt = MockStatement()
+        let dt = DateTime.now()
+        let some: Option<DateTime> = Some(dt)
+        dispatchSet(stmt, 0, some)
+        @Expect(stmt.lastSetType, "set")
+        @Expect(stmt.lastSetIndex, 0)
+        @Expect((stmt.lastSetValue as DateTime).getOrThrow() == dt, true)
+    }
+
+    @TestCase
+    public func testDispatchSetOptionDateTimeNone(): Unit {
+        let stmt = MockStatement()
+        let none: Option<DateTime> = None
+        dispatchSet(stmt, 1, none)
+        @Expect(stmt.lastSetType, "setNull")
+        @Expect(stmt.lastSetIndex, 1)
     }
 
     // R-C2: 未知类型不再静默 setNull——抛 RefineException 并提示支持的参数类型，

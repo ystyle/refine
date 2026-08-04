@@ -40,6 +40,9 @@ func buildSchemaClass(className: String, fields: ArrayList<FieldInfo>, tableName
         let st = if (f.storageOverride != "") { "StorageType." + f.storageOverride } else { typeNameToStorageType(f.typeName) }
         let isPk = if (f.isPk) { "true" } else { "false" }
         let isAutoInc = if (f.autoInc) { "true" } else { "false" }
+        // F4: Option<DateTime> 可空标量生成 nullable 列（ColumnDef 第五参 true）——
+        // 否则 INSERT None 绑 NULL 会触发 DB NOT NULL 错误（硬编码 false 时该列 NOT NULL）。
+        let isNullable = if (isNullableScalarType(f.typeName)) { "true" } else { "false" }
         colDefs = colDefs + Token(TokenKind.IDENTIFIER, "ColumnDef") + Token(TokenKind.LPAREN) + nameLit + Token(TokenKind.COMMA)
         if (f.storageOverride == "Bool" || (f.storageOverride == "" && f.typeName == "Bool")) {
             colDefs = colDefs + Token(TokenKind.IDENTIFIER, "StorageType") + Token(TokenKind.DOT)
@@ -51,7 +54,7 @@ func buildSchemaClass(className: String, fields: ArrayList<FieldInfo>, tableName
         }
         colDefs = colDefs + Token(TokenKind.COMMA) + Token(TokenKind.IDENTIFIER, isPk) + Token(TokenKind.COMMA)
         colDefs = colDefs + Token(TokenKind.IDENTIFIER, isAutoInc) + Token(TokenKind.COMMA)
-        colDefs = colDefs + Token(TokenKind.IDENTIFIER, "false") + Token(TokenKind.RPAREN)
+        colDefs = colDefs + Token(TokenKind.IDENTIFIER, isNullable) + Token(TokenKind.RPAREN)
         first = false
     }
     quote(

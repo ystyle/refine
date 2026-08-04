@@ -273,7 +273,8 @@ public class MySQLDialectTest {
         let notNull = Unary(IsNull, Column("id"))
         stmt.addClause(WhereClause([notNull]))
         let (sql, _) = dialect.render(stmt)
-        @Expect(sql.contains("IS NULL"), true)
+        // F4: IS NULL 后置（`\`id\` IS NULL`），修复前渲染成 `IS NULL \`id\``
+        @Expect(sql, "SELECT `id` FROM `t` WHERE `id` IS NULL")
     }
 
     @TestCase

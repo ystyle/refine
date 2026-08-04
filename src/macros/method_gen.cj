@@ -202,12 +202,25 @@ func buildRowMapper(className: String, cd: ClassDecl, rels: ArrayList<RelInfo>, 
                 if (isGeneratedInternalField(vd.identifier.value, internalNames)) { continue }
                 if (!first) { assignments = assignments + Token(TokenKind.NL) }
                 let fieldNameLit = Token(TokenKind.STRING_LITERAL, vd.identifier.value)
-                let fieldAssign = quote(
-                    if (columnMap.contains($(fieldNameLit))) {
-                        entity.$(vd.identifier) = result.get<$(vd.declType)>(columnMap.get($(fieldNameLit)).getOrThrow())
-                    }
-                )
-                assignments = assignments + fieldAssign
+                // F4: Option<DateTime> 可空标量用 getOrNull<内部类型> 读取（NULL → None，
+                // 有值 → Some<DateTime>），普通字段保持 result.get<T>。修复前该字段被
+                // isRelationField 跳过，RowMapper 不赋值（读回恒 None，数据不可达）。
+                if (isNullableScalarType(fieldTypeStr)) {
+                    let innerType = Token(TokenKind.IDENTIFIER, unwrapOptionType(fieldTypeStr))
+                    let fieldAssign = quote(
+                        if (columnMap.contains($(fieldNameLit))) {
+                            entity.$(vd.identifier) = result.getOrNull<$(innerType)>(columnMap.get($(fieldNameLit)).getOrThrow())
+                        }
+                    )
+                    assignments = assignments + fieldAssign
+                } else {
+                    let fieldAssign = quote(
+                        if (columnMap.contains($(fieldNameLit))) {
+                            entity.$(vd.identifier) = result.get<$(vd.declType)>(columnMap.get($(fieldNameLit)).getOrThrow())
+                        }
+                    )
+                    assignments = assignments + fieldAssign
+                }
                 first = false
             case _ => ()
         }

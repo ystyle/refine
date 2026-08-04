@@ -306,14 +306,17 @@ public class DialectTest {
         let nullExpr = Unary(IsNull, Column("id"))
         stmt.addClause(WhereClause([nullExpr]))
         let (sql, _) = dialect.render(stmt)
-        @Expect(sql.contains("IS NULL"), true)
+        // F4: IS NULL 必须后置（`"id" IS NULL`）。修复前渲染成 `IS NULL "id"`——
+        // 仅 contains("IS NULL") 断言覆盖不到，软删 Option<DateTime> 的 IS NULL 过滤
+        // 在真实 PG 报 "syntax error at or near NULL"（SQLSTATE 42601）。
+        @Expect(sql, "SELECT \"id\" FROM \"t\" WHERE \"id\" IS NULL")
         let stmt2 = Statement()
         stmt2.addClause(SelectClause([Column("id")]))
         stmt2.addClause(FromClause("t"))
         let notNullExpr = Unary(IsNotNull, Column("id"))
         stmt2.addClause(WhereClause([notNullExpr]))
         let (sql2, _) = dialect.render(stmt2)
-        @Expect(sql2.contains("IS NOT NULL"), true)
+        @Expect(sql2, "SELECT \"id\" FROM \"t\" WHERE \"id\" IS NOT NULL")
     }
 
     @TestCase

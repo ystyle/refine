@@ -4,7 +4,7 @@ import std.collection.ArrayList
 
 // M18: 三方言共享的渲染基类。
 //
-// render / renderBody / renderExpr / renderExprList / renderAndList / renderOp / renderUnaryOp
+// render / renderBody / renderExpr / renderExprList / renderAndList / renderOp
 // 在三方言中完全一致，收敛到本基类统一实现；方言差异收敛到两类钩子：
 //
 //  1. open 钩子（提供 2/3 方言的共识默认，另一方言按需覆盖）：
@@ -169,7 +169,15 @@ public abstract class AbstractDialect <: Dialect {
             case Range(subject, low, high) =>
                 renderExpr(ctx, subject) + " BETWEEN " + renderExpr(ctx, low) + " AND " + renderExpr(ctx, high)
             case Unary(op, e) =>
-                renderUnaryOp(op) + " " + renderExpr(ctx, e)
+                // F4: IS NULL / IS NOT NULL 必须后置（`"col" IS NULL`）——修复前渲染成
+                // `IS NULL "col"`（NOT 前缀、IS NULL 后缀混在一起），SQLite/MySQL/PG
+                // 真实执行均语法错误（PG "syntax error at or near NULL"）。此前 Int64 软删
+                // 走 Binary Eq 0、col.isTrue() 未落地，该路径从未被真实 SQL 触发。
+                match (op) {
+                    case Not => "NOT " + renderExpr(ctx, e)
+                    case IsNull => renderExpr(ctx, e) + " IS NULL"
+                    case IsNotNull => renderExpr(ctx, e) + " IS NOT NULL"
+                }
             case FuncCall(n, args) =>
                 n + "(" + renderExprList(ctx, args) + ")"
             case Raw(s) => s
@@ -219,14 +227,6 @@ public abstract class AbstractDialect <: Dialect {
             case Mul => "*"
             case Div => "/"
             case Mod => "%"
-        }
-    }
-
-    private func renderUnaryOp(op: UnaryOp): String {
-        match (op) {
-            case Not => "NOT"
-            case IsNull => "IS NULL"
-            case IsNotNull => "IS NOT NULL"
         }
     }
 

@@ -24,6 +24,9 @@ func detectRelations(fields: ArrayList<FieldInfo>): ArrayList<RelInfo> {
     let result = ArrayList<RelInfo>()
     for (f in fields) {
         let tn = f.typeName
+        // F4: Option<DateTime> 可空标量防御性排除（isRelationField 已放行；此处防
+        // detectRelations 的 Option 分支把它误判成 ref_to 关系）。
+        if (isNullableScalarType(tn)) { continue }
         if (tn.contains("Option<")) {
             let start = tn.indexOf("Option<").getOrThrow() + 7
             let end = tn.lastIndexOf(">").getOrThrow()
@@ -217,8 +220,30 @@ func isBytesArrayType(typeName: String): Bool {
     typeName.replace(" ", "") == "Array<UInt8>"
 }
 
+// F4: Option<DateTime> 可空软删字段判定（方案 D1 方案 A：本迭代仅认 DateTime 可空标量）。
+// 归一化（去空格）后精确匹配 Option<DateTime>——isBytesArrayType 先排除（Array<UInt8> 是
+// Bytes 一等标量，非可空标量）。其余 Option<标量>（Option<Int64> 等）保持被 isRelationField
+// 当关系字段跳过（历史行为，记档为后续功能）。
+func isNullableScalarType(typeName: String): Bool {
+    if (isBytesArrayType(typeName)) { return false }
+    typeName.replace(" ", "") == "Option<DateTime>"
+}
+
+// F4: 取 Option<X> 的内部类型 X（Option<DateTime> → "DateTime"）。调用方须先确认
+// isNullableScalarType；格式不符时返回归一化原串（防御，不产生越界/空串）。
+func unwrapOptionType(typeName: String): String {
+    let norm = typeName.replace(" ", "")
+    match (norm.indexOf("Option<")) {
+        case Some(s) =>
+            let end = norm.lastIndexOf(">").getOrThrow()
+            norm[s + 7..end]
+        case None => norm
+    }
+}
+
 func isRelationField(typeName: String): Bool {
     if (isBytesArrayType(typeName)) { return false }
+    if (isNullableScalarType(typeName)) { return false }
     typeName.contains("Option") || typeName.contains("ArrayList") || typeName.contains("Array")
 }
 
@@ -243,14 +268,18 @@ func isFieldAnnotated(fieldName: String, refMessages: ArrayList<MacroMessage>, r
 }
 
 func typeNameToStorageType(typeName: String): String {
-    if (typeName == "Int8" || typeName == "Int16" || typeName == "Int32" || typeName == "Int64" ||
-        typeName == "UInt8" || typeName == "UInt16" || typeName == "UInt32" || typeName == "UInt64") {
+    // F4: Option<DateTime> 可空标量先解包再映射（→ StorageType.Timestamp）。
+    // 修复前落在 Json 兜底（emitUnknownTypeWarnings 会误发 warning，见 M22）。
+    var tn = typeName
+    if (isNullableScalarType(tn)) { tn = unwrapOptionType(tn) }
+    if (tn == "Int8" || tn == "Int16" || tn == "Int32" || tn == "Int64" ||
+        tn == "UInt8" || tn == "UInt16" || tn == "UInt32" || tn == "UInt64") {
         "StorageType.Integer"
-    } else if (typeName == "Float32" || typeName == "Float64") { "StorageType.Float"
-    } else if (typeName == "Bool") { "StorageType.`Bool`"
-    } else if (typeName == "String") { "StorageType.String"
-    } else if (isBytesArrayType(typeName)) { "StorageType.Bytes"
-    } else if (typeName == "DateTime") { "StorageType.Timestamp"
+    } else if (tn == "Float32" || tn == "Float64") { "StorageType.Float"
+    } else if (tn == "Bool") { "StorageType.`Bool`"
+    } else if (tn == "String") { "StorageType.String"
+    } else if (isBytesArrayType(tn)) { "StorageType.Bytes"
+    } else if (tn == "DateTime") { "StorageType.Timestamp"
     } else { "StorageType.Json" }
 }
 

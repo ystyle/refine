@@ -614,6 +614,9 @@ class CaptureStatement <: SqlStatement {
     public var queryResult: QueryResult = MockQueryResult()
     public var queryResultQueue: ArrayList<QueryResult> = ArrayList<QueryResult>()
     public var capturedSetValues: ArrayList<Any> = ArrayList<Any>()
+    // F4: setNull 记录（Option<DateTime> None 绑 NULL 时断言用）。dispatchSet 调
+    // setNull 的路径需要可观测，否则无法断言 INSERT None 确实绑了 NULL。
+    public var nullSetCount: Int64 = 0
 
     public func close(): Unit {}
     public func isClosed(): Bool { false }
@@ -633,7 +636,7 @@ class CaptureStatement <: SqlStatement {
     public func set<T>(index: Int, value: T): Unit {
         capturedSetValues.add(value)
     }
-    public func setNull(index: Int): Unit {}
+    public func setNull(index: Int): Unit { nullSetCount++ }
     public func setOption(_key: String, value: String): Unit {}
     public func update(): UpdateResult { CaptureUpdateResult(dequeueLastInsertId(), dequeueRowCount()) }
     public func update(_params: Array<SqlDbType>): UpdateResult { CaptureUpdateResult(dequeueLastInsertId(), dequeueRowCount()) }
@@ -1710,6 +1713,26 @@ class HardUser {
     var deleted_at: Int64 = 0
 }
 
+// F4 fixture：Option<DateTime> 可空软删字段。软删语义 = 未删行 deleted_at 为 NULL
+//（INSERT None 绑 NULL），软删写 DateTime.now() 时间戳（配合 IS NULL 过滤）。
+// 修复前 isRelationField 把 Option<DateTime> 当关系字段静默跳过（schema/insert/
+// select/mapper 全不识别）且 deletedAtIsDateTime=false（类型字符串带空格）——
+// 生成无意义的 `deleted_at = 0` 过滤，字段不可达。
+@Refine
+public class SoftOptUser {
+    var id: Int64 = 0
+    var name: String = ""
+    var deleted_at: Option<DateTime> = None
+}
+
+@Refine
+@HardDelete
+public class HardOptUser {
+    var id: Int64 = 0
+    var name: String = ""
+    var deleted_at: Option<DateTime> = None
+}
+
 @Test
 public class SoftDeleteTest {
     @TestCase
@@ -1797,6 +1820,234 @@ public class SoftDeleteTest {
 // 现在由宏层展开期守卫直接抛编译错误（恒假 IS NULL 过滤已不可能生成，见
 // refine_macro.cj R-I7 守卫 + docs/audit F4）。Int64 deleted_at 路径仍由上方
 // SoftDeleteTest 覆盖。Option<DateTime> 可空软删字段支持见 F4。
+
+// ─── F4: Option<DateTime> 可空软删字段 ───────────────────
+// 完整链路覆盖：schema nullable/Timestamp → query IS NULL 过滤 → INSERT None 绑 NULL /
+// Some 绑 DateTime → 软删 UPDATE 写 DateTime.now() → rowMapper NULL/有值读取 →
+// batchSave/batchUpdate/upsert 的 Option 绑定。
+@Test
+public class OptionDateTimeSoftDeleteTest {
+    @TestCase
+    public func testSchemaNullableTimestampColumn(): Unit {
+        let cols = SoftOptUserSchema().columns()
+        @Expect(cols.size, 3)
+        @Expect(cols[0].name, "id")
+        @Expect(cols[1].name, "name")
+        @Expect(cols[2].name, "deleted_at")
+        @Expect(cols[2].storageType, StorageType.Timestamp)
+        @Expect(cols[2].nullable, true)
+    }
+
+    @TestCase
+    public func testColumnNamesIncludeDeletedAt(): Unit {
+        let cols = SoftOptUserColumnNames()
+        @Expect(cols.size, 3)
+        @Expect(cols[2].name, "deleted_at")
+    }
+
+    @TestCase
+    public func testSoftDeleteQueryAddsIsNullFilter(): Unit {
+        let q = SoftOptUser.query()
+        var hasIsNullFilter = false
+        for (c in q.stmt.clauses) {
+            match (c) {
+                case Clause.WhereClause(predicates) =>
+                    for (p in predicates) {
+                        match (p) {
+                            case Expr.Unary(UnaryOp.IsNull, Expr.Column(name)) =>
+                                if (name == "deleted_at") { hasIsNullFilter = true }
+                            case _ => ()
+                        }
+                    }
+                case _ => ()
+            }
+        }
+        @Expect(hasIsNullFilter, true)
+    }
+
+    @TestCase
+    public func testHardDeleteQueryNoIsNullFilter(): Unit {
+        let q = HardOptUser.query()
+        var hasDeletedAtFilter = false
+        for (c in q.stmt.clauses) {
+            match (c) {
+                case Clause.WhereClause(predicates) =>
+                    for (p in predicates) {
+                        match (p) {
+                            case Expr.Unary(UnaryOp.IsNull, Expr.Column(name)) =>
+                                if (name == "deleted_at") { hasDeletedAtFilter = true }
+                            case Expr.Binary(Expr.Column(name), _, _) =>
+                                if (name == "deleted_at") { hasDeletedAtFilter = true }
+                            case _ => ()
+                        }
+                    }
+                case _ => ()
+            }
+        }
+        @Expect(hasDeletedAtFilter, false)
+    }
+
+    @TestCase
+    public func testSaveBindsNullForNoneDeletedAt(): Unit {
+        let conn = CaptureConnection()
+        let tx = sqliteTx(conn)
+        tx.begin()
+        let u = SoftOptUser()
+        u.name = "alice"
+        tx.save(u)
+        @Expect(conn.stmt.capturedSql.contains("\"deleted_at\""), true)
+        @Expect(conn.stmt.nullSetCount, 1)
+        @Expect(conn.stmt.capturedSetValues.size, 1)
+    }
+
+    @TestCase
+    public func testSaveBindsDateTimeForSomeDeletedAt(): Unit {
+        let conn = CaptureConnection()
+        let tx = sqliteTx(conn)
+        tx.begin()
+        let u = SoftOptUser()
+        u.name = "bob"
+        let dt = DateTime.now()
+        u.deleted_at = Some(dt)
+        tx.save(u)
+        @Expect(conn.stmt.capturedSql.contains("\"deleted_at\""), true)
+        @Expect(conn.stmt.nullSetCount, 0)
+        @Expect(conn.stmt.capturedSetValues.size, 2)
+        match (conn.stmt.capturedSetValues[1]) {
+            case v: DateTime => @Expect(v == dt, true)
+            case _ => @Fail("expected DateTime param for Some deleted_at")
+        }
+    }
+
+    @TestCase
+    public func testSoftDeleteWritesDateTimeParam(): Unit {
+        let (conn, tx) = makeTestTx(SQLiteDialect())
+        let u = SoftOptUser()
+        u.id = 1
+        tx.delete(u)
+        @Expect(conn.stmt.capturedSql, "UPDATE \"softOptUser\" SET \"deleted_at\" = ? WHERE \"id\" = ?")
+        @Expect(conn.stmt.capturedSetValues.size, 2)
+        match (conn.stmt.capturedSetValues[0]) {
+            case v: DateTime => @Expect(true, true)
+            case _ => @Fail("expected DateTime soft-delete param")
+        }
+    }
+
+    @TestCase
+    public func testRowMapperReadsNullDeletedAtAsNone(): Unit {
+        let cols: Array<ColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("name", false),
+            MapperMockColumnInfo("deleted_at", true),
+        ]
+        // 模拟 NULL 列：getOrNull<DateTime> 对非 DateTime 占位返回 None（与 mapper_test 语义一致）
+        let row = Array<Any>(3, { i => if (i == 0) { 1 } else if (i == 1) { "alice" } else { "null-placeholder" } })
+        let result = MapperMockQueryResult(cols, [row])
+        result.next()
+        let e = SoftOptUserRowMapper(result, buildColumnMap(cols, 0))
+        @Expect(e.id, 1)
+        @Expect(e.name, "alice")
+        @Expect(e.deleted_at.isNone(), true)
+    }
+
+    @TestCase
+    public func testRowMapperReadsValueDeletedAtAsSome(): Unit {
+        let cols: Array<ColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("name", false),
+            MapperMockColumnInfo("deleted_at", true),
+        ]
+        let dt = DateTime.now()
+        let row = Array<Any>(3, { i => if (i == 0) { 1 } else if (i == 1) { "alice" } else { dt } })
+        let result = MapperMockQueryResult(cols, [row])
+        result.next()
+        let e = SoftOptUserRowMapper(result, buildColumnMap(cols, 0))
+        @Expect(e.id, 1)
+        @Expect(e.name, "alice")
+        @Expect(e.deleted_at.isSome(), true)
+        @Expect(e.deleted_at.getOrThrow() == dt, true)
+    }
+
+    @TestCase
+    public func testBatchSaveBindsOptionParams(): Unit {
+        let conn = CaptureConnection()
+        let tx = sqliteTx(conn)
+        tx.begin()
+        let u1 = SoftOptUser()
+        u1.name = "a"
+        let u2 = SoftOptUser()
+        u2.name = "b"
+        u2.deleted_at = Some(DateTime.now())
+        tx.batchSave([u1, u2])
+        @Expect(conn.stmt.capturedSql.contains("\"deleted_at\""), true)
+        // 4 个 SQL 参数 = [name_a, NULL, name_b, Some(dt)]；set 记录 3 个（None 走 setNull）
+        @Expect(conn.stmt.capturedSetValues.size, 3)
+        @Expect(conn.stmt.nullSetCount, 1)
+        var hasDateTime = false
+        for (v in conn.stmt.capturedSetValues) {
+            match (v) { case _: DateTime => hasDateTime = true; case _ => () }
+        }
+        @Expect(hasDateTime, true)
+    }
+
+    @TestCase
+    public func testBatchUpdateBindsOptionParams(): Unit {
+        let (conn, tx) = makeTestTx(SQLiteDialect())
+        let u1 = SoftOptUser()
+        u1.id = 1
+        u1.name = "a"
+        u1.deleted_at = Some(DateTime.now())
+        let u2 = SoftOptUser()
+        u2.id = 2
+        u2.name = "b"
+        tx.batchUpdate([u1, u2])
+        @Expect(conn.stmt.capturedSql.contains("\"deleted_at\" = CASE"), true)
+        @Expect(conn.stmt.nullSetCount, 1)
+        var hasDateTime = false
+        for (v in conn.stmt.capturedSetValues) {
+            match (v) { case _: DateTime => hasDateTime = true; case _ => () }
+        }
+        @Expect(hasDateTime, true)
+    }
+
+    // F4: PG 批量更新对 Option<DateTime> 列追加 ::TIMESTAMP 转换——pgCastTypeOf 必须解包
+    // Option（Option<DateTime> → TIMESTAMP，修复前落 TEXT 兜底 `::TEXT`，CASE 值类型不匹配）。
+    @TestCase
+    public func testBatchUpdatePostgresCastTimestampForOptionDeletedAt(): Unit {
+        let (conn, tx) = makeTestTx(PostgreSQLDialect())
+        let u1 = SoftOptUser()
+        u1.id = 1
+        u1.name = "a"
+        u1.deleted_at = Some(DateTime.now())
+        let u2 = SoftOptUser()
+        u2.id = 2
+        u2.name = "b"
+        tx.batchUpdate([u1, u2])
+        @Expect(conn.stmt.capturedSql.contains("\"deleted_at\" = CASE \"id\" WHEN ? THEN ?::TIMESTAMP WHEN ? THEN ?::TIMESTAMP END"), true)
+        // name 列仍是 ::TEXT（String 正常映射），deleted_at 单独用 ::TIMESTAMP（Option 解包）
+        @Expect(conn.stmt.capturedSql.contains("\"name\" = CASE \"id\" WHEN ? THEN ?::TEXT WHEN ? THEN ?::TEXT END"), true)
+    }
+
+    @TestCase
+    public func testUpsertBindsOptionParams(): Unit {
+        let conn = CaptureConnection()
+        let rf = Refine(MockDatasource(), SQLiteDialect(), 0)
+        let tx = Tx(conn, rf, 0)
+        tx.begin()
+        let u = SoftOptUser()
+        u.id = 1
+        u.name = "n"
+        u.deleted_at = Some(DateTime.now())
+        tx.upsert(u)
+        @Expect(conn.stmt.capturedSql.contains("\"deleted_at\""), true)
+        @Expect(conn.stmt.nullSetCount, 0)
+        var hasDateTime = false
+        for (v in conn.stmt.capturedSetValues) {
+            match (v) { case _: DateTime => hasDateTime = true; case _ => () }
+        }
+        @Expect(hasDateTime, true)
+    }
+}
 
 // ─── Version + Audit Fields Tests ───────────────────────
 

@@ -74,6 +74,17 @@ public class SQLiteMigratorTest {
         @Expect(sql, expected)
     }
 
+    // F4: Option<DateTime> 软删字段的 schema 必须生成可空列（nullable=true），
+    // 否则 INSERT None 绑 NULL 会触发 DB NOT NULL 错误。断言宏生成的
+    // SoftOptUserSchema 的 deleted_at 列 DDL 缺失 NOT NULL。
+    @TestCase
+    public func testCreateTableSQLNullableSoftDeleteColumn(): Unit {
+        let sql = SQLiteMigrator.createTableSQL(SoftOptUserSchema())
+        @Expect(sql.contains("\"deleted_at\" TEXT NULL"), true)
+        @Expect(sql.contains("\"deleted_at\" TEXT NOT NULL"), false)
+        @Expect(sql.contains("\"id\" INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL"), true)
+    }
+
     // M24: 复合主键（junction 表）渲染表级 PRIMARY KEY，不依赖单列列级约束
     @TestCase
     public func testCreateTableSQLCompositePk(): Unit {

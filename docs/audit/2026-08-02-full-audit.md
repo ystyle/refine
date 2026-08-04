@@ -228,7 +228,7 @@
 - **M8** `query.cj:495` 聚合列名 `Raw(fn + "(" + colName + ")")` 拼字符串；`min/max` 缺 String 版本。
   - **✅ 已解决（2026-08-03）**: (a) 聚合列名改经 `dialect.quoteIdentifier` 引号化（修复 Raw 拼裸列名，与 C9 同源）；(b) 新增 `min/max(col: Col<String>): String`（String 聚合读取器，空结果返回空串）。
 - **M9** `dialect_sqlite.cj:174` Timestamp→TEXT，软删除过滤硬编码 `deleted_at = 0`（`refine_macro.cj:99`），若 deleted_at 声明为 DateTime 会永远查不到。
-  - **✅ 已解决（2026-08-03）**: 软删过滤与写值按 `deleted_at` 声明类型生成——DateTime → `IS NULL` + `DateTime.now()`，Int64 → `= 0` + `1`（历史行为不变）；新增 `DateTimeSoftDeleteTest` 3 例。**遗留（转 F4）**：DateTime 软删端到端可用还需 `Option<DateTime>` 可空软删字段支持（宏层 `isRelationField` 当前把 `Option<X>` 当 ref_to 关系），见 `§五 F4`。
+  - **✅ 已解决（2026-08-03）**: 软删过滤与写值按 `deleted_at` 声明类型生成——DateTime → `IS NULL` + `DateTime.now()`，Int64 → `= 0` + `1`（历史行为不变）；新增 `DateTimeSoftDeleteTest` 3 例。**遗留（转 F4）**：DateTime 软删端到端可用还需 `Option<DateTime>` 可空软删字段支持（宏层 `isRelationField` 当前把 `Option<X>` 当 ref_to 关系），见 `§五 F4`（F4 已于 2026-08-04 落地，`Option<DateTime>` 可空软删端到端可用，见 §五 F4）。
 - **M10** `error.cj:45-65` `OptimisticLockException` 两个 pk 重载（Int64/String）易混淆。
   - **✅ 已解决（2026-08-03）**: init 私有化，改为 `createWithInt64Pk`/`createWithStringPk` 工厂方法（公开字段 entityType/pk/expected/actual 不变）。宏生成调用点同步改造：单 Int64 主键走 Int64 工厂，单 String/复合主键走 String 工厂（`tx_gen.cj`）。新增 2 例断言工厂语义，乐观锁既有测试全绿。
 - **M11** `dispatchSet1`（`db.cj:296-299`）从未被调用。
@@ -289,6 +289,7 @@
 - **修法**：宏层支持 `Option<DateTime>` 可空软删字段——`isRelationField` 排除可空时间戳，软删列 schema 标 `nullable=true`，INSERT 对 `None` 绑 NULL（未删行），软删写 `Some(DateTime.now())`。
 - **备注**：由 M9 修复后暴露（2026-08-03），列为后续排期项。
 - **更新（2026-08-03，R-I7）**：非 Option `deleted_at: DateTime` 的软删配置现已被宏层展开期守卫直接拦截（`refine_macro.cj` 抛编译错误，提示改用 `Option<DateTime>`（F4 未落地）或 Int64）——不再静默生成恒假 `IS NULL` 过滤。`Option<DateTime>` 可空软删字段的完整支持（本 F4 条目）仍未落地，为其后续实现保留。
+- **✅ 已解决（2026-08-04，F4）**：`Option<DateTime>` 可空软删字段端到端可用。宏层 `isNullableScalarType` 把 `Option<DateTime>` 排除出关系字段（schema nullable 列 + Timestamp、INSERT None 绑 NULL / Some 绑 DateTime、SELECT 列、rowMapper `getOrNull<DateTime>` 读取、batch/upsert 绑定、PG `::TIMESTAMP` cast）；`dispatchSet` 新增 `case v: Option<DateTime>` 分支（Some→`set<DateTime>` / None→`setNull`）；R-I7 守卫仅拦非 Option DateTime（消息文案更新）。附带修复 `dialect_base.cj` `Unary(IsNull/IsNotNull)` 渲染顺序（`IS NULL "col"` → `"col" IS NULL`，三方言真实执行语法错误，此前从未被真实 SQL 触发）。设计见 `docs/plans/2026-08-04-f4-option-datetime-softdelete.md`（方案 D1 方案 A：仅支持 Option<DateTime>，其余 Option<标量> 仍当关系字段跳过，记档）。
 
 ---
 

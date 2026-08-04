@@ -286,14 +286,15 @@ public class PostgreSQLDialectTest {
         let nullExpr = Unary(IsNull, Column("id"))
         stmt.addClause(WhereClause([nullExpr]))
         let (sql, _) = dialect.render(stmt)
-        @Expect(sql.contains("IS NULL"), true)
+        // F4: IS NULL 后置（`"id" IS NULL`），修复前渲染成 `IS NULL "id"`（PG 语法错误）
+        @Expect(sql, "SELECT \"id\" FROM \"t\" WHERE \"id\" IS NULL")
         let stmt2 = Statement()
         stmt2.addClause(SelectClause([Column("id")]))
         stmt2.addClause(FromClause("t"))
         let notNullExpr = Unary(IsNotNull, Column("id"))
         stmt2.addClause(WhereClause([notNullExpr]))
         let (sql2, _) = dialect.render(stmt2)
-        @Expect(sql2.contains("IS NOT NULL"), true)
+        @Expect(sql2, "SELECT \"id\" FROM \"t\" WHERE \"id\" IS NOT NULL")
     }
 
     @TestCase

@@ -361,8 +361,12 @@ func buildAutoPkReturningCols(pkFields: ArrayList<FieldInfo>): Tokens {
     )
 }
 
+// F4: PG 批量更新对 Option<DateTime> 可空标量先解包再映射（Option<DateTime> → TIMESTAMP），
+// 修复前落 TEXT 兜底（`::TEXT` 与 TIMESTAMP 列的 CASE 值类型不匹配）。
 func pgCastTypeOf(typeName: String): String {
-    match (typeName) {
+    var tn = typeName
+    if (isNullableScalarType(tn)) { tn = unwrapOptionType(tn) }
+    match (tn) {
         case "Int8" | "Int16" | "Int32" | "Int64" | "UInt8" | "UInt16" | "UInt32" | "UInt64" => "BIGINT"
         case "Float32" | "Float64" => "DOUBLE PRECISION"
         case "Bool" => "BOOLEAN"

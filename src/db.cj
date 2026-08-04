@@ -363,6 +363,14 @@ func dispatchSet(stmt: SqlStatement, index: Int, value: Any): Unit {
         case v: Float64  => stmt.set<Float64>(index, v)
         case v: Float32  => stmt.set<Float64>(index, Float64(v))
         case v: DateTime => stmt.set<DateTime>(index, v)
+        // F4: Option<DateTime> 可空软删字段写路径（宏层生成 allParams.add(entity.deleted_at)
+        // 变量装箱，运行时类型保留，此分支命中）。Some 解包 set<DateTime>（软删打时间戳），
+        // None 绑 NULL（未删行）。match 对类型化 Option 值匹配合法（Any 上 match None 才非法）。
+        case v: Option<DateTime> =>
+            match (v) {
+                case Some(dt) => stmt.set<DateTime>(index, dt)
+                case None => stmt.setNull(index)
+            }
         case v: Array<UInt8> => stmt.set<Array<UInt8>>(index, v)
         // R-C2: 未知类型不再静默 setNull。Option 字段被宏层当关系字段跳过写路径
         // （不进入此函数），故写路径不存在合法 NULL 依赖 setNull——落到这里是
@@ -370,7 +378,7 @@ func dispatchSet(stmt: SqlStatement, index: Int, value: Any): Unit {
         case _           => throw RefineException(
             "unsupported param type for dispatchSet: " + paramTypeName(value) +
             " (supported: Int8/Int16/Int32/Int64/UInt8/UInt16/UInt32/UInt64/" +
-            "Float32/Float64/Bool/String/DateTime/Array<UInt8>)")
+            "Float32/Float64/Bool/String/DateTime/Option<DateTime>/Array<UInt8>)")
     }
 }
 

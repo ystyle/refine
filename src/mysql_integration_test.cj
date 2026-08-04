@@ -3,6 +3,7 @@ package refine
 import std.collection.ArrayList
 import std.collection.HashMap
 import std.database.sql.QueryResult
+import std.time.DateTime
 import std.unittest.*
 import std.unittest.testmacro.*
 import refine.macros.*
@@ -388,6 +389,56 @@ public class MySQLIntegrationTest {
                 @Expect(found.isSome(), true)
                 @Expect(found.getOrThrow().version, 2)
                 rf.transaction { tx: Tx => tx.execute("DROP TABLE IF EXISTS `versionedPost`", []) }
+                rf.close()
+            case None => @Expect(true, true)
+        }
+    }
+
+    // ─── F4: Option<DateTime> 可空软删字段真实 MySQL 端到端 ──────────────────────
+    // 与 PG 版同一链路：可空 TIMESTAMP 列 + INSERT None 绑 NULL + query() IS NULL
+    // 过滤只返回未删行 + tx.delete 软删后过滤 + rowMapper 读 NULL 列返回 None。
+    @TestCase
+    public func testOptionDateTimeSoftDeleteRoundtrip(): Unit {
+        match (tryMySQL()) {
+            case Some(rf) =>
+                rf.transaction { tx: Tx =>
+                    tx.execute("DROP TABLE IF EXISTS `softOptUser`", [])
+                }
+                rf.migrator().autoMigrate([SoftOptUserSchema()])
+                let alive = SoftOptUser()
+                alive.name = "alive"
+                let deleted = SoftOptUser()
+                deleted.name = "deleted"
+                deleted.deleted_at = Some(DateTime.now())
+                rf.transaction { tx: Tx => tx.save(alive) }
+                rf.transaction { tx: Tx => tx.save(deleted) }
+                @Expect(alive.id > 0, true)
+                @Expect(deleted.id > 0, true)
+                // 未删行读回：INSERT None 绑 NULL → rowMapper getOrNull<DateTime> 返回 None
+                let aliveBack = SoftOptUser.query().using(rf).filter(SoftOptUser.col().id == alive.id).one()
+                @Expect(aliveBack.isSome(), true)
+                @Expect(aliveBack.getOrThrow().deleted_at.isNone(), true)
+                // Some 行被软删过滤（deleted_at 非 NULL），query() 不可见——正确软删语义
+                let deletedBack = SoftOptUser.query().using(rf).filter(SoftOptUser.col().id == deleted.id).one()
+                @Expect(deletedBack.isNone(), true)
+                // Some 时间戳确实落库：直查列值验证非 NULL（绕过软删过滤）
+                rf.transaction { tx: Tx =>
+                    let r = tx.query("SELECT `deleted_at` FROM `softOptUser` WHERE `id` = ?", [deleted.id])
+                    if (r.next()) {
+                        let cm = buildColumnMap(r.columnInfos, tx.getParamOffset())
+                        @Expect(r.getOrNull<DateTime>(cm.get("deleted_at").getOrThrow()).isSome(), true)
+                    } else {
+                        @Expect(true, false)
+                    }
+                }
+                // query() 只返回未删行
+                let before = SoftOptUser.query().using(rf).all()
+                @Expect(before.size, 1)
+                @Expect(before[0].name, "alive")
+                rf.transaction { tx: Tx => tx.delete(alive) }
+                let after = SoftOptUser.query().using(rf).all()
+                @Expect(after.size, 0)
+                rf.transaction { tx: Tx => tx.execute("DROP TABLE IF EXISTS `softOptUser`", []) }
                 rf.close()
             case None => @Expect(true, true)
         }

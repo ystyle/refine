@@ -94,24 +94,27 @@ public macro Refine(input: Tokens): Tokens {
     // Detect soft delete: has deleted_at field AND no @HardDelete annotation
     var hasDeletedAt = false
     var deletedAtIsDateTime = false
+    var deletedAtNormType = ""
     for (f in mergedFields) {
         if (f.name == "deleted_at") {
             hasDeletedAt = true
-            // M9: 软删过滤与写值按 deleted_at 声明类型生成：DateTime → IS NULL /
-            // DateTime.now()（Int64 → `= 0` / 1，保持原行为）
-            deletedAtIsDateTime = f.typeName == "DateTime"
+            // M9 + F4: 软删过滤与写值按 deleted_at 声明类型生成——Option<DateTime> 与
+            // DateTime 均视为 DateTime 语义（IS NULL 过滤 + DateTime.now() 写值），
+            // Int64 保持 `= 0` / 1。归一化去空格（toTokens 渲染泛型带空格）。
+            let norm = f.typeName.replace(" ", "")
+            deletedAtNormType = norm
+            deletedAtIsDateTime = (norm == "DateTime" || norm == "Option<DateTime>")
             break
         }
     }
     let hardDeleteMessages = getChildMessages("HardDelete")
     let isSoftDelete = hasDeletedAt && hardDeleteMessages.size == 0
-    // R-I7: 非 Option DateTime 的 deleted_at 会生成恒假 IS NULL 过滤——INSERT 写入
+    // R-I7（F4 修订）: 非 Option DateTime 的 deleted_at 会生成恒假 IS NULL 过滤——INSERT 写入
     // DateTime.now()（默认值）后该列永非 NULL，query() 永远过滤所有行（静默数据不可见）。
-    // 宏层在此抛编译期错误拦截（fail-fast，替代静默恒假行为）；正确模型是可空软删字段
-    // Option<DateTime>（过滤 IS NULL + INSERT None 绑 NULL），支持落地见 F4。
-    // 在此之前用户用 Int64 deleted_at（`= 0` 语义，历史行为）。
-    if (isSoftDelete && deletedAtIsDateTime) {
-        throw Exception("soft delete field 'deleted_at' of type DateTime requires Option<DateTime> (unimplemented, see F4); use Int64 deleted_at instead")
+    // 宏层在此抛编译期错误拦截（fail-fast）；正确模型是 Option<DateTime>（过滤 IS NULL +
+    // INSERT None 绑 NULL，F4 已落地），Int64 deleted_at（`= 0` 语义）是历史合法路径。
+    if (isSoftDelete && deletedAtIsDateTime && deletedAtNormType != "Option<DateTime>") {
+        throw Exception("soft delete field 'deleted_at' of type DateTime must be Option<DateTime> for nullable soft delete; use Int64 or Option<DateTime>")
     }
 
     let mapperFuncName = Token(TokenKind.IDENTIFIER, className + "RowMapper")
@@ -120,8 +123,10 @@ public macro Refine(input: Tokens): Tokens {
     // Task 7: includeAll 字符串路径 DSL 需要顶层关系解析器。随 query() 挂载
     // `<实体>Rel.forName`（静态方法引用，类型 (String) -> Option<IRelation>）。
     let relResolverName = Token(TokenKind.IDENTIFIER, className + "Rel")
-    // M9: 软删过滤按 deleted_at 类型生成——DateTime 列未删状态是 NULL（IS NULL），
-    // Int64 列未删状态是 0（`= 0`）。修复前硬编码 `= 0`，DateTime 列永远查不到。
+    // M9 + F4: 软删过滤按 deleted_at 类型生成——DateTime/Option<DateTime> 列未删状态
+    // 是 NULL（IS NULL 过滤），Int64 列未删状态是 0（`= 0`）。Option<DateTime> 未删行
+    // INSERT 绑 NULL，IS NULL 过滤天然命中（语义与 Int64 软删平行）。修复前
+    // deletedAtIsDateTime 对 Option<DateTime> 为 false，误生成 `= 0` 过滤。
     let softDeleteFilterTokens = if (deletedAtIsDateTime) {
         quote(
             q.filter(Expr.Unary(UnaryOp.IsNull, Expr.Column("deleted_at")));
