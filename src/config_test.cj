@@ -1,6 +1,5 @@
 package refine
 
-import std.collection.ArrayList
 import std.unittest.*
 import std.unittest.testmacro.*
 import std.database.sql.DriverManager
@@ -25,49 +24,6 @@ public class ConfigTest {
     }
 
     @TestCase
-    public func testRegisterAndGet(): Unit {
-        DatabaseRegistry.clear()
-        let cfg = DatabaseConfig()
-        cfg.driver = "sqlite"
-        cfg.dsn = "test.db"
-        DatabaseRegistry.register("default", cfg)
-
-        try {
-            let db = DatabaseRegistry.get("default")
-            @Fail("should have thrown")
-        } catch (e: ConnectionException) {
-            // Expected - no driver available
-        } catch (e: ConfigException) {
-            @Fail("wrong exception type")
-        }
-    }
-
-    @TestCase
-    public func testGetUnknownDatabase(): Unit {
-        DatabaseRegistry.clear()
-        try {
-            let db = DatabaseRegistry.get("nonexistent")
-            @Fail("should have thrown")
-        } catch (e: ConfigException) {
-            // Expected
-        }
-    }
-
-    @TestCase
-    public func testClear(): Unit {
-        DatabaseRegistry.clear()
-        DatabaseRegistry.register("db1", DatabaseConfig())
-        DatabaseRegistry.register("db2", DatabaseConfig())
-        DatabaseRegistry.clear()
-        try {
-            DatabaseRegistry.get("db1")
-            @Fail("should have thrown after clear")
-        } catch (e: ConfigException) {
-            // Expected
-        }
-    }
-
-    @TestCase
     public func testDatabaseConfigToDB(): Unit {
         let cfg = DatabaseConfig()
         cfg.driver = "nonexistent"
@@ -76,56 +32,6 @@ public class ConfigTest {
             @Fail("should have thrown")
         } catch (e: ConnectionException) {
             @Expect(e.message, "Driver 'nonexistent' not found")
-        }
-    }
-
-    @TestCase
-    public func testRegister(): Unit {
-        DatabaseRegistry.clear()
-        let cfg = DatabaseConfig()
-        cfg.driver = "sqlite"
-        cfg.dsn = "test.db"
-        DatabaseRegistry.register("mydb", cfg)
-        try {
-            DatabaseRegistry.get("mydb")
-            @Fail("should have thrown")
-        } catch (e: ConnectionException) {
-            @Expect(e.message.contains("not found"), true)
-        } catch (e: ConfigException) {
-            @Fail("wrong exception type")
-        }
-    }
-
-    @TestCase
-    public func testInitAllEmpty(): Unit {
-        DatabaseRegistry.clear()
-        // initAll with no configs should be a no-op
-        DatabaseRegistry.initAll()
-        @Expect(true, true)
-    }
-
-    @TestCase
-    public func testCloseAllEmpty(): Unit {
-        DatabaseRegistry.clear()
-        // closeAll with no instances should be a no-op
-        DatabaseRegistry.closeAll()
-        @Expect(true, true)
-    }
-
-    @TestCase
-    public func testGetCachedHit(): Unit {
-        DatabaseRegistry.clear()
-        let cfg = DatabaseConfig()
-        cfg.driver = "sqlite"
-        cfg.dsn = ":memory:"
-        DatabaseRegistry.register("testdb", cfg)
-        // First call: miss, create, cache
-        // If first call throws, cache is not populated
-        try {
-            let db = DatabaseRegistry.get("testdb")
-            @Expect(true, true)
-        } catch (_: Exception) {
-            // Expected if sqlite driver not available
         }
     }
 
@@ -210,47 +116,5 @@ public class ConfigTest {
         @Expect(pooled.idleTimeout.toSeconds(), 600)
         @Expect(pooled.maxLifeTime.toSeconds(), 1800)
         @Expect(pooled.keepaliveTime.toSeconds(), 60)
-    }
-
-    // M16: DatabaseRegistry 并发防护。instances/configs 是静态 HashMap（非线程安全），
-    // 多线程同时 register/get 必须加锁，否则并发 put/get 可能抛异常或损坏结构。
-    // 本测试用 8 线程 × 25 个唯一库名并发注册+实例化，全部成功后再验证缓存命中。
-    @TestCase
-    public func testConcurrentRegisterAndGet(): Unit {
-        DriverManager.deregister("mysql")
-        DriverManager.register("mysql", MockDriver())
-        try {
-            DatabaseRegistry.clear()
-            let futures = ArrayList<Future<Unit>>()
-            for (i in 0..8) {
-                let fut = spawn {
-                    for (j in 0..25) {
-                        let name = "conc" + i.toString() + "_" + j.toString()
-                        let cfg = DatabaseConfig()
-                        cfg.driver = "mysql"
-                        cfg.dsn = "mysql://localhost:3306/testdb"
-                        DatabaseRegistry.register(name, cfg)
-                        let db = DatabaseRegistry.get(name)
-                        @Expect(db.getDialect().name(), "mysql")
-                    }
-                }
-                futures.add(fut)
-            }
-            for (f in futures) { f.get() }
-            // 并发完成后注册表仍一致：未注册名抛 ConfigException，已注册名缓存命中
-            try {
-                DatabaseRegistry.get("conc_never_registered")
-                @Fail("should have thrown")
-            } catch (e: ConfigException) {
-                // Expected
-            }
-            for (i in 0..8) {
-                let first = DatabaseRegistry.get("conc" + i.toString() + "_24")
-                @Expect(first.getDialect().name(), "mysql")
-            }
-        } finally {
-            DriverManager.deregister("mysql")
-            DatabaseRegistry.clear()
-        }
     }
 }

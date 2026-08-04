@@ -120,7 +120,7 @@ refine = { git = "https://atomgit.com/ystyle/refine.git", branch = "master" }
 
 ## 测试
 
-单元 + 集成测试 **937 个全部通过**（`cjpm test`），其中包含针对真实 MySQL 与 PostgreSQL 的连接集成测试。
+单元 + 集成测试 **929 个全部通过**（`cjpm test`），其中包含针对真实 MySQL 与 PostgreSQL 的连接集成测试。
 
 ## 文档
 

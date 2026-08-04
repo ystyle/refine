@@ -15,7 +15,7 @@ let q = User.query().using(rf)
 
 ### using()
 
-查询需要一个执行上下文。支持四种方式：
+查询需要一个执行上下文。支持三种方式：
 
 ```cangjie
 // 通过 Refine 实例（自动获取方言和参数偏移）
@@ -28,10 +28,9 @@ User.query().using(rf.session())
 rf.transaction { tx: Tx =>
     User.query().using(tx).all()
 }
-
-// 通过 DB
-User.query().using(DB.open("mariadb://127.0.0.1:3306"))
 ```
+
+> **注意**：`Query.using(DB)` 已在 0.6.0 移除——`DB` 是纯连接层，不含方言与参数偏移。需 ORM 查询请使用 `Refine`。
 
 ## 查询条件
 

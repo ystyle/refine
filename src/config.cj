@@ -1,8 +1,7 @@
 package refine
 
-import std.collection.{ArrayList, HashMap}
+import std.collection.ArrayList
 import std.core.Duration
-import std.sync.Mutex
 import std.database.sql.{Datasource, DriverManager, PooledDatasource}
 
 public class DatabaseConfig {
@@ -57,60 +56,4 @@ func applyPoolConfig(cfg: DatabaseConfig, ds: Datasource): PooledDatasource {
     pooled.maxLifeTime = Duration.second * cfg.maxLifeTime
     pooled.keepaliveTime = Duration.second * cfg.keepaliveTime
     pooled
-}
-
-// M16: DatabaseRegistry 是静态全局状态（instances/configs），并发场景（多线程同时
-// register/get/initAll/closeAll/clear）必须加锁保护，否则 HashMap 并发读写可能抛异常
-// 或损坏结构。Mutex 可重入，嵌套调用（如 initAll 内调 get）不会死锁。
-public class DatabaseRegistry {
-    private static var instances = HashMap<String, Refine>()
-    private static var configs = HashMap<String, DatabaseConfig>()
-    private static let registryLock = Mutex()
-
-    public static func register(name: String, config: DatabaseConfig): Unit {
-        synchronized(registryLock) {
-            configs.add(name, config)
-        }
-    }
-
-    public static func get(name: String): Refine {
-        synchronized(registryLock) {
-            match (instances.get(name)) {
-                case Some(rf) => rf
-                case None =>
-                    match (configs.get(name)) {
-                        case Some(config) =>
-                            let rf = config.toRefine()
-                            instances.add(name, rf)
-                            rf
-                        case None =>
-                            throw ConfigException("Database '${name}' not configured")
-                    }
-            }
-        }
-    }
-
-    public static func initAll(): Unit {
-        synchronized(registryLock) {
-            for (name in configs.keys()) {
-                get(name)
-            }
-        }
-    }
-
-    public static func closeAll(): Unit {
-        synchronized(registryLock) {
-            for (rf in instances.values()) {
-                rf.close()
-            }
-            instances = HashMap<String, Refine>()
-        }
-    }
-
-    public static func clear(): Unit {
-        synchronized(registryLock) {
-            instances = HashMap<String, Refine>()
-            configs = HashMap<String, DatabaseConfig>()
-        }
-    }
 }

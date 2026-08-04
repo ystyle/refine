@@ -74,6 +74,8 @@ let rf = Refine.open("postgres://127.0.0.1:5432", [
 
 ## DatabaseConfig
 
+`DatabaseConfig` 提供连接池参数配置。ORM 场景用 `toRefine()` 获取完整的 `Refine` 实例（自动探测方言与参数偏移）；纯连接层场景用 `toDB()` 获取 `DB`（无方言，仅 datasource + 参数偏移 + 连接池）。
+
 ```cangjie
 let config = DatabaseConfig()
 config.driver = "mariadb"
@@ -85,30 +87,16 @@ config.maxPoolSize = 50
 config.connectionTimeout = 30
 config.idleTimeout = 600
 config.maxLifeTime = 1800
-let db = config.toDB()
+
+// ORM 场景：返回 Refine（持有方言、连接池、hook 注册表）
+let rf = config.toRefine()
 ```
 
-## DatabaseRegistry
-
-```cangjie
-let cfg = DatabaseConfig()
-cfg.driver = "mariadb"
-cfg.dsn = "mariadb://127.0.0.1:3306"
-cfg.user = "root"
-cfg.passwd = "secret"
-cfg.database = Some("myapp")
-
-DatabaseRegistry.register("default", cfg)
-DatabaseRegistry.initAll()
-
-// 按名获取
-let db = DatabaseRegistry.get("default")
-
-// 关闭所有
-DatabaseRegistry.closeAll()
-```
+> **注意**：`DatabaseRegistry` 已在 0.6.0 移除——它是设计文档未定义的全局状态且无生产使用。多数据库实例请直接创建多个 `Refine` / `DatabaseConfig` 实例，实例间天然隔离。
 
 ## DB 连接池
+
+`DB` 是纯连接层（datasource + 参数偏移 + 连接池），不含方言与 ORM 能力。ORM 查询请用 `Refine`；`DB` 仅用于手写 SQL。
 
 ```cangjie
 let db = DB.open("mariadb://127.0.0.1:3306")

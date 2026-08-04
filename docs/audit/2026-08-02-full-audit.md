@@ -242,6 +242,7 @@
   - **✅ 已解决（2026-08-03）**: 改 `SELECT DISTINCT INDEX_NAME ... AND INDEX_NAME != 'PRIMARY'`，复合索引去重且不混入主键。
 - **M16** `DatabaseRegistry` 静态全局状态与"多实例隔离"相悖，无并发保护。
   - **✅ 已解决（2026-08-03）**: 静态 `Mutex` + `synchronized` 包裹 register/get/initAll/closeAll/clear 全部方法（`initAll` 内调 `get` 依赖 Mutex 可重入不死锁）。新增并发测试：8 线程 × 25 唯一库名并发注册+实例化不崩、注册表一致性（未注册名抛 ConfigException、缓存命中）。
+  - **✅ 关联项收尾（2026-08-03 DB 收敛后）**: M16 关联审计确认 `DatabaseRegistry` 是设计文档（design.md/refine-architecture.md）从未定义的 API 面，生产代码/example/docs-site 零使用，仅 config_test.cj 自测。DB 收敛为纯连接层后 C7「废弃 DB 独立路径统一走 Refine」已彻底落地（DB 无 dialect/migrator/getDialect，`using(DB)` 移除，Registry 存 Refine）。决策：**移除 `DatabaseRegistry` 类**（register/get/initAll/closeAll/clear + 静态锁），保留 `DatabaseConfig` 连接池配置能力（`toRefine()`/`toDB()`/`applyPoolConfig`）。删除 8 个 Registry 测试（含 M16 并发测试），929 全绿。
 - **M17** `dummyMapper/dummySetter`（`relation.cj:147-148`）是测试泄漏到生产。
 - **M18** 三方言约 150 行逐字节重复代码（render 主循环、renderExpr 系列），应抽取共享基类。
   - **✅ 已解决（2026-08-03）**: 新建 `AbstractDialect <: Dialect`（`dialect_base.cj`）统一 render/renderBody/renderExpr 系列；方言差异收敛为 open 钩子（renderParam/quoteIdentifier/hasLockSupport/renderLimitOffset/hasIsolationSupport/hasReturningSupport）+ 抽象方法（name/dataTypeOf/upsertSQL/migrator/defaultValueOf）。858 用例全绿，三方言 SQL 输出零变化。**评审收尾（2026-08-03）**: renderLimitOffset 注释补分页钩子边界（仅尾部分页调整类差异，TOP/ROWNUM 式需扩展基类签名或新增钩子）；新增 FOR UPDATE+LIMIT/OFFSET 串行交互测试。
