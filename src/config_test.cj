@@ -35,6 +35,37 @@ public class ConfigTest {
         }
     }
 
+    // DB 收敛为纯连接层后 toDB() 成功路径：返回纯 DB（无方言）。断言 paramOffset
+    // 按驱动适配（mariadb=1），且裸 Session.getDialect() 抛 RefineException——
+    // DB 只承载 datasource + paramOffset + 连接池，不承担 ORM 渲染。
+    @TestCase
+    public func testConfigToDBSuccessReturnsPureDB(): Unit {
+        let realDrv = DriverManager.getDriver("mariadb")
+        DriverManager.deregister("mariadb")
+        DriverManager.register("mariadb", MockDriver())
+        try {
+            let cfg = DatabaseConfig()
+            cfg.driver = "mariadb"
+            cfg.dsn = "mariadb://localhost:3306/testdb"
+            let db = cfg.toDB()
+            @Expect(db.getParamOffset(), 1)
+            let s = db.session()
+            try {
+                s.getDialect()
+                @Fail("expected RefineException: bare DB has no dialect")
+            } catch (e: RefineException) {
+                @Expect(e.message.contains("no dialect"), true)
+            }
+            s.close()
+            db.close()
+        } finally {
+            DriverManager.deregister("mariadb")
+            if (let Some(drv) <- realDrv) {
+                DriverManager.register("mariadb", drv)
+            }
+        }
+    }
+
     @TestCase
     public func testConfigWithDatabaseOpts(): Unit {
         let cfg = DatabaseConfig()

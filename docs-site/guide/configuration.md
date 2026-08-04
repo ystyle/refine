@@ -100,8 +100,6 @@ let rf = config.toRefine()
 
 ```cangjie
 let db = DB.open("mariadb://127.0.0.1:3306")
-db.maxPoolSize = 20
-db.connectionTimeout = 5000  // 毫秒
-db.idleTimeout = 60000       // 毫秒
-db.maxLifeTime = 3600000     // 毫秒
 ```
+
+连接池参数配置请使用 `DatabaseConfig`（`applyPoolConfig` 会应用到连接池）；`DB.open` 使用驱动默认连接池。`DB` 不提供池参数属性——那是配置层的职责。

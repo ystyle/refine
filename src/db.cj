@@ -19,14 +19,6 @@ internal enum TxState {
 public class DB {
     private var datasource: Datasource
     private var paramOffset: Int64 = 0
-    public mut prop maxPoolSize: Int32 { get() { _maxPoolSize } set(v) { _maxPoolSize = v } }
-    public mut prop connectionTimeout: Int64 { get() { _connectionTimeout } set(v) { _connectionTimeout = v } }
-    public mut prop idleTimeout: Int64 { get() { _idleTimeout } set(v) { _idleTimeout = v } }
-    public mut prop maxLifeTime: Int64 { get() { _maxLifeTime } set(v) { _maxLifeTime = v } }
-    private var _maxPoolSize: Int32 = 10
-    private var _connectionTimeout: Int64 = 30000
-    private var _idleTimeout: Int64 = 60000
-    private var _maxLifeTime: Int64 = 3600000
 
     public init(datasource: Datasource) {
         this.datasource = datasource
@@ -54,9 +46,8 @@ public class DB {
 
     public func getParamOffset(): Int64 { paramOffset }
 
-    // R-M11/closeExecutor 之外的外部调用方需要原始连接的通道（内部用）；
-    // 裸连接生命周期由调用方负责。
-    public func getRawConn(): Connection {
+    // 裸连接通道（包内/Refine 层用）；生命周期由调用方负责。
+    internal func getRawConn(): Connection {
         datasource.connect()
     }
 

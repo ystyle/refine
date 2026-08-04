@@ -25,8 +25,13 @@ public class DatabaseConfig {
     }
 
     // ORM 层：建纯 DB + 方言，返回 Refine（持有 DB，getParamOffset/方言经 db）。
+    // M1: 与 Refine.open 一致，构造前调用 d.initialize(db) 钩子——避免方言初始化
+    // 实现后 Refine.open 与 DatabaseConfig.toRefine 两条入口静默行为分叉。
     public func toRefine(): Refine {
-        Refine(toDB(), detectDialect(driver))
+        let d = detectDialect(driver)
+        let db = toDB()
+        d.initialize(db)
+        Refine(db, d)
     }
 
     private func openPooledDatasource(): PooledDatasource {

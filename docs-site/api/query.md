@@ -90,14 +90,15 @@ q.includeAll(["author.profile", "tags"])
 
 ### using()
 
-设置执行上下文。支持 `Refine` / `Session` / `Tx` / `DB`。
+设置执行上下文。支持 `Refine` / `Session` / `Tx`。
 
 ```cangjie
 q.using(rf)
 q.using(rf.session())
 q.using(tx)  // 在事务中使用
-q.using(db)
 ```
+
+> **注意**：`q.using(DB)` 已在 0.6.0 移除——`DB` 是纯连接层，不含方言与参数偏移。需 ORM 查询请使用 `Refine`。
 
 ## 终止方法
 
