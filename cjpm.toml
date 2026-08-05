@@ -13,6 +13,17 @@
 sonyflake = "1.0.9"
 "opencj::ulid" = "0.1.2"
 
+[target.x86_64-unknown-linux-gnu.bin-dependencies]
+  path-option = ["${CANGJIE_STDX_PATH}"]
+[target.aarch64-unknown-linux-gnu.bin-dependencies]
+  path-option = ["${CANGJIE_STDX_PATH}"]
+[target.x86_64-apple-darwin.bin-dependencies]
+  path-option = ["${CANGJIE_STDX_PATH}"]
+[target.aarch64-apple-darwin.bin-dependencies]
+  path-option = ["${CANGJIE_STDX_PATH}"]
+[target.x86_64-w64-mingw32.bin-dependencies]
+  path-option = ["${CANGJIE_STDX_PATH}"]
+
 [test-dependencies]
 mariadb = {git = "https://gitcode.com/Cangjie-SIG/mariadb-driver.git", branch = "master"}
 pgsql = {git = "https://atomgit.com/aibrary/pgsql-driver.git", branch = "main"}
