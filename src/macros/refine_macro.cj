@@ -40,6 +40,26 @@ struct RelInfo {
 }
 
 public macro Refine(input: Tokens): Tokens {
+    return expandRefine(input, "none")
+}
+
+public macro Refine(attr: Tokens, input: Tokens): Tokens {
+    // Task 1: 解析 @Refine[naming: "snake"] 属性宏参数——默认 "none"。
+    // attr tokens 结构：naming(IDENTIFIER) :(COLON) "snake"(STRING_LITERAL)，值在 i+2。
+    // 本 Task 只解析并保留 strategy 局部变量，不做任何实际转换（表名/列名仍走现有逻辑，
+    // 后续 Task 用 strategy 驱动命名策略）。
+    var strategy = "none"
+    for (i in 0..attr.size) {
+        if (attr[i].kind == TokenKind.IDENTIFIER && attr[i].value == "naming" && i + 2 < attr.size) {
+            strategy = attr[i + 2].value
+        }
+    }
+    return expandRefine(input, strategy)
+}
+
+// 共享展开逻辑：单参宏（裸 @Refine，strategy="none"）与双参宏（@Refine[naming: ...]）
+// 均委托到此函数，保证两路展开完全一致。
+func expandRefine(input: Tokens, strategy: String): Tokens {
     let classDecl = ClassDecl(input)
     let className = classDecl.identifier.value
     let classNameToken = classDecl.identifier
@@ -226,7 +246,7 @@ public macro Refine(input: Tokens): Tokens {
     if (isSoftDelete) {
         let softDeleteSQLFunc = buildSoftDeleteSQLFunc(className, tableName, pkFields, deletedAtIsDateTime)
         txDeleteExtend = buildTxSoftDeleteExtend(className, pkFields)
-        classDecl.toTokens() + Token(TokenKind.NL) + Token(TokenKind.NL) +
+        return classDecl.toTokens() + Token(TokenKind.NL) + Token(TokenKind.NL) +
             colsStruct + Token(TokenKind.NL) + Token(TokenKind.NL) + relClass +
             Token(TokenKind.NL) + Token(TokenKind.NL) + insertSQLFunc +
             Token(TokenKind.NL) + Token(TokenKind.NL) + txSaveExtend +
@@ -247,7 +267,7 @@ public macro Refine(input: Tokens): Tokens {
             junctionTokens
     } else {
         txDeleteExtend = buildTxDeleteExtend(className, pkFields)
-        classDecl.toTokens() + Token(TokenKind.NL) + Token(TokenKind.NL) +
+        return classDecl.toTokens() + Token(TokenKind.NL) + Token(TokenKind.NL) +
             colsStruct + Token(TokenKind.NL) + Token(TokenKind.NL) + relClass +
             Token(TokenKind.NL) + Token(TokenKind.NL) + insertSQLFunc +
             Token(TokenKind.NL) + Token(TokenKind.NL) + txSaveExtend +

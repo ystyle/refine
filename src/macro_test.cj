@@ -11,6 +11,15 @@ import std.math.numeric.Decimal
 import std.unittest.*
 import std.unittest.testmacro.*
 
+// Task 1: @Refine[naming: "snake"] 属性宏参数解析——本 Task 仅验证双参重载能被解析
+// 并展开不报错；表名/列名仍走默认逻辑（lowerTableName → snakeBlogPost），
+// Task 3 将转为 snake_blog_post（届时升级本断言）。
+@Refine[naming: "snake"]
+public class SnakeBlogPost {
+    var id: Int64 = 0
+    var userName: String = ""
+}
+
 @Refine
 public class Post {
     var id: Int64 = 0
@@ -5510,6 +5519,18 @@ public class DocSyncSyntaxTest {
             .using(tx)
         let _ = q.all()
         @Expect(conn.stmt.capturedSql.contains("LEFT JOIN"), false)
+    }
+}
+
+// Task 1: 验证 @Refine[naming] 属性宏能解析 attr 展开不报错。本 Task 只解析不
+// 转换，表名仍是默认 lowerTableName 结果 snakeBlogPost；Task 3 此断言升级为
+// "snake_blog_post"，并补列名断言 "user_name"。
+@Test
+public class SnakeNamingTest {
+    @TestCase
+    public func testNamingAttrMacroParses(): Unit {
+        let schema = SnakeBlogPostSchema()
+        @Expect(schema.tableName(), "snakeBlogPost")
     }
 }
 
