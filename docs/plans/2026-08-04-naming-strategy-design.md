@@ -12,13 +12,13 @@
 
 ## 技术约束（已确认）
 
-- 仓颉宏编译期只能调用**宏包**（refine.macros）代码。策略函数内置在宏包，`naming: "snake"` 是策略名（非运行时函数引用）
+- 仓颉宏展开期可调用**常规包**函数（实验验证，早期"宏只能调用宏包代码"的约束已证伪）。策略函数放常规包 `refine.naming`（src/naming/naming.cj）——可被测试直接单测、宏包展开期 import 调用同一实现，零副本漂移。`naming: "snake"` 是策略名（非运行时函数引用）
 - 宏定义与调用不能同包；`@Refine` 当前单参数 `input`，需加 `attr` 参数支持 `[naming: "snake"]`，attr 为空时保持默认（现有 70+ 裸 @Refine 回归集）
 - 宏生成代码不写 import（实体文件需已 import 所需类型）
 
 ## 架构
 
-### 命名策略函数（宏包新文件 naming.cj）
+### 命名策略函数（常规包新文件 src/naming/naming.cj，宏包展开期 import 调用）
 
 ```cangjie
 // 驼峰 → snake_case（处理连续大写：userID→user_id，HTMLParser→html_parser）
@@ -116,7 +116,7 @@ rowMapper 查询键（method_gen.cj:204）必须与 SELECT 列（sql_gen.cj:342�
 
 ## 完成定义
 - [ ] @Refine[naming] 属性宏解析（attr 空默认 none）
-- [ ] camelToSnake + 表/列策略函数（宏包）
+- [ ] camelToSnake + 表/列策略函数（常规包 refine.naming）
 - [ ] FieldInfo.columnName 全烘焙点接入（列名 vs 字段名分离）
 - [ ] r.by 双身份、junction 派生列、via 默认转换
 - [ ] 默认 none 全量回归 + snake 新测试

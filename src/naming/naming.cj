@@ -7,9 +7,9 @@ package refine.naming
 // 连续大写边界规则：前一个字符是大写、且下一个字符是小写时也插 "_"——
 //   userID → user_id（ID 是结尾缩写，不拆分）
 //   HTMLParser → html_parser（Parser 是新词边界）
-// 对已是 snake_case 的输入幂等（下划线不触发边界）。
-// 按 Rune 遍历（String 下标按字节，UTF-8 下会截断多字节字符）；非 ASCII 字符
-// 不参与边界判定，原样保留（isAsciiUpperCase/isAsciiLowerCase 只认 ASCII）。
+// 对全小写 snake_case 输入幂等（下划线不触发边界）。
+// 按 Rune 遍历（String 下标按字节，UTF-8 下会截断多字节字符）；非 ASCII 原样保留，
+// 仅作为前字符时视同小写边界（isAsciiUpperCase/isAsciiLowerCase 只认 ASCII）。
 public func camelToSnake(name: String): String {
     if (name.size == 0) { return name }
     let runes = name.toRuneArray()
@@ -39,14 +39,23 @@ public func applyColumnNameStrategy(name: String, strategy: String): String {
 
 // 首字母小写（实体类名 → 默认表名，如 BlogPost → blogPost）。原定义于宏包 meta.cj，
 // Task 2 移入本包：applyTableNameStrategy 的 none 分支依赖它，单一实现避免漂移。
+// 按 Rune 处理首字符（String 下标按字节，UTF-8 下会截断多字节字符）；非 ASCII 首字符原样保留。
 public func lowerTableName(name: String): String {
     if (name.size == 0) { return name }
-    name[0..1].toAsciiLower() + name[1..]
+    let runes = name.toRuneArray()
+    let sb = StringBuilder()
+    sb.append(runes[0].toAsciiLowerCase())
+    sb.append(runes[1..])
+    sb.toString()
 }
 
 // 首字母大写（关系字段名 → 方法名前缀，如 userName → UserName）。随 lowerTableName
-// 一并移入，保持字符串工具聚合。
+// 一并移入，保持字符串工具聚合。按 Rune 处理首字符（同 lowerTableName）。
 public func upperFirstLetter(name: String): String {
     if (name.size == 0) { return name }
-    name[0..1].toAsciiUpper() + name[1..]
+    let runes = name.toRuneArray()
+    let sb = StringBuilder()
+    sb.append(runes[0].toAsciiUpperCase())
+    sb.append(runes[1..])
+    sb.toString()
 }

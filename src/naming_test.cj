@@ -54,6 +54,11 @@ public class CamelToSnakeTest {
     public func testDigitBeforeUpper(): Unit {
         @Expect(camelToSnake("user2Name"), "user2_name")
     }
+
+    @TestCase
+    public func testMultibyteBoundary(): Unit {
+        @Expect(camelToSnake("用户Name"), "用户_name")
+    }
 }
 
 @Test
@@ -91,5 +96,25 @@ public class ApplyStrategyTest {
     @TestCase
     public func testUpperFirstLetter(): Unit {
         @Expect(upperFirstLetter("userName"), "UserName")
+    }
+
+    @TestCase
+    public func testLowerTableNameEmpty(): Unit {
+        @Expect(lowerTableName(""), "")
+    }
+
+    @TestCase
+    public func testLowerTableNameMultibyte(): Unit {
+        @Expect(lowerTableName("用户"), "用户")
+    }
+
+    @TestCase
+    public func testUpperFirstLetterEmpty(): Unit {
+        @Expect(upperFirstLetter(""), "")
+    }
+
+    @TestCase
+    public func testUpperFirstLetterMultibyte(): Unit {
+        @Expect(upperFirstLetter("用户"), "用户")
     }
 }

@@ -3,9 +3,8 @@ macro package refine.macros
 import std.ast.*
 import std.collection.ArrayList
 // Task 2: lowerTableName/upperFirstLetter 移入常规包 refine.naming（单一实现，可单测）。
-// 宏包展开期可调用常规包函数（编译期烘焙，实验验证）；Task 3 将用 camelToSnake/apply*
-// 驱动命名策略，与本包共享同一实现。
-import refine.naming.*
+// 本包暂未调用（引用为 Task 3 预留）；Task 3 用 camelToSnake/apply* 驱动命名策略时
+// 再 `import refine.naming.*`——宏包展开期可调用常规包函数，实验已验证。
 
 func extractFields(cd: ClassDecl): ArrayList<FieldInfo> {
     let list = ArrayList<FieldInfo>()
