@@ -6,14 +6,16 @@ import refine.naming.*
 
 struct FieldInfo {
     var name: String
+    var columnName: String
     var typeName: String
     var storageOverride: String
     var isPk: Bool
     var autoInc: Bool
     var isVersion: Bool
-    public init(name: String, typeName: String, storageOverride: String,
+    public init(name: String, columnName: String, typeName: String, storageOverride: String,
                 isPk: Bool, autoInc: Bool, isVersion: Bool) {
         this.name = name
+        this.columnName = columnName
         this.typeName = typeName
         this.storageOverride = storageOverride
         this.isPk = isPk
@@ -75,7 +77,8 @@ func expandRefine(input: Tokens, strategy: String): Tokens {
 
     // Read @Table["xxx"] child annotation for custom table name
     let tableMessages = getChildMessages("Table")
-    var tableName = lowerTableName(className)
+    // Task 3: 默认表名走 applyTableNameStrategy（snake → snake_case，none → lowerTableName）。
+    var tableName = applyTableNameStrategy(className, strategy)
     if (tableMessages.size > 0) {
         tableName = tableMessages[0].getString("name")
     }
@@ -87,6 +90,10 @@ func expandRefine(input: Tokens, strategy: String): Tokens {
     mergedFields = applyIdAnnotations(mergedFields, idMessages)
     let versionMessages = getChildMessages("Version")
     mergedFields = applyAuditVersion(mergedFields, versionMessages)
+    // Task 3: mergedFields 最终确定后填 columnName（applyColumnNameStrategy）。
+    // @Field 显式列名优先级属 Task 4；列名烘焙点（ColumnDef/INSERT/UPDATE 等）仍走
+    // f.name，Task 4 统一切换到 f.columnName。
+    mergedFields = applyColumnNames(mergedFields, strategy)
     // M22 评审（Fix 3）: 未知 struct → Json 兜底字段发编译期 WARNING（无 TypeAdapter）
     emitUnknownTypeWarnings(classDecl, mergedFields)
     let pkFields = getPkFields(mergedFields)

@@ -5540,12 +5540,13 @@ public class DocSyncSyntaxTest {
     }
 }
 
-// Task 1: 验证 @Refine[naming] 双参重载能展开不报错（本类名聚焦"重载展开"，非"解析"）。
-// 本 Task 只解析不转换，表名仍是默认 lowerTableName 结果 snakeBlogPost；
-// Task 3 此断言升级为 "snake_blog_post"，并补列名断言 "user_name"。
+// Task 3: 表名转换已生效——snake 策略下表名走 applyTableNameStrategy → snake_blog_post
+//（Task 1 阶段只解析不转换，此断言曾为 "snakeBlogPost"）。列名烘焙点仍走 f.name
+//（ColumnDef 名），故 columns()[1].name 暂保持 "userName"，Task 4 升级为 "user_name"
+// 并切换烘焙点到 f.columnName。
 // 非法 strategy（"kebab"/"SNAKE"）与 `naming:` 缺值在宏展开期抛编译错误，
 // 无法在 unittest 运行时断言（见宏文件注释），由合法值覆盖：
-//   - SnakeBlogPostSchema：显式 snake（Task 1 阶段与默认一致）
+//   - SnakeBlogPostSchema：显式 snake（Task 3 阶段表名已转 snake_case）
 //   - ExplicitNonePostSchema：显式 none = 默认行为
 //   - EmptyAttrPostSchema：@Refine[] 空 attr = 默认行为
 @Test
@@ -5553,7 +5554,7 @@ public class SnakeNamingTest {
     @TestCase
     public func testNamingAttrMacroOverloadExpands(): Unit {
         let schema = SnakeBlogPostSchema()
-        @Expect(schema.tableName(), "snakeBlogPost")
+        @Expect(schema.tableName(), "snake_blog_post")
         let cols = schema.columns()
         @Expect(cols[0].name, "id")
         @Expect(cols[1].name, "userName")

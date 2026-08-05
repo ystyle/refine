@@ -2,9 +2,10 @@ macro package refine.macros
 
 import std.ast.*
 import std.collection.ArrayList
-// Task 2: lowerTableName/upperFirstLetter 移入常规包 refine.naming（单一实现，可单测）。
-// 本包暂未调用（引用为 Task 3 预留）；Task 3 用 camelToSnake/apply* 驱动命名策略时
-// 再 `import refine.naming.*`——宏包展开期可调用常规包函数，实验已验证。
+import refine.naming.*
+// Task 3: 命名策略驱动列名——mergeFieldOverrides/applyIdAnnotations/applyAuditVersion
+// 确定的最终字段列表由 applyColumnNames 重建填 columnName（applyColumnNameStrategy）。
+// 宏包展开期调用常规包 refine.naming 函数（Task 2 实验已验证可行）。
 
 func extractFields(cd: ClassDecl): ArrayList<FieldInfo> {
     let list = ArrayList<FieldInfo>()
@@ -15,7 +16,7 @@ func extractFields(cd: ClassDecl): ArrayList<FieldInfo> {
                 let fn = vd.identifier.value
                 let isPk = (fn == "id")
                 let autoInc = (fn == "id" && typeStr == "Int64")
-                let info = FieldInfo(fn, typeStr, "", isPk, autoInc, false)
+                let info = FieldInfo(fn, fn, typeStr, "", isPk, autoInc, false)
                 list.add(info)
             case _ => ()
         }
@@ -151,6 +152,19 @@ func applyAuditVersion(fields: ArrayList<FieldInfo>, versionMessages: ArrayList<
         result.add(updated)
     }
     if (versionCount > 1) { throw Exception("entity can only have one @Version field") }
+    result
+}
+
+// Task 3: 在 mergedFields 最终确定后，重建数组为每个字段填 columnName。
+// FieldInfo 是 struct（值类型），复制修改后重加回新数组。strategy == "none" 时
+// applyColumnNameStrategy 原样返回字段名（columnName == name），默认路径零行为变化。
+func applyColumnNames(fields: ArrayList<FieldInfo>, strategy: String): ArrayList<FieldInfo> {
+    var result = ArrayList<FieldInfo>()
+    for (f in fields) {
+        var updated = f
+        updated.columnName = applyColumnNameStrategy(f.name, strategy)
+        result.add(updated)
+    }
     result
 }
 
