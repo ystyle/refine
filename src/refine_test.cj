@@ -157,6 +157,14 @@ class RMockThrowingDS <: Datasource {
     public func setOption(_key: String, _value: String): Unit {}
 }
 
+// R-M19: connect() 必抛异常，用于验证 detectServerDialect 探测连接失败时回退 MySQLDialect。
+class RMockConnFailDS <: Datasource {
+    public func connect(): Connection { throw Exception("mock connect failure") }
+    public func close(): Unit {}
+    public func isClosed(): Bool { false }
+    public func setOption(_key: String, _value: String): Unit {}
+}
+
 // ─── Tests ──────────────────────────────────────────────
 
 class RFlag { var v: Bool = false; init() {} }
@@ -479,8 +487,52 @@ public class RefineTest {
         @Expect(detectDialect("unknown").name(), "sqlite")
     }
 
+    // R-M19: 运行时服务器类型探测的纯解析函数。SELECT VERSION() 返回串含 "MariaDB"
+    // → MariaDBDialect，否则 MySQLDialect（URL 协议不可靠，mariadb:// 可连真实 MySQL）。
+    @TestCase
+    public func testParseServerVersion(): Unit {
+        @Expect(parseServerVersion("11.8.8-MariaDB-ubu2404").name(), "mariadb")
+        @Expect(parseServerVersion("10.11.6-MariaDB").name(), "mariadb")
+        @Expect(parseServerVersion("9.7.0").name(), "mysql")
+        @Expect(parseServerVersion("8.0.36-community").name(), "mysql")
+        @Expect(parseServerVersion("").name(), "mysql")
+    }
+
+    // R-M19: detectServerDialect 对非 mariadb 驱动不做探测（直接走静态 detectDialect）。
+    // 用 connect/prepareStatement 必抛的 RMockThrowingDS 证明：若探测被触发会抛异常，
+    // 而非 mariadb 驱动能正常返回对应方言。
+    @TestCase
+    public func testDetectServerDialectSkipsProbeForNonMaria(): Unit {
+        @Expect(detectServerDialect("sqlite", RMockThrowingDS()).name(), "sqlite")
+        @Expect(detectServerDialect("mysql", RMockThrowingDS()).name(), "mysql")
+        @Expect(detectServerDialect("postgres", RMockThrowingDS()).name(), "postgresql")
+        @Expect(detectServerDialect("postgresql", RMockThrowingDS()).name(), "postgresql")
+        @Expect(detectServerDialect("unknown", RMockThrowingDS()).name(), "sqlite")
+    }
+
+    // R-M19: mariadb 驱动探测执行 SELECT VERSION() 抛异常（prepareStatement 失败）
+    // → 回退 MySQLDialect，不阻断打开。
+    @TestCase
+    public func testDetectServerDialectProbeThrowsFallsBackToMySQL(): Unit {
+        @Expect(detectServerDialect("mariadb", RMockThrowingDS()).name(), "mysql")
+    }
+
+    // R-M19: 探测连接本身失败（connect 抛异常）→ 回退 MySQLDialect。
+    @TestCase
+    public func testDetectServerDialectConnectThrowsFallsBackToMySQL(): Unit {
+        @Expect(detectServerDialect("mariadb", RMockConnFailDS()).name(), "mysql")
+    }
+
+    // R-M19: 探测查询无结果（result.next() 为 false）→ 回退 MySQLDialect。
+    @TestCase
+    public func testDetectServerDialectEmptyResultFallsBackToMySQL(): Unit {
+        @Expect(detectServerDialect("mariadb", MockDatasource()).name(), "mysql")
+    }
+
     // DB 收敛为纯连接层后，URL 方言/paramOffset 探测归属 Refine.open
     // （DB.open 只建 datasource + offset，不再 detectDialect）。
+    // R-M19: mariadb 驱动走运行时探测（detectServerDialect）；mock 探测无结果
+    // （next()=false）→ 回退 MySQLDialect，故此处 mariadb 断言仍是 "mysql"，仅探测定真。
     @TestCase
     public func testRefineOpenDetectsDialect(): Unit {
         let realMysql = DriverManager.getDriver("mysql")

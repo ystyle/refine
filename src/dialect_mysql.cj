@@ -6,8 +6,10 @@ import std.collection.ArrayList
 // 差异点（M18 抽取后仅剩）：
 // - quoteIdentifier = 反引号标识符（内嵌反引号转义为 ``，C9：封闭标识符逃逸注入通道）
 // - renderLimitOffset = 裸 OFFSET（无 LIMIT）前补 `LIMIT 18446744073709551615` 哨兵（I3）
-public class MySQLDialect <: AbstractDialect {
-    public func name(): String { "mysql" }
+// R-M19: open 供 MariaDBDialect 继承（MariaDB 服务端不支持 AS new，仅覆盖 upsertSQL）。
+// name/upsertSQL 标 open 供子类重写；其余（quoteIdentifier/dataTypeOf/migrator/哨兵）继承不动。
+public open class MySQLDialect <: AbstractDialect {
+    public open func name(): String { "mysql" }
 
     // MySQL 标识符用反引号包裹（`...`），内嵌反引号转义为 ``（C9：封闭标识符逃逸注入通道）
     public override func quoteIdentifier(name: String): String {
@@ -23,7 +25,9 @@ public class MySQLDialect <: AbstractDialect {
         out
     }
 
-    public func upsertSQL(table: String, columns: Array<String>, conflictColumns: Array<String>, auditCreateCols: Array<String>, auditUpdateCols: Array<String>, versionCol: String): (String, Int64) {
+    // R-M19: 标 open 供 MariaDBDialect 覆盖——MariaDB 服务端不支持 `AS new` 行别名
+    // （ERROR 1064），需退回 `VALUES(col)` 老语法。
+    public open func upsertSQL(table: String, columns: Array<String>, conflictColumns: Array<String>, auditCreateCols: Array<String>, auditUpdateCols: Array<String>, versionCol: String): (String, Int64) {
         var cols = ArrayList<String>()
         var placeholders = ArrayList<String>()
         var updates = ArrayList<String>()

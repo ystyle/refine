@@ -38,7 +38,10 @@ public class Refine {
         let driverName = extractDriver(url)
         let drv = DriverManager.getDriver(driverName).getOrThrow()
         let ds = drv.open(url, opts)
-        let d = detectDialect(driverName)
+        // R-M19: mariadb 驱动需要建连探测服务端类型（SELECT VERSION() 区分真实 MariaDB/MySQL，
+        // URL 协议不可靠——mariadb:// 可连真实 MySQL 9.7）。探测在 PooledDatasource(ds) 之前
+        // 用 ds.connect() 拿原始连接执行查询后关闭，不触碰后续连接池。
+        let d = detectServerDialect(driverName, ds)
         let offset = detectParamOffset(driverName)
         let pooled = PooledDatasource(ds)
         let db = DB(pooled, offset)
@@ -167,6 +170,38 @@ public func detectDialect(name: String): Dialect {
         case "mysql" | "mariadb" => MySQLDialect()
         case "postgres" | "postgresql" => PostgreSQLDialect()
         case _ => SQLiteDialect()
+    }
+}
+
+// R-M19: 运行时服务器类型探测的纯解析函数（可单测）。SELECT VERSION() 返回串含
+// "MariaDB" → MariaDBDialect，否则 MySQLDialect。VERSION() 格式（实测）：
+//   MariaDB: "11.8.8-MariaDB-ubu2404"   MySQL: "9.7.0"
+// 判断依据是服务端行为（AS new 支持性）而非 URL 协议（mariadb:// 可连真实 MySQL）。
+public func parseServerVersion(version: String): Dialect {
+    if (version.contains("MariaDB")) { MariaDBDialect() } else { MySQLDialect() }
+}
+
+// R-M19: 方言探测入口。非 mariadb 驱动直接走静态 detectDialect（SQLite/MySQL/PG 不探测）；
+// mariadb 驱动建连执行 SELECT VERSION()，按服务端版本区分真实 MariaDB/MySQL。
+// 探测失败（连接异常、查询异常、无结果）一律回退 MySQLDialect——不阻断 Refine.open，
+// 代价仅是一次 upsert 语法不兼容（可手动建表/绕行），优于打开即失败。
+public func detectServerDialect(name: String, ds: Datasource): Dialect {
+    if (name != "mariadb") { return detectDialect(name) }
+    try {
+        let conn = ds.connect()
+        try {
+            let stmt = conn.prepareStatement("SELECT VERSION()")
+            let result = stmt.query()
+            // mariadb 驱动结果列 1-based（同 paramOffset=1），VERSION() 是唯一列
+            if (result.next()) {
+                return parseServerVersion(result.get<String>(1))
+            }
+            return MySQLDialect()
+        } finally {
+            conn.close()
+        }
+    } catch (_: Exception) {
+        return MySQLDialect()
     }
 }
 

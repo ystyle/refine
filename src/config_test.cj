@@ -105,6 +105,8 @@ public class ConfigTest {
             cfg.driver = "mariadb"
             cfg.dsn = "mariadb://localhost:3306/testdb"
             let rf = cfg.toRefine()
+            // R-M19: mariadb 驱动走运行时探测（detectServerDialect）；mock 探测无结果
+            // → 回退 MySQLDialect，故此处断言仍是 "mysql"。真实探测见 mariadb_integration_test。
             @Expect(rf.getDialect().name(), "mysql")
             @Expect(rf.getParamOffset(), 1)
             rf.close()

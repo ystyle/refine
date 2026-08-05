@@ -1,0 +1,99 @@
+package refine
+
+import std.time.DateTime
+import std.unittest.*
+import std.unittest.testmacro.*
+import refine.macros.*
+import mariadb.cdbc.*
+
+// R-M19: 真实 MariaDB 服务器集成测试（refine-mariadb-test 容器，端口 3307）。
+// mariadb 驱动连 MariaDB 时，Refine.open 运行时探测（SELECT VERSION()）应识别为
+// MariaDBDialect，且 upsert 生成 MariaDB 合法的 VALUES(col) 老语法（非 MySQL 的 AS new）。
+func tryMariaDB(): Option<Refine> {
+    try {
+        Some(Refine.open("mariadb://127.0.0.1:3307", [
+            ("username", "root"),
+            ("password", "45dbe6a6-8d1e-11ef-b01d-cb9c3f8813e2"),
+            ("database", "refine_test")
+        ]))
+    } catch (_: Exception) {
+        None
+    }
+}
+
+@Test
+public class MariaDBIntegrationTest {
+
+    // 环境守卫验证：容器不在时 tryMariaDB 返回 None，测试跳过（@Expect(true, true) 占位）。
+    // 容器在时断言探测结果与 paramOffset。
+    @TestCase
+    public func testDetectServerDialectRealMariaDB(): Unit {
+        match (tryMariaDB()) {
+            case Some(rf) =>
+                @Expect(rf.getDialect().name(), "mariadb")
+                @Expect(rf.getParamOffset(), 1)
+                // 复用继承 MySQLDialect 的 migrator（MySQLMigrator）验证建表链路
+                @Expect(rf.migrator().hasTable("information_schema.TABLES"), false)
+                rf.close()
+            case None => @Expect(true, true)
+        }
+    }
+
+    // R-M19: plain upsert roundtrip——save 插入 → 改值 upsert 同主键 → DO UPDATE SET 命中，
+    // title/content 被 VALUES(col) 刷新、行数不增长。MariaDB 不识别 AS new，此用例验证
+    // 修复前会抛 ERROR 1064 的路径现在走 VALUES(col) 老语法正常执行。
+    @TestCase
+    public func testPlainUpsertUpdatesOnConflict(): Unit {
+        match (tryMariaDB()) {
+            case Some(rf) =>
+                rf.transaction { tx: Tx =>
+                    tx.execute("DROP TABLE IF EXISTS `post`", [])
+                }
+                rf.migrator().autoMigrate([PostSchema()])
+                let p = Post()
+                p.title = "a"
+                p.content = "c1"
+                rf.transaction { tx: Tx => tx.save(p) }
+                let pid = p.id
+                @Expect(pid > 0, true)
+                p.title = "b"
+                p.content = "c2"
+                rf.transaction { tx: Tx => tx.upsert(p) }
+                let found = Post.query().using(rf).filter(Post.col().title == "b").one()
+                @Expect(found.isSome(), true)
+                @Expect(found.getOrThrow().content, "c2")
+                let all = Post.query().using(rf).all()
+                @Expect(all.size, 1)
+                rf.transaction { tx: Tx => tx.execute("DROP TABLE IF EXISTS `post`", []) }
+                rf.close()
+            case None => @Expect(true, true)
+        }
+    }
+
+    // R-M19: versioned upsert——冲突时 version 列 `VALUES(version) + 1` 自增（MariaDB 老语法）。
+    // save 后 version=1，upsert 冲突 → version 变 2。真实 MariaDB 验证 VALUES(version)+1
+    // 语义与 MySQL 的 new.col 等价（方案 R-M19 标注"需真实 MariaDB 验证"的点）。
+    @TestCase
+    public func testVersionedUpsertIncrementsVersion(): Unit {
+        match (tryMariaDB()) {
+            case Some(rf) =>
+                rf.transaction { tx: Tx =>
+                    tx.execute("DROP TABLE IF EXISTS `versionedPost`", [])
+                }
+                rf.migrator().autoMigrate([VersionedPostSchema()])
+                let p = VersionedPost()
+                p.title = "v1"
+                rf.transaction { tx: Tx => tx.save(p) }
+                @Expect(p.version, 1)
+                let pid = p.id
+                @Expect(pid > 0, true)
+                rf.transaction { tx: Tx => tx.upsert(p) }
+                let found = VersionedPost.query().using(rf).filter(VersionedPost.col().id == pid).one()
+                @Expect(found.isSome(), true)
+                @Expect(found.getOrThrow().version, 2)
+                rf.transaction { tx: Tx => tx.execute("DROP TABLE IF EXISTS `versionedPost`", []) }
+                rf.close()
+            case None => @Expect(true, true)
+        }
+    }
+}
