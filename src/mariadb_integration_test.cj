@@ -1,6 +1,7 @@
 package refine
 
 import std.time.DateTime
+import std.math.numeric.Decimal
 import std.unittest.*
 import std.unittest.testmacro.*
 import refine.macros.*
@@ -92,6 +93,55 @@ public class MariaDBIntegrationTest {
                 @Expect(found.isSome(), true)
                 @Expect(found.getOrThrow().version, 2)
                 rf.transaction { tx: Tx => tx.execute("DROP TABLE IF EXISTS `versionedPost`", []) }
+                rf.close()
+            case None => @Expect(true, true)
+        }
+    }
+
+    // ─── Decimal 字段真实 MariaDB 端到端 ────────────────────────────
+    // mariadb 驱动 set Decimal（原生类型）→ DECIMAL(65,30) 列 → getDecimal 读回。
+    // 与 MySQL 版同构链路，验证 MariaDB 服务器下的精度保留与 Option<Decimal> None/Some。
+    @TestCase
+    public func testDecimalRoundtrip(): Unit {
+        match (tryMariaDB()) {
+            case Some(rf) =>
+                rf.transaction { tx: Tx =>
+                    tx.execute("DROP TABLE IF EXISTS `decimalproduct`", [])
+                    tx.execute("DROP TABLE IF EXISTS `decimaldiscount`", [])
+                }
+                rf.migrator().autoMigrate([DecimalProductSchema(), DecimalDiscountSchema()])
+                let p = DecimalProduct()
+                p.name = "p1"
+                p.price = Decimal.parse("12345.6789")
+                rf.transaction { tx: Tx => tx.save(p) }
+                @Expect(p.id > 0, true)
+                let back = DecimalProduct.query().using(rf).filter(DecimalProduct.col().id == p.id).one()
+                @Expect(back.isSome(), true)
+                @Expect(back.getOrThrow().name, "p1")
+                @Expect(back.getOrThrow().price == Decimal.parse("12345.6789"), true)
+                let gt = DecimalProduct.query().using(rf).filter(DecimalProduct.col().price > Decimal.parse("10.5")).all()
+                @Expect(gt.size, 1)
+                @Expect(gt[0].name, "p1")
+                let d1 = DecimalDiscount()
+                d1.name = "d1"
+                rf.transaction { tx: Tx => tx.save(d1) }
+                @Expect(d1.id > 0, true)
+                let bd1 = DecimalDiscount.query().using(rf).filter(DecimalDiscount.col().id == d1.id).one()
+                @Expect(bd1.isSome(), true)
+                @Expect(bd1.getOrThrow().discount.isNone(), true)
+                let d2 = DecimalDiscount()
+                d2.name = "d2"
+                d2.discount = Some(Decimal.parse("9.5"))
+                rf.transaction { tx: Tx => tx.save(d2) }
+                @Expect(d2.id > 0, true)
+                let bd2 = DecimalDiscount.query().using(rf).filter(DecimalDiscount.col().id == d2.id).one()
+                @Expect(bd2.isSome(), true)
+                @Expect(bd2.getOrThrow().discount.isSome(), true)
+                @Expect(bd2.getOrThrow().discount.getOrThrow() == Decimal.parse("9.5"), true)
+                rf.transaction { tx: Tx =>
+                    tx.execute("DROP TABLE IF EXISTS `decimalproduct`", [])
+                    tx.execute("DROP TABLE IF EXISTS `decimaldiscount`", [])
+                }
                 rf.close()
             case None => @Expect(true, true)
         }

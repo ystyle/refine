@@ -4,6 +4,7 @@ import std.collection.ArrayList
 import std.collection.HashMap
 import std.database.sql.QueryResult
 import std.time.DateTime
+import std.math.numeric.Decimal
 import std.unittest.*
 import std.unittest.testmacro.*
 import refine.macros.*
@@ -439,6 +440,96 @@ public class MySQLIntegrationTest {
                 let after = SoftOptUser.query().using(rf).all()
                 @Expect(after.size, 0)
                 rf.transaction { tx: Tx => tx.execute("DROP TABLE IF EXISTS `softOptUser`", []) }
+                rf.close()
+            case None => @Expect(true, true)
+        }
+    }
+
+    // ─── Decimal 字段真实 MySQL 端到端 ─────────────────────────────
+    // 与 PG 版同构链路：DECIMAL(65,30) 列 save Decimal → query 读回（精度保留）、
+    // Option<Decimal> None/Some、查询条件 Decimal 比较、批量 save/update/upsert。
+    @TestCase
+    public func testDecimalRoundtrip(): Unit {
+        match (tryMySQL()) {
+            case Some(rf) =>
+                rf.transaction { tx: Tx =>
+                    tx.execute("DROP TABLE IF EXISTS `decimalproduct`", [])
+                    tx.execute("DROP TABLE IF EXISTS `decimaldiscount`", [])
+                }
+                rf.migrator().autoMigrate([DecimalProductSchema(), DecimalDiscountSchema()])
+                let p = DecimalProduct()
+                p.name = "p1"
+                p.price = Decimal.parse("12345.6789")
+                rf.transaction { tx: Tx => tx.save(p) }
+                @Expect(p.id > 0, true)
+                let back = DecimalProduct.query().using(rf).filter(DecimalProduct.col().id == p.id).one()
+                @Expect(back.isSome(), true)
+                @Expect(back.getOrThrow().name, "p1")
+                @Expect(back.getOrThrow().price == Decimal.parse("12345.6789"), true)
+                let gt = DecimalProduct.query().using(rf).filter(DecimalProduct.col().price > Decimal.parse("10.5")).all()
+                @Expect(gt.size, 1)
+                @Expect(gt[0].name, "p1")
+                let p2 = DecimalProduct()
+                p2.name = "p2"
+                p2.price = Decimal.parse("0.01")
+                let p3 = DecimalProduct()
+                p3.name = "p3"
+                p3.price = Decimal.parse("7.7")
+                // batchSave 不回填自增 id，经查询取回（与既有 batch 集成测试一致）
+                rf.transaction { tx: Tx => tx.batchSave([p2, p3]) }
+                let p2Back = DecimalProduct.query().using(rf).filter(DecimalProduct.col().name == "p2").one()
+                let p3Back = DecimalProduct.query().using(rf).filter(DecimalProduct.col().name == "p3").one()
+                @Expect(p2Back.isSome(), true)
+                @Expect(p3Back.isSome(), true)
+                @Expect(p2Back.getOrThrow().price == Decimal.parse("0.01"), true)
+                @Expect(p3Back.getOrThrow().price == Decimal.parse("7.7"), true)
+                // 批量 update：Decimal 列 CASE 值带 ::NUMERIC 转换
+                let p2u = p2Back.getOrThrow()
+                let p3u = p3Back.getOrThrow()
+                p2u.price = Decimal.parse("0.02")
+                p3u.price = Decimal.parse("8.8")
+                rf.transaction { tx: Tx => tx.batchUpdate([p2u, p3u]) }
+                let b2 = DecimalProduct.query().using(rf).filter(DecimalProduct.col().id == p2u.id).one()
+                let b3 = DecimalProduct.query().using(rf).filter(DecimalProduct.col().id == p3u.id).one()
+                @Expect(b2.getOrThrow().price == Decimal.parse("0.02"), true)
+                @Expect(b3.getOrThrow().price == Decimal.parse("8.8"), true)
+                // upsert：Decimal 列冲突更新
+                p2u.price = Decimal.parse("0.03")
+                rf.transaction { tx: Tx => tx.upsert(p2u) }
+                let b2u = DecimalProduct.query().using(rf).filter(DecimalProduct.col().id == p2u.id).one()
+                @Expect(b2u.getOrThrow().price == Decimal.parse("0.03"), true)
+                let d1 = DecimalDiscount()
+                d1.name = "d1"
+                rf.transaction { tx: Tx => tx.save(d1) }
+                @Expect(d1.id > 0, true)
+                let bd1 = DecimalDiscount.query().using(rf).filter(DecimalDiscount.col().id == d1.id).one()
+                @Expect(bd1.isSome(), true)
+                @Expect(bd1.getOrThrow().discount.isNone(), true)
+                let d2 = DecimalDiscount()
+                d2.name = "d2"
+                d2.discount = Some(Decimal.parse("9.5"))
+                rf.transaction { tx: Tx => tx.save(d2) }
+                @Expect(d2.id > 0, true)
+                let bd2 = DecimalDiscount.query().using(rf).filter(DecimalDiscount.col().id == d2.id).one()
+                @Expect(bd2.isSome(), true)
+                @Expect(bd2.getOrThrow().discount.isSome(), true)
+                @Expect(bd2.getOrThrow().discount.getOrThrow() == Decimal.parse("9.5"), true)
+                // 批量 save Option<Decimal>：None + Some 混合（经 name 查询取回，batch 不回填 id）
+                let d3 = DecimalDiscount()
+                d3.name = "d3"
+                let d4 = DecimalDiscount()
+                d4.name = "d4"
+                d4.discount = Some(Decimal.parse("0.5"))
+                rf.transaction { tx: Tx => tx.batchSave([d3, d4]) }
+                let bd3 = DecimalDiscount.query().using(rf).filter(DecimalDiscount.col().name == "d3").one()
+                let bd4 = DecimalDiscount.query().using(rf).filter(DecimalDiscount.col().name == "d4").one()
+                @Expect(bd3.getOrThrow().discount.isNone(), true)
+                @Expect(bd4.getOrThrow().discount.isSome(), true)
+                @Expect(bd4.getOrThrow().discount.getOrThrow() == Decimal.parse("0.5"), true)
+                rf.transaction { tx: Tx =>
+                    tx.execute("DROP TABLE IF EXISTS `decimalproduct`", [])
+                    tx.execute("DROP TABLE IF EXISTS `decimaldiscount`", [])
+                }
                 rf.close()
             case None => @Expect(true, true)
         }

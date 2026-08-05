@@ -7,6 +7,7 @@ import std.collection.HashSet
 import std.database.sql.{Connection, Transaction, QueryResult, UpdateResult, ColumnInfo, ConnectionState, SqlDbType}
 import std.database.sql.Statement as SqlStatement
 import std.time.DateTime
+import std.math.numeric.Decimal
 import std.unittest.*
 import std.unittest.testmacro.*
 
@@ -2066,6 +2067,321 @@ public class OptionDateTimeSoftDeleteTest {
             match (v) { case _: DateTime => hasDateTime = true; case _ => () }
         }
         @Expect(hasDateTime, true)
+    }
+}
+
+// ─── Decimal 字段端到端 fixture ─────────────────────────
+// Decimal 非可空字段 + Option<Decimal> 可空字段（F4 同构扩展）。修复前：
+// typeNameToStorageType("Decimal") 落 Json 兜底（schema 建 JSON 列 + M22 warning 误报）、
+// dispatchSet 无 Decimal 分支（写路径抛 RefineException）、Option<Decimal> 被
+// isRelationField 当关系字段跳过（schema/insert/select/mapper 全不识别）。
+// 表名固定全小写（与 PG 写路径未加引号折叠一致，参考 PgPost）。
+@Refine
+@Table["decimalproduct"]
+public class DecimalProduct {
+    var id: Int64 = 0
+    var name: String = ""
+    var price: Decimal = Decimal.parse("0")
+}
+
+@Refine
+@Table["decimaldiscount"]
+public class DecimalDiscount {
+    var id: Int64 = 0
+    var name: String = ""
+    var discount: Option<Decimal> = None
+}
+
+// @Field[Text] 覆盖 Decimal → 显式存 Text（用户知情，跳过 Decimal 语义）——回归
+@Refine
+@Table["decimaloverride"]
+public class DecimalTextOverride {
+    var id: Int64 = 0
+    var name: String = ""
+    @Field[Text]
+    var price: Decimal = Decimal.parse("0")
+}
+
+// ─── Decimal 字段端到端测试 ─────────────────────────────
+// 覆盖：schema storageType=Decimal + nullable 按 Option 与否、query select 含该列
+//（无 Json warning）、INSERT 绑定 Decimal/Option(None→setNull, Some→set<Decimal>)、
+// UPDATE、rowMapper 读回（get<Decimal>/getOrNull<Decimal>）、批量 save/update/upsert
+// 绑定、PG 批量更新 ::NUMERIC 转换、@Field[Text] 覆盖回归。
+@Test
+public class DecimalFieldTest {
+    @TestCase
+    public func testSchemaDecimalStorageType(): Unit {
+        let cols = DecimalProductSchema().columns()
+        @Expect(cols.size, 3)
+        @Expect(cols[0].name, "id")
+        @Expect(cols[1].name, "name")
+        @Expect(cols[2].name, "price")
+        @Expect(cols[2].storageType, StorageType.Decimal)
+        @Expect(cols[2].nullable, false)
+    }
+
+    @TestCase
+    public func testSchemaOptionDecimalNullable(): Unit {
+        let cols = DecimalDiscountSchema().columns()
+        @Expect(cols.size, 3)
+        @Expect(cols[2].name, "discount")
+        @Expect(cols[2].storageType, StorageType.Decimal)
+        @Expect(cols[2].nullable, true)
+    }
+
+    @TestCase
+    public func testColumnNamesIncludeDecimalFields(): Unit {
+        let cols = DecimalProductColumnNames()
+        @Expect(cols.size, 3)
+        @Expect(cols[2].name, "price")
+    }
+
+    // Decimal 不再是 Json 兜底 → M22 不再误报；query() 的 select 列表必须含 price 列
+    @TestCase
+    public func testQuerySelectIncludesDecimalColumn(): Unit {
+        let q = DecimalProduct.query()
+        var hasPrice = false
+        for (c in q.stmt.clauses) {
+            match (c) {
+                case Clause.SelectClause(cols) =>
+                    for (e in cols) {
+                        match (e) {
+                            case Expr.Column(name) => if (name == "price") { hasPrice = true }
+                            case _ => ()
+                        }
+                    }
+                case _ => ()
+            }
+        }
+        @Expect(hasPrice, true)
+    }
+
+    @TestCase
+    public func testSaveBindsDecimalParam(): Unit {
+        let conn = CaptureConnection()
+        let tx = sqliteTx(conn)
+        tx.begin()
+        let p = DecimalProduct()
+        p.name = "p1"
+        p.price = Decimal.parse("12345.6789")
+        tx.save(p)
+        @Expect(conn.stmt.capturedSql.contains("\"price\""), true)
+        @Expect(conn.stmt.capturedSetValues.size, 2)
+        match (conn.stmt.capturedSetValues[1]) {
+            case v: Decimal => @Expect(v == Decimal.parse("12345.6789"), true)
+            case _ => @Fail("expected Decimal param for price")
+        }
+    }
+
+    @TestCase
+    public func testSaveBindsNullForNoneDiscount(): Unit {
+        let conn = CaptureConnection()
+        let tx = sqliteTx(conn)
+        tx.begin()
+        let d = DecimalDiscount()
+        d.name = "d1"
+        tx.save(d)
+        @Expect(conn.stmt.capturedSql.contains("\"discount\""), true)
+        @Expect(conn.stmt.nullSetCount, 1)
+        @Expect(conn.stmt.capturedSetValues.size, 1)
+    }
+
+    @TestCase
+    public func testSaveBindsDecimalForSomeDiscount(): Unit {
+        let conn = CaptureConnection()
+        let tx = sqliteTx(conn)
+        tx.begin()
+        let d = DecimalDiscount()
+        d.name = "d2"
+        d.discount = Some(Decimal.parse("9.5"))
+        tx.save(d)
+        @Expect(conn.stmt.capturedSql.contains("\"discount\""), true)
+        @Expect(conn.stmt.nullSetCount, 0)
+        @Expect(conn.stmt.capturedSetValues.size, 2)
+        match (conn.stmt.capturedSetValues[1]) {
+            case v: Decimal => @Expect(v == Decimal.parse("9.5"), true)
+            case _ => @Fail("expected Decimal param for Some discount")
+        }
+    }
+
+    @TestCase
+    public func testUpdateIncludesDecimalColumn(): Unit {
+        let conn = CaptureConnection()
+        let tx = sqliteTx(conn)
+        tx.begin()
+        let p = DecimalProduct()
+        p.id = 1
+        p.name = "p1"
+        p.price = Decimal.parse("88.8")
+        tx.update(p)
+        @Expect(conn.stmt.capturedSql.contains("\"price\" = ?"), true)
+        @Expect(conn.stmt.capturedSetValues.size, 3)
+        var hasDecimal = false
+        for (v in conn.stmt.capturedSetValues) {
+            match (v) { case _: Decimal => hasDecimal = true; case _ => () }
+        }
+        @Expect(hasDecimal, true)
+    }
+
+    @TestCase
+    public func testRowMapperReadsDecimalValue(): Unit {
+        let cols: Array<ColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("name", false),
+            MapperMockColumnInfo("price", false),
+        ]
+        let price = Decimal.parse("12345.6789")
+        let row = Array<Any>(3, { i => if (i == 0) { 1 } else if (i == 1) { "p1" } else { price } })
+        let result = MapperMockQueryResult(cols, [row])
+        result.next()
+        let e = DecimalProductRowMapper(result, buildColumnMap(cols, 0))
+        @Expect(e.id, 1)
+        @Expect(e.name, "p1")
+        @Expect(e.price == price, true)
+    }
+
+    @TestCase
+    public func testRowMapperReadsNullDiscountAsNone(): Unit {
+        let cols: Array<ColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("name", false),
+            MapperMockColumnInfo("discount", true),
+        ]
+        let row = Array<Any>(3, { i => if (i == 0) { 1 } else if (i == 1) { "d1" } else { "null-placeholder" } })
+        let result = MapperMockQueryResult(cols, [row])
+        result.next()
+        let e = DecimalDiscountRowMapper(result, buildColumnMap(cols, 0))
+        @Expect(e.id, 1)
+        @Expect(e.name, "d1")
+        @Expect(e.discount.isNone(), true)
+    }
+
+    @TestCase
+    public func testRowMapperReadsSomeDiscountAsSome(): Unit {
+        let cols: Array<ColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("name", false),
+            MapperMockColumnInfo("discount", true),
+        ]
+        let discount = Decimal.parse("9.5")
+        let row = Array<Any>(3, { i => if (i == 0) { 1 } else if (i == 1) { "d1" } else { discount } })
+        let result = MapperMockQueryResult(cols, [row])
+        result.next()
+        let e = DecimalDiscountRowMapper(result, buildColumnMap(cols, 0))
+        @Expect(e.id, 1)
+        @Expect(e.name, "d1")
+        @Expect(e.discount.isSome(), true)
+        @Expect(e.discount.getOrThrow() == discount, true)
+    }
+
+    @TestCase
+    public func testBatchSaveBindsDecimalParams(): Unit {
+        let conn = CaptureConnection()
+        let tx = sqliteTx(conn)
+        tx.begin()
+        let p1 = DecimalProduct()
+        p1.name = "a"
+        p1.price = Decimal.parse("1.1")
+        let p2 = DecimalProduct()
+        p2.name = "b"
+        p2.price = Decimal.parse("2.2")
+        tx.batchSave([p1, p2])
+        @Expect(conn.stmt.capturedSql.contains("\"price\""), true)
+        @Expect(conn.stmt.capturedSetValues.size, 4)
+        var decimalCount = 0
+        for (v in conn.stmt.capturedSetValues) {
+            match (v) { case _: Decimal => decimalCount++; case _ => () }
+        }
+        @Expect(decimalCount, 2)
+    }
+
+    @TestCase
+    public func testBatchSaveBindsOptionDecimalParams(): Unit {
+        let conn = CaptureConnection()
+        let tx = sqliteTx(conn)
+        tx.begin()
+        let d1 = DecimalDiscount()
+        d1.name = "a"
+        let d2 = DecimalDiscount()
+        d2.name = "b"
+        d2.discount = Some(Decimal.parse("5.5"))
+        tx.batchSave([d1, d2])
+        @Expect(conn.stmt.capturedSql.contains("\"discount\""), true)
+        // 4 个 SQL 参数 = [name_a, NULL, name_b, Some(5.5)]；set 记录 3 个（None 走 setNull）
+        @Expect(conn.stmt.capturedSetValues.size, 3)
+        @Expect(conn.stmt.nullSetCount, 1)
+        var hasDecimal = false
+        for (v in conn.stmt.capturedSetValues) {
+            match (v) { case _: Decimal => hasDecimal = true; case _ => () }
+        }
+        @Expect(hasDecimal, true)
+    }
+
+    @TestCase
+    public func testBatchUpdateBindsDecimalParams(): Unit {
+        let (conn, tx) = makeTestTx(SQLiteDialect())
+        let p1 = DecimalProduct()
+        p1.id = 1
+        p1.name = "a"
+        p1.price = Decimal.parse("3.3")
+        let p2 = DecimalProduct()
+        p2.id = 2
+        p2.name = "b"
+        p2.price = Decimal.parse("4.4")
+        tx.batchUpdate([p1, p2])
+        @Expect(conn.stmt.capturedSql.contains("\"price\" = CASE"), true)
+        var decimalCount = 0
+        for (v in conn.stmt.capturedSetValues) {
+            match (v) { case _: Decimal => decimalCount++; case _ => () }
+        }
+        @Expect(decimalCount, 2)
+    }
+
+    // PG 批量更新对 Decimal 列追加 ::NUMERIC 转换（修复前落 TEXT 兜底 `::TEXT`）
+    @TestCase
+    public func testBatchUpdatePostgresCastNumericForDecimal(): Unit {
+        let (conn, tx) = makeTestTx(PostgreSQLDialect())
+        let p1 = DecimalProduct()
+        p1.id = 1
+        p1.name = "a"
+        p1.price = Decimal.parse("3.3")
+        let p2 = DecimalProduct()
+        p2.id = 2
+        p2.name = "b"
+        p2.price = Decimal.parse("4.4")
+        tx.batchUpdate([p1, p2])
+        @Expect(conn.stmt.capturedSql.contains("\"price\" = CASE \"id\" WHEN ? THEN ?::NUMERIC WHEN ? THEN ?::NUMERIC END"), true)
+        // name 列仍是 ::TEXT（String 正常映射）
+        @Expect(conn.stmt.capturedSql.contains("\"name\" = CASE \"id\" WHEN ? THEN ?::TEXT WHEN ? THEN ?::TEXT END"), true)
+    }
+
+    @TestCase
+    public func testUpsertBindsDecimalParams(): Unit {
+        let conn = CaptureConnection()
+        let rf = Refine(MockDatasource(), SQLiteDialect(), 0)
+        let tx = Tx(conn, rf, 0)
+        tx.begin()
+        let p = DecimalProduct()
+        p.id = 1
+        p.name = "n"
+        p.price = Decimal.parse("6.6")
+        tx.upsert(p)
+        @Expect(conn.stmt.capturedSql.contains("\"price\""), true)
+        @Expect(conn.stmt.nullSetCount, 0)
+        var hasDecimal = false
+        for (v in conn.stmt.capturedSetValues) {
+            match (v) { case _: Decimal => hasDecimal = true; case _ => () }
+        }
+        @Expect(hasDecimal, true)
+    }
+
+    // @Field[Text] 覆盖：Decimal 字段显式存 Text（不 Decimal）——回归
+    @TestCase
+    public func testFieldTextOverrideDecimal(): Unit {
+        let cols = DecimalTextOverrideSchema().columns()
+        @Expect(cols.size, 3)
+        @Expect(cols[2].name, "price")
+        @Expect(cols[2].storageType, StorageType.Text)
     }
 }
 

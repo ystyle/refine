@@ -373,6 +373,7 @@ func pgCastTypeOf(typeName: String): String {
         case "String" => "TEXT"
         case "Array<UInt8>" => "BYTEA"
         case "DateTime" => "TIMESTAMP"
+        case "Decimal" => "NUMERIC"
         case _ => "TEXT"
     }
 }

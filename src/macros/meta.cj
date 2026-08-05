@@ -224,9 +224,12 @@ func isBytesArrayType(typeName: String): Bool {
 // 归一化（去空格）后精确匹配 Option<DateTime>——isBytesArrayType 先排除（Array<UInt8> 是
 // Bytes 一等标量，非可空标量）。其余 Option<标量>（Option<Int64> 等）保持被 isRelationField
 // 当关系字段跳过（历史行为，记档为后续功能）。
+// Decimal: Option<Decimal> 可空标量判定扩展（用户决策，与 F4 同构）——schema nullable 列、
+// insert Some/None 绑定、rowMapper getOrNull<Decimal>、pgCastTypeOf 解包均复用此判定。
 func isNullableScalarType(typeName: String): Bool {
     if (isBytesArrayType(typeName)) { return false }
-    typeName.replace(" ", "") == "Option<DateTime>"
+    let norm = typeName.replace(" ", "")
+    norm == "Option<DateTime>" || norm == "Option<Decimal>"
 }
 
 // F4: 取 Option<X> 的内部类型 X（Option<DateTime> → "DateTime"）。调用方须先确认
@@ -280,6 +283,7 @@ func typeNameToStorageType(typeName: String): String {
     } else if (tn == "String") { "StorageType.String"
     } else if (isBytesArrayType(tn)) { "StorageType.Bytes"
     } else if (tn == "DateTime") { "StorageType.Timestamp"
+    } else if (tn == "Decimal") { "StorageType.Decimal"
     } else { "StorageType.Json" }
 }
 

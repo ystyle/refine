@@ -4,6 +4,7 @@ import std.database.sql.{Datasource, Connection, Transaction, QueryResult, Updat
 import std.database.sql.Statement as SqlStatement
 import std.collection.{ArrayList, HashMap}
 import std.time.DateTime
+import std.math.numeric.Decimal
 
 // M19: Tx 生命周期状态机。初始 Unbegun；begin → Active；commit → Committed；
 // rollback → RolledBack。非 Active 状态下的 execute/query/savepoint/commit/rollback
@@ -363,12 +364,24 @@ func dispatchSet(stmt: SqlStatement, index: Int, value: Any): Unit {
         case v: Float64  => stmt.set<Float64>(index, v)
         case v: Float32  => stmt.set<Float64>(index, Float64(v))
         case v: DateTime => stmt.set<DateTime>(index, v)
+        // Decimal 字段写路径（非 Option）。Decimal 是 struct（std.math.numeric），
+        // 装箱进 Any 后 match 保留运行时类型，`case v: Decimal` 命中；pgsql/mariadb
+        // 驱动 set<Decimal> 均支持（pgsql 绑 v.toString()、mariadb 绑原生 Decimal）。
+        // 修复前无此分支，落兜底抛 RefineException——实体 Decimal 字段 save 直接抛错。
+        case v: Decimal => stmt.set<Decimal>(index, v)
         // F4: Option<DateTime> 可空软删字段写路径（宏层生成 allParams.add(entity.deleted_at)
         // 变量装箱，运行时类型保留，此分支命中）。Some 解包 set<DateTime>（软删打时间戳），
         // None 绑 NULL（未删行）。match 对类型化 Option 值匹配合法（Any 上 match None 才非法）。
         case v: Option<DateTime> =>
             match (v) {
                 case Some(dt) => stmt.set<DateTime>(index, dt)
+                case None => stmt.setNull(index)
+            }
+        // Option<Decimal> 可空字段写路径（与 Option<DateTime> 同构）：Some 解包
+        // set<Decimal>（有折扣）、None 绑 NULL（无折扣）。
+        case v: Option<Decimal> =>
+            match (v) {
+                case Some(d) => stmt.set<Decimal>(index, d)
                 case None => stmt.setNull(index)
             }
         case v: Array<UInt8> => stmt.set<Array<UInt8>>(index, v)
@@ -378,7 +391,7 @@ func dispatchSet(stmt: SqlStatement, index: Int, value: Any): Unit {
         case _           => throw RefineException(
             "unsupported param type for dispatchSet: " + paramTypeName(value) +
             " (supported: Int8/Int16/Int32/Int64/UInt8/UInt16/UInt32/UInt64/" +
-            "Float32/Float64/Bool/String/DateTime/Option<DateTime>/Array<UInt8>)")
+            "Float32/Float64/Bool/String/DateTime/Option<DateTime>/Decimal/Option<Decimal>/Array<UInt8>)")
     }
 }
 

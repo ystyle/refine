@@ -4,6 +4,7 @@ import std.database.sql.{Connection, Transaction, QueryResult, UpdateResult, Col
 import std.database.sql.Statement as SqlStatement
 import std.collection.{HashMap, ArrayList}
 import std.time.DateTime
+import std.math.numeric.Decimal
 import std.unittest.*
 import std.unittest.testmacro.*
 
@@ -549,6 +550,39 @@ public class DbTest {
     public func testDispatchSetOptionDateTimeNone(): Unit {
         let stmt = MockStatement()
         let none: Option<DateTime> = None
+        dispatchSet(stmt, 1, none)
+        @Expect(stmt.lastSetType, "setNull")
+        @Expect(stmt.lastSetIndex, 1)
+    }
+
+    // Decimal 字段写路径绑定：`case v: Decimal` 命中，set<Decimal>（struct 装箱后
+    // match 保留运行时类型，与 DateTime 同构）。修复前 dispatchSet 无 Decimal 分支，
+    // 落兜底抛 RefineException（实体 Decimal 字段 save 直接抛错）。
+    @TestCase
+    public func testDispatchSetDecimal(): Unit {
+        let stmt = MockStatement()
+        let d = Decimal.parse("12345.6789")
+        dispatchSet(stmt, 0, d)
+        @Expect(stmt.lastSetType, "set")
+        @Expect(stmt.lastSetIndex, 0)
+        @Expect((stmt.lastSetValue as Decimal).getOrThrow() == d, true)
+    }
+
+    @TestCase
+    public func testDispatchSetOptionDecimalSome(): Unit {
+        let stmt = MockStatement()
+        let d = Decimal.parse("9.5")
+        let some: Option<Decimal> = Some(d)
+        dispatchSet(stmt, 0, some)
+        @Expect(stmt.lastSetType, "set")
+        @Expect(stmt.lastSetIndex, 0)
+        @Expect((stmt.lastSetValue as Decimal).getOrThrow() == d, true)
+    }
+
+    @TestCase
+    public func testDispatchSetOptionDecimalNone(): Unit {
+        let stmt = MockStatement()
+        let none: Option<Decimal> = None
         dispatchSet(stmt, 1, none)
         @Expect(stmt.lastSetType, "setNull")
         @Expect(stmt.lastSetIndex, 1)
