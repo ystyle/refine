@@ -48,10 +48,18 @@ public macro Refine(attr: Tokens, input: Tokens): Tokens {
     // attr tokens 结构：naming(IDENTIFIER) :(COLON) "snake"(STRING_LITERAL)，值在 i+2。
     // 本 Task 只解析并保留 strategy 局部变量，不做任何实际转换（表名/列名仍走现有逻辑，
     // 后续 Task 用 strategy 驱动命名策略）。
+    // 命名策略白名单校验（fail-fast，风格同软删 DateTime 守卫 refine_macro.cj:136-138）：
+    // 非法值 / naming 键缺值一律编译期抛错，绝不静默回落默认，避免用户拼写错误被吞掉。
     var strategy = "none"
     for (i in 0..attr.size) {
-        if (attr[i].kind == TokenKind.IDENTIFIER && attr[i].value == "naming" && i + 2 < attr.size) {
+        if (attr[i].kind == TokenKind.IDENTIFIER && attr[i].value == "naming") {
+            if (i + 2 >= attr.size) {
+                throw Exception("attribute 'naming' requires a string value, e.g. @Refine[naming: \"snake\"]")
+            }
             strategy = attr[i + 2].value
+            if (strategy != "none" && strategy != "snake") {
+                throw Exception("unknown naming strategy '" + strategy + "'; supported strategies: none, snake")
+            }
         }
     }
     return expandRefine(input, strategy)

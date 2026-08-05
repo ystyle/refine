@@ -14,10 +14,28 @@ import std.unittest.testmacro.*
 // Task 1: @Refine[naming: "snake"] 属性宏参数解析——本 Task 仅验证双参重载能被解析
 // 并展开不报错；表名/列名仍走默认逻辑（lowerTableName → snakeBlogPost），
 // Task 3 将转为 snake_blog_post（届时升级本断言）。
+// 命名策略白名单 {"none", "snake"} 之外的值（如 "kebab"/"SNAKE"）与 `naming:` 缺值
+// 均在宏展开期抛编译错误（refine_macro.cj 双参宏校验），故本文件不放非法值 fixture
+//（放进来整个测试工程编译失败）；合法值行为由下面三组 fixture 覆盖：
+//   - @Refine[naming: "snake"]（SnakeBlogPost）——显式 snake
+//   - @Refine[naming: "none"]（ExplicitNonePost）——显式 none，等价默认
+//   - @Refine[]（EmptyAttrPost）——双参宏空 attr 路径，等价默认
 @Refine[naming: "snake"]
 public class SnakeBlogPost {
     var id: Int64 = 0
     var userName: String = ""
+}
+
+@Refine[naming: "none"]
+public class ExplicitNonePost {
+    var id: Int64 = 0
+    var title: String = ""
+}
+
+@Refine[]
+public class EmptyAttrPost {
+    var id: Int64 = 0
+    var title: String = ""
 }
 
 @Refine
@@ -5522,15 +5540,41 @@ public class DocSyncSyntaxTest {
     }
 }
 
-// Task 1: 验证 @Refine[naming] 属性宏能解析 attr 展开不报错。本 Task 只解析不
-// 转换，表名仍是默认 lowerTableName 结果 snakeBlogPost；Task 3 此断言升级为
-// "snake_blog_post"，并补列名断言 "user_name"。
+// Task 1: 验证 @Refine[naming] 双参重载能展开不报错（本类名聚焦"重载展开"，非"解析"）。
+// 本 Task 只解析不转换，表名仍是默认 lowerTableName 结果 snakeBlogPost；
+// Task 3 此断言升级为 "snake_blog_post"，并补列名断言 "user_name"。
+// 非法 strategy（"kebab"/"SNAKE"）与 `naming:` 缺值在宏展开期抛编译错误，
+// 无法在 unittest 运行时断言（见宏文件注释），由合法值覆盖：
+//   - SnakeBlogPostSchema：显式 snake（Task 1 阶段与默认一致）
+//   - ExplicitNonePostSchema：显式 none = 默认行为
+//   - EmptyAttrPostSchema：@Refine[] 空 attr = 默认行为
 @Test
 public class SnakeNamingTest {
     @TestCase
-    public func testNamingAttrMacroParses(): Unit {
+    public func testNamingAttrMacroOverloadExpands(): Unit {
         let schema = SnakeBlogPostSchema()
         @Expect(schema.tableName(), "snakeBlogPost")
+        let cols = schema.columns()
+        @Expect(cols[0].name, "id")
+        @Expect(cols[1].name, "userName")
+    }
+
+    @TestCase
+    public func testExplicitNoneMatchesDefault(): Unit {
+        let schema = ExplicitNonePostSchema()
+        @Expect(schema.tableName(), "explicitNonePost")
+        let cols = schema.columns()
+        @Expect(cols[0].name, "id")
+        @Expect(cols[1].name, "title")
+    }
+
+    @TestCase
+    public func testEmptyAttrMatchesDefault(): Unit {
+        let schema = EmptyAttrPostSchema()
+        @Expect(schema.tableName(), "emptyAttrPost")
+        let cols = schema.columns()
+        @Expect(cols[0].name, "id")
+        @Expect(cols[1].name, "title")
     }
 }
 
