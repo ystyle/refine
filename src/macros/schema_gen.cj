@@ -2,6 +2,7 @@ macro package refine.macros
 
 import std.ast.*
 import std.collection.ArrayList
+import refine.naming.*
 
 func buildColumnNamesFunc(className: String, cd: ClassDecl, internalNames: ArrayList<String>): Tokens {
     let funcName = Token(TokenKind.IDENTIFIER, className + "ColumnNames")

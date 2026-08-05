@@ -2,6 +2,7 @@ macro package refine.macros
 
 import std.ast.*
 import std.collection.ArrayList
+import refine.naming.*
 
 
 func buildRelationMethods(className: String, rels: ArrayList<RelInfo>, cd: ClassDecl): Unit {

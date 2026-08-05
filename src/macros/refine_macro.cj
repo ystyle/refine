@@ -2,6 +2,7 @@ macro package refine.macros
 
 import std.ast.*
 import std.collection.ArrayList
+import refine.naming.*
 
 struct FieldInfo {
     var name: String
