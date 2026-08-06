@@ -7,9 +7,12 @@
 - **编译期类型安全** — 字段引用、查询条件、关联预加载均在编译期校验，没有运行时字符串拼写错误
 - **四类关联体系** — `has_one` / `has_many`（拥有）和 `ref_one` / `ref_many`（引用），语义明确
 - **关联预加载** — `include()` 一次查询带出所有关联，不产生 N+1 问题
-- **多方言** — 内置 SQLite / MySQL / PostgreSQL 支持，各方言自动适配
+- **多方言** — 内置 SQLite / MySQL / MariaDB / PostgreSQL 支持，各方言自动适配
 - **数据迁移** — 从实体定义自动生成 `CREATE TABLE`，无需手写 DDL
 - **生命周期钩子** — 实例级 Hook 系统，支持 `TxBeforeCreate` / `AfterFind` 等 7 种钩子
+- **自定义命名转换** — `@Refine[naming: "snake"]` 编译期将表名/列名转 `snake_case`，优先级注解 > 策略 > 默认
+- **Decimal 字段** — `Decimal` 高精度数值字段，四方言原生支持（含可空 `Option<Decimal>`）
+- **Json struct 字段** — 实体字段声明自定义 struct 自动映射 Json 列，实现 `stdx.encoding.json.stream` 接口即编译期强制序列化
 
 ## 快速示例
 
@@ -106,7 +109,7 @@ PostgreSQL 表名若为保留字（如 `user`、`order`）需用 `@Table` 指定
 
 ```toml
 [dependencies]
-refine = "0.6.1"
+refine = "0.7.0"
 ```
 
 或使用 git 依赖（开发版）：
@@ -120,7 +123,7 @@ refine = { git = "https://atomgit.com/ystyle/refine.git", branch = "master" }
 
 ## 测试
 
-单元 + 集成测试 **976 个全部通过**（`cjpm test`），其中包含针对真实 MySQL、MariaDB 与 PostgreSQL 的连接集成测试。
+单元 + 集成测试 **1078 个全部通过**（`cjpm test`），其中包含针对真实 MySQL、MariaDB 与 PostgreSQL 的连接集成测试。
 
 ## 文档
 

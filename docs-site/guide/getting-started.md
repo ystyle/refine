@@ -6,7 +6,7 @@
 
 ```toml
 [dependencies]
-refine = "0.6.1"
+refine = "0.7.0"
 ```
 
 或使用 git 依赖（开发版）：
