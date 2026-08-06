@@ -46,6 +46,22 @@ func genFieldCols(fieldNames: ArrayList<String>): Tokens {
     tokens
 }
 
+// M8-Json Task 2: 字段值表达式 tokens——Json 兜底 struct 字段（isJsonFallbackType）
+// 包 jsonToString(...) 序列化为 JSON 文本（String），其余字段直接字段访问。
+// entityExpr 是实体引用（"entity" / "entities[_i_]" / "entities[_bi_]"）。
+// 写路径五处参数收集（insert/update/batchInsert/batchUpdate/upsert）共用，保证
+// dispatchSet 收到的是 String 而非 struct 实例（R-C2 起 struct 落 case _ 抛错）。
+// 命名分叉：字段访问侧用 f.name（entity.profile），与 SQL 列名（f.columnName）无关。
+func genJsonAwareFieldAccess(entityExpr: String, fieldName: String, typeName: String): Tokens {
+    let targetTok = Token(TokenKind.IDENTIFIER, entityExpr)
+    let fieldTok = Token(TokenKind.IDENTIFIER, fieldName)
+    if (isJsonFallbackType(typeName)) {
+        quote(jsonToString($(targetTok).$(fieldTok)))
+    } else {
+        quote($(targetTok).$(fieldTok))
+    }
+}
+
 func buildEntityArrayTokens(fields: ArrayList<FieldInfo>): Tokens {
     var arr = Tokens()
     arr = arr + Token(TokenKind.LSQUARE)
@@ -53,9 +69,7 @@ func buildEntityArrayTokens(fields: ArrayList<FieldInfo>): Tokens {
     for (f in fields) {
         if (shouldSkipInInsert(f)) { continue }
         if (!first) { arr = arr + Token(TokenKind.COMMA) }
-        arr = arr + Token(TokenKind.IDENTIFIER, "entity")
-        arr = arr + Token(TokenKind.DOT)
-        arr = arr + Token(TokenKind.IDENTIFIER, f.name)
+        arr = arr + genJsonAwareFieldAccess("entity", f.name, f.typeName)
         first = false
     }
     arr = arr + Token(TokenKind.RSQUARE)
@@ -186,9 +200,7 @@ func buildUpdateEntityArrayTokens(fields: ArrayList<FieldInfo>, pkFields: ArrayL
     for (f in fields) {
         if (f.isPk || isRelationField(f.typeName) || f.isVersion) { continue }
         if (!first) { arr = arr + Token(TokenKind.COMMA) }
-        arr = arr + Token(TokenKind.IDENTIFIER, "entity")
-        arr = arr + Token(TokenKind.DOT)
-        arr = arr + Token(TokenKind.IDENTIFIER, f.name)
+        arr = arr + genJsonAwareFieldAccess("entity", f.name, f.typeName)
         first = false
     }
     for (i in 0..pkFields.size) {

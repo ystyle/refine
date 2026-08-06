@@ -86,7 +86,7 @@ func buildBatchInsertSQLFunc(className: String, fields: ArrayList<FieldInfo>, ta
     for (f in fields) {
         if (shouldSkipInInsert(f)) { continue }
         addParams = addParams + quote(
-            allParams.add(entities[_i_].$(Token(TokenKind.IDENTIFIER, f.name)));
+            allParams.add($(genJsonAwareFieldAccess("entities[_i_]", f.name, f.typeName)));
         )
     }
 
@@ -158,13 +158,16 @@ func buildBatchUpdateSQLFunc(className: String, fields: ArrayList<FieldInfo>, ta
 
     // 参数收集：常规列每实体 (pk 值..., 新值)，然后 version 每实体 (pk..., version+1)，
     // 然后 updated_at 每实体 (pk..., updated_at)，最后 IN 列表 (pk 值...)
+    // M8-Json Task 2: Json 兜底字段用 genJsonAwareFieldAccess 包 jsonToString（字段访问
+    // 侧 setFieldNames[i] 是字段名，SQL 列名侧 setCols[i] 是转换后列名，分叉同 setCols）。
     var addParams = Tokens()
     for (i in 0..setFieldNames.size) {
-        let colIdent = Token(TokenKind.IDENTIFIER, setFieldNames[i])
+        let fieldName = setFieldNames[i]
+        let fieldType = getFieldTypeName(fields, fieldName)
         addParams = addParams + quote(
             for (_bi_ in 0..entities.size) {
                 $(genPkValueParamsTokens(pkFields, "entities[_bi_]"))
-                allParams.add(entities[_bi_].$(colIdent));
+                allParams.add($(genJsonAwareFieldAccess("entities[_bi_]", fieldName, fieldType)));
             }
         )
     }

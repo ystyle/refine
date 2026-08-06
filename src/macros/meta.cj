@@ -346,10 +346,12 @@ func typeNameToStorageType(typeName: String): String {
     } else { "StorageType.Json" }
 }
 
-// M22 评审（Fix 3）: 字段落入 typeNameToStorageType 的 Json 兜底分支（未知 struct）
-// 时，在宏展开期发编译期 WARNING。宏层未接线 TypeAdapter——这类字段写路径经
-// dispatchSet 抛 RefineException（R-C2 起不再静默写 NULL）、读路径 result.get<T> 抛错，
-// 编译期提示比运行时才暴露更友好。
+// M22 评审（Fix 3）+ M8-Json Task 2: 字段落入 typeNameToStorageType 的 Json 兜底分支
+//（未知 struct）时，在宏展开期发编译期 WARNING。M8-Json 起 struct 字段走 stdx
+// json.stream 接口（宏层生成 jsonToString/stringToJson，编译期强制 struct 实现
+// JsonSerializable + JsonDeserializable<T>，未实现 → 生成代码编译失败，比 warning 更强）。
+// 宏无法内省 struct 是否实现接口，故本警告是提示性（措辞不再提 TypeAdapter，改为
+// json.stream 接口提示）；未实现接口时编译失败是真正的保障。
 func isJsonFallbackType(typeName: String): Bool {
     typeNameToStorageType(typeName) == "StorageType.Json"
 }
@@ -369,8 +371,8 @@ func emitUnknownTypeWarnings(cd: ClassDecl, fields: ArrayList<FieldInfo>): Unit 
                 if (storageOverride != "") { continue }
                 if (isJsonFallbackType(typeStr)) {
                     diagReport(DiagReportLevel.WARNING, vd.toTokens(),
-                        "entity field '" + fn + "' of type '" + typeStr + "' maps to StorageType.Json but has no TypeAdapter",
-                        "writes throw RefineException and reads fail — implement refine.TypeAdapter<" + typeStr + "> or override with @Field[...]")
+                        "entity field '" + fn + "' of type '" + typeStr + "' maps to StorageType.Json",
+                        "struct fields are stored as JSON text — implement stdx.encoding.json.stream JsonSerializable + JsonDeserializable<" + typeStr + "> so generated code compiles, or override with @Field[...]")
                 }
             case _ => ()
         }

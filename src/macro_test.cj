@@ -10,6 +10,7 @@ import std.time.DateTime
 import std.math.numeric.Decimal
 import std.unittest.*
 import std.unittest.testmacro.*
+import stdx.encoding.json.stream.*
 
 // Task 1: @Refine[naming: "snake"] 属性宏参数解析——双参重载解析命名策略并展开。
 // 命名策略白名单 {"none", "snake"} 之外的值（如 "kebab"/"SNAKE"）与 `naming:` 缺值
@@ -1823,15 +1824,36 @@ public class FieldAnnotationTest {
 
 // ─── M22: 未知 struct 类型默认映射 StorageType.Json ─────────────────────────
 // design §6.3「struct → StorageType.Json」；M22 修复前 typeNameToStorageType 把
-// 未知 struct 一律映射为 Text，与 design 不符。注意：宏层 TypeAdapter 读写接线
-// （toStored/fromStored）尚未实现，本项只修正 schema 默认推断（见 audit 备注）。
-public struct Profile {
+// 未知 struct 一律映射为 Text，与 design 不符。M8-Json Task 2 起 struct 字段写路径
+// 走 jsonToString（宏层生成代码要求 struct 实现 JsonSerializable），读路径走
+// stringToJson（要求实现 JsonDeserializable<T>）——本 fixture 实现两接口使生成代码
+// 可编译；未实现接口的 struct 编译失败（编译期强制，比运行时注册表更强）。
+public struct Profile <: JsonSerializable & JsonDeserializable<Profile> {
     public var bio: String = ""
     public var avatarUrl: String = ""
     public init() {}
     public init(bio: String, avatarUrl: String) {
         this.bio = bio
         this.avatarUrl = avatarUrl
+    }
+    public func toJson(w: JsonWriter): Unit {
+        w.startObject()
+        w.writeName("bio").writeValue(this.bio)
+        w.writeName("avatarUrl").writeValue(this.avatarUrl)
+        w.endObject()
+    }
+    public static func fromJson(r: JsonReader): Profile {
+        var res = Profile()
+        r.startObject()
+        while (r.peek() != EndObject) {
+            match (r.readName()) {
+                case "bio" => res.bio = r.readValue<String>()
+                case "avatarUrl" => res.avatarUrl = r.readValue<String>()
+                case _ => r.skip()
+            }
+        }
+        r.endObject()
+        res
     }
 }
 
@@ -1860,6 +1882,195 @@ public class UnknownTypeSchemaTest {
         let cols = ProfileDocColumnNames()
         @Expect(cols.size, 3)
         @Expect(cols[2].name, "profile")
+    }
+}
+
+// ─── M8-Json Task 2: Json 兜底 struct 字段端到端读写 ──────────────
+// fixture 复用 T1 的 JsonProfile（实现 JsonSerializable + JsonDeserializable）。
+// 写路径（save/update/batchSave/batchUpdate/upsert）必须绑定 JSON 文本（String 而非
+// struct 实例，dispatchSet 无 struct 分支会抛 RefineException）；读路径 rowMapper
+// 必须经 stringToJson 反序列化回 struct（result.get<JsonProfile> 对 String 值抛错）。
+@Refine
+public class JsonUser {
+    var id: Int64 = 0
+    var name: String = ""
+    var profile: JsonProfile = JsonProfile()
+}
+
+// snake 命名分叉回归：字段名 userProfile（字段访问侧）≠ 列名 user_profile（SQL 侧）。
+// 写路径包装作用于字段访问（jsonToString(entity.userProfile)），列名仍用转换后 user_profile；
+// 读路径 columnMap 键是 user_profile、赋值目标是 entity.userProfile。
+@Refine[naming: "snake"]
+public class SnakeJsonUser {
+    var id: Int64 = 0
+    var displayName: String = ""
+    var userProfile: JsonProfile = JsonProfile()
+}
+
+@Test
+public class JsonStructFieldTest {
+    @TestCase
+    public func testSchemaMapsProfileToJson(): Unit {
+        let cols = JsonUserSchema().columns()
+        @Expect(cols.size, 3)
+        @Expect(cols[0].name, "id")
+        @Expect(cols[1].name, "name")
+        @Expect(cols[2].name, "profile")
+        @Expect(cols[2].storageType, StorageType.Json)
+    }
+
+    @TestCase
+    public func testSaveBindsJsonText(): Unit {
+        let conn = CaptureConnection()
+        let tx = sqliteTx(conn)
+        tx.begin()
+        let u = JsonUser()
+        u.name = "alice"
+        u.profile = newJsonProfile()
+        tx.save(u)
+        @Expect(conn.stmt.capturedSql.contains("\"profile\""), true)
+        @Expect(conn.stmt.capturedSetValues.size, 2)
+        match (conn.stmt.capturedSetValues[1]) {
+            case v: String => @Expect(v.contains("\"name\":\"Alice\""), true)
+            case _ => @Fail("expected JSON text String param for profile save")
+        }
+    }
+
+    @TestCase
+    public func testUpdateBindsJsonText(): Unit {
+        let conn = CaptureConnection()
+        let tx = sqliteTx(conn)
+        tx.begin()
+        let u = JsonUser()
+        u.id = 1
+        u.name = "bob"
+        u.profile = JsonProfile("Bob", 40, ArrayList<String>(), None, HashMap<String, String>())
+        tx.update(u)
+        @Expect(conn.stmt.capturedSql.contains("\"profile\" = ?"), true)
+        @Expect(conn.stmt.capturedSetValues.size, 3)
+        match (conn.stmt.capturedSetValues[1]) {
+            case v: String => @Expect(v.contains("\"name\":\"Bob\""), true)
+            case _ => @Fail("expected JSON text String param for profile update")
+        }
+    }
+
+    @TestCase
+    public func testBatchSaveBindsJsonText(): Unit {
+        let conn = CaptureConnection()
+        let tx = sqliteTx(conn)
+        tx.begin()
+        let u1 = JsonUser()
+        u1.name = "a"
+        u1.profile = JsonProfile("A", 1, ArrayList<String>(), None, HashMap<String, String>())
+        let u2 = JsonUser()
+        u2.name = "b"
+        u2.profile = JsonProfile("B", 2, ArrayList<String>(), None, HashMap<String, String>())
+        tx.batchSave([u1, u2])
+        @Expect(conn.stmt.capturedSql.contains("\"profile\""), true)
+        var jsonCount = 0
+        for (v in conn.stmt.capturedSetValues) {
+            match (v) {
+                case s: String => if (s.contains("\"name\":\"A\"") || s.contains("\"name\":\"B\"")) { jsonCount++ }
+                case _ => ()
+            }
+        }
+        @Expect(jsonCount, 2)
+    }
+
+    @TestCase
+    public func testBatchUpdateBindsJsonText(): Unit {
+        let (conn, tx) = makeTestTx(SQLiteDialect())
+        let u1 = JsonUser()
+        u1.id = 1
+        u1.name = "a"
+        u1.profile = JsonProfile("A", 1, ArrayList<String>(), None, HashMap<String, String>())
+        let u2 = JsonUser()
+        u2.id = 2
+        u2.name = "b"
+        u2.profile = JsonProfile("B", 2, ArrayList<String>(), None, HashMap<String, String>())
+        tx.batchUpdate([u1, u2])
+        @Expect(conn.stmt.capturedSql.contains("\"profile\" = CASE"), true)
+        var jsonCount = 0
+        for (v in conn.stmt.capturedSetValues) {
+            match (v) {
+                case s: String => if (s.contains("\"name\":\"A\"") || s.contains("\"name\":\"B\"")) { jsonCount++ }
+                case _ => ()
+            }
+        }
+        @Expect(jsonCount, 2)
+    }
+
+    @TestCase
+    public func testUpsertBindsJsonText(): Unit {
+        let conn = CaptureConnection()
+        let rf = Refine(MockDatasource(), SQLiteDialect(), 0)
+        let tx = Tx(conn, rf, 0)
+        tx.begin()
+        let u = JsonUser()
+        u.id = 1
+        u.name = "n"
+        u.profile = JsonProfile("N", 9, ArrayList<String>(), None, HashMap<String, String>())
+        tx.upsert(u)
+        @Expect(conn.stmt.capturedSql.contains("\"profile\""), true)
+        var hasJson = false
+        for (v in conn.stmt.capturedSetValues) {
+            match (v) {
+                case s: String => if (s.contains("\"name\":\"N\"")) { hasJson = true }
+                case _ => ()
+            }
+        }
+        @Expect(hasJson, true)
+    }
+
+    @TestCase
+    public func testRowMapperDeserializesStruct(): Unit {
+        let cols: Array<ColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("name", false),
+            MapperMockColumnInfo("profile", false),
+        ]
+        let json = jsonToString(newJsonProfile())
+        let row = Array<Any>(3, { i => if (i == 0) { 1 } else if (i == 1) { "alice" } else { json } })
+        let result = MapperMockQueryResult(cols, [row])
+        result.next()
+        let e = JsonUserRowMapper(result, buildColumnMap(cols, 0))
+        @Expect(e.id, 1)
+        @Expect(e.name, "alice")
+        @Expect(e.profile.name, "Alice")
+        @Expect(e.profile.age, 30)
+        @Expect(e.profile.tags.size, 2)
+    }
+
+    @TestCase
+    public func testSnakeInsertUsesSnakeColumnAndJsonValue(): Unit {
+        let dialect = SQLiteDialect()
+        let u = SnakeJsonUser()
+        u.displayName = "alice"
+        u.userProfile = newJsonProfile()
+        let (sql, params) = SnakeJsonUserInsertSQL(u, dialect)
+        @Expect(sql.contains("\"user_profile\""), true)
+        @Expect(sql.contains("userProfile"), false)
+        @Expect(params.size, 2)
+        match (params[1]) {
+            case v: String => @Expect(v.contains("\"name\":\"Alice\""), true)
+            case _ => @Fail("expected JSON text param for userProfile")
+        }
+    }
+
+    @TestCase
+    public func testSnakeRowMapperUsesSnakeColumn(): Unit {
+        let cols: Array<ColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("display_name", false),
+            MapperMockColumnInfo("user_profile", false),
+        ]
+        let json = jsonToString(newJsonProfile())
+        let row = Array<Any>(3, { i => if (i == 0) { 1 } else if (i == 1) { "alice" } else { json } })
+        let result = MapperMockQueryResult(cols, [row])
+        result.next()
+        let e = SnakeJsonUserRowMapper(result, buildColumnMap(cols, 0))
+        @Expect(e.displayName, "alice")
+        @Expect(e.userProfile.name, "Alice")
     }
 }
 

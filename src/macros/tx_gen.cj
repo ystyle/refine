@@ -176,13 +176,13 @@ func buildTxUpsertExtend(className: String, fields: ArrayList<FieldInfo>, tableN
     }
     auditUpdateArr = auditUpdateArr + Token(TokenKind.RSQUARE)
 
-    // 参数：params.add(entity.field)
+    // 参数：params.add(entity.field)——M8-Json Task 2: Json 兜底字段包 jsonToString
+    // 序列化为 String（dispatchSet 无 struct 分支，裸实体字段落 case _ 抛错）
     var paramsTok = Tokens()
     for (f in fields) {
         if (isRelationField(f.typeName)) { continue }
-        let fName = Token(TokenKind.IDENTIFIER, f.name)
         paramsTok = paramsTok + quote(
-            params.add(entity.$(fName));
+            params.add($(genJsonAwareFieldAccess("entity", f.name, f.typeName)));
         )
     }
     // 审计更新列需要额外参数（如 MySQL 的 `col = ?`），是否追加由方言返回的
