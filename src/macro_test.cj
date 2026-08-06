@@ -125,9 +125,11 @@ public class SnakeProfilePost {
 }
 
 // Task 6: 优先级测试——@Table 显式表名 > naming 策略。@Table 覆盖后表名原样
-//（custom_table 不转 snake），但列名仍随 snake 策略转换（user_name）。
+//（CustomTable 不转 snake），但列名仍随 snake 策略转换（user_name）。
+// 刻意用非幂等表名：camelToSnake("CustomTable") = "custom_table" ≠ 原串，
+// 若实现误把策略套到显式 @Table 值上，tableName()/SQL 断言会立即失败。
 @Refine[naming: "snake"]
-@Table["custom_table"]
+@Table["CustomTable"]
 public class SnakeCustomTablePost {
     var id: Int64 = 0
     var userName: String = ""
@@ -5742,34 +5744,42 @@ public class SnakeNamingTest {
 
 // Task 6: 命名策略优先级——注解显式指定 > @Refine[naming] 全局策略 > 默认行为。
 // 显式 none = 默认（ExplicitNonePost/EmptyAttrPost）已由 SnakeNamingTest 覆盖。
+// 注意：本类 @Field 两个用例测的是「@Field 与 snake 策略正交组合」，不是优先级
+//（@Field 只覆盖 storageType、不涉及表名/列名优先级，见下方注释）。
 @Test
 public class SnakePriorityTest {
-    // @Table 显式表名覆盖 snake：表名原样（custom_table），列名仍随策略转 snake
+    // @Table 显式表名覆盖 snake：表名原样（CustomTable），列名仍随策略转 snake。
+    // 非幂等名保证断言能区分「原样使用」vs「被 snake 策略转换」：
+    // camelToSnake("CustomTable") = "custom_table"，若误转换 tableName() 会变成后者。
     @TestCase
     public func testTableAnnotationOverridesSnakeTableName(): Unit {
         let schema = SnakeCustomTablePostSchema()
-        @Expect(schema.tableName(), "custom_table")
+        @Expect(schema.tableName(), "CustomTable")
+        @Expect(schema.tableName().contains("custom_table"), false)
         let cols = schema.columns()
         @Expect(cols[0].name, "id")
         @Expect(cols[1].name, "user_name")
     }
 
-    // @Table 覆盖 snake 后，写路径 SQL 的表名用显式表名、列名用转换后列名
+    // @Table 覆盖 snake 后，写路径 SQL 的表名用显式表名（CustomTable）、列名用转换后列名
     @TestCase
     public func testTableOverrideSnakeInsertSQLUsesTableAndConvertedColumn(): Unit {
         let dialect = SQLiteDialect()
         let p = SnakeCustomTablePost()
         p.userName = "alice"
         let (sql, _) = SnakeCustomTablePostInsertSQL(p, dialect)
-        @Expect(sql.contains("custom_table"), true)
+        @Expect(sql.contains("CustomTable"), true)
+        @Expect(sql.contains("custom_table"), false)
         @Expect(sql.contains("snake_custom_table_post"), false)
         @Expect(sql.contains("user_name"), true)
         @Expect(sql.contains("userName"), false)
     }
 
-    // @Field 只覆盖 storageType：snake 下列名仍转（display_name）、类型被覆盖（Text）
+    // @Field 只覆盖 storageType：snake 下列名仍转（display_name）、类型被覆盖（Text）。
+    // 正交性测试：@Field 不参与表名/列名优先级（本迭代不做显式列名），与 snake 策略
+    // 各管各的。
     @TestCase
-    public func testFieldStorageOverrideStillAppliesUnderSnake(): Unit {
+    public func testFieldStorageOverrideOrthogonalToSnake(): Unit {
         let schema = SnakeFieldOverridePostSchema()
         @Expect(schema.tableName(), "snake_field_override_post")
         let cols = schema.columns()
@@ -5777,9 +5787,9 @@ public class SnakePriorityTest {
         @Expect(cols[1].storageType, StorageType.Text)
     }
 
-    // @Field 覆盖 storageType 的字段，写路径 SQL 用转换后列名 display_name
+    // @Field 覆盖 storageType 的字段，写路径 SQL 用转换后列名 display_name（正交组合）
     @TestCase
-    public func testFieldOverrideSnakeInsertSQLUsesConvertedColumn(): Unit {
+    public func testFieldStorageOverrideOrthogonalSnakeInsertSQL(): Unit {
         let dialect = SQLiteDialect()
         let p = SnakeFieldOverridePost()
         p.displayName = "hello"
@@ -5994,6 +6004,122 @@ public class SnakeRelationNamingTest {
         p.setBio(tx, b)
         @Expect(conn.stmt.capturedSql, "INSERT INTO \"snake_bio\" (\"content\", \"author_id\") VALUES (?, ?)")
         @Expect(b.authorId, 1)
+    }
+
+    // ─── M3 审查：snake include 批量装配单元测试（CaptureConnection mock） ─────────
+    // 真实 DB roundtrip 之外，批量装配的 SQL 列名/表名需要在单元层直接断言：
+    // ref_to 批量查询（FROM snake_author / display_name）、has_many 批量查询（fk post_id
+    // + body）、ref_many junction 查询（related_authors JOIN snake_author，源列
+    // snake_post_id / 目标列 snake_author_id）。三协议各断言 snake 表名/列名正确、
+    // 无 camel 字段名泄漏，且回填后的实体值正确。
+
+    // ref_to：SnakePost.author（by authorId → author_id）批量 IN 装配
+    @TestCase
+    public func testSnakeIncludeRefToBatchAssembly(): Unit {
+        let conn = CaptureConnection()
+        let tx = sqliteTx(conn)
+        tx.begin()
+        // 主查询：snake_post 自身列（author_id=99）
+        let mainCols: Array<ColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("title", false),
+            MapperMockColumnInfo("author_id", false),
+        ]
+        let mainRow = Array<Any>(3, {i => if (i == 0) { 5 } else if (i == 1) { "snake-title" } else { 99 }})
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(mainCols, [mainRow]))
+        // 批量查询：snake_author 表 id IN (99)，SELECT "id", "display_name"
+        let authorCols: Array<ColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("display_name", false),
+        ]
+        let authorRow = Array<Any>(2, {i => if (i == 0) { 99 } else { "Alice" }})
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(authorCols, [authorRow]))
+        let entities = SnakePost.findAll(SnakePost.query().include(SnakePostRel.author).using(tx))
+        @Expect(conn.stmt.capturedSqlHistory.size, 2)
+        let batch = conn.stmt.capturedSqlHistory[1]
+        @Expect(batch.contains("FROM \"snake_author\""), true)
+        @Expect(batch.contains("\"display_name\""), true)
+        @Expect(batch.contains("\"id\" IN (?)"), true)
+        @Expect(batch.contains("displayName"), false)
+        @Expect(batch.contains("snakeAuthor"), false)
+        @Expect(entities.size, 1)
+        @Expect(entities[0].author.isSome(), true)
+        let author = entities[0].author.getOrThrow()
+        @Expect(author.id, 99)
+        @Expect(author.displayName, "Alice")
+    }
+
+    // has_many：SnakePost.comments（by postId → post_id）批量 IN 装配
+    @TestCase
+    public func testSnakeIncludeHasManyBatchAssembly(): Unit {
+        let conn = CaptureConnection()
+        let tx = sqliteTx(conn)
+        tx.begin()
+        let mainCols: Array<ColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("title", false),
+            MapperMockColumnInfo("author_id", false),
+        ]
+        let mainRow = Array<Any>(3, {i => if (i == 0) { 5 } else if (i == 1) { "snake-title" } else { 99 }})
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(mainCols, [mainRow]))
+        // 批量查询：snake_comment 表 post_id IN (5)，SELECT "id", "post_id", "body"
+        let commentCols: Array<ColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("post_id", false),
+            MapperMockColumnInfo("body", false),
+        ]
+        let commentRow = Array<Any>(3, {i => if (i == 0) { 100 } else if (i == 1) { 5 } else { "snake-comment" }})
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(commentCols, [commentRow]))
+        let entities = SnakePost.findAll(SnakePost.query().include(SnakePostRel.comments).using(tx))
+        @Expect(conn.stmt.capturedSqlHistory.size, 2)
+        let batch = conn.stmt.capturedSqlHistory[1]
+        @Expect(batch.contains("FROM \"snake_comment\""), true)
+        @Expect(batch.contains("\"post_id\" IN (?)"), true)
+        @Expect(batch.contains("\"body\""), true)
+        @Expect(batch.contains("postId"), false)
+        @Expect(batch.contains("snakeComment"), false)
+        @Expect(entities.size, 1)
+        @Expect(entities[0].comments.size, 1)
+        @Expect(entities[0].comments[0].id, 100)
+        @Expect(entities[0].comments[0].body, "snake-comment")
+        @Expect(entities[0].comments[0].postId, 5)
+    }
+
+    // ref_many：SnakePost.relatedAuthors（默认 via → related_authors）junction 批量装配。
+    // junction 查询手写 SQL：源列 snake_post_id / 目标列 snake_author_id / JOIN snake_author。
+    @TestCase
+    public func testSnakeIncludeRefManyBatchAssembly(): Unit {
+        let conn = CaptureConnection()
+        let tx = sqliteTx(conn)
+        tx.begin()
+        let mainCols: Array<ColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("title", false),
+            MapperMockColumnInfo("author_id", false),
+        ]
+        let mainRow = Array<Any>(3, {i => if (i == 0) { 5 } else if (i == 1) { "snake-title" } else { 99 }})
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(mainCols, [mainRow]))
+        // junction 批量查询结果列：目标表 id / display_name + 中间表源列 snake_post_id
+        let junctionCols: Array<ColumnInfo> = [
+            MapperMockColumnInfo("id", false),
+            MapperMockColumnInfo("display_name", false),
+            MapperMockColumnInfo("snake_post_id", false),
+        ]
+        let junctionRow = Array<Any>(3, {i => if (i == 0) { 99 } else if (i == 1) { "Alice" } else { 5 }})
+        conn.stmt.queryResultQueue.add(MapperMockQueryResult(junctionCols, [junctionRow]))
+        let entities = SnakePost.findAll(SnakePost.query().include(SnakePostRel.relatedAuthors).using(tx))
+        @Expect(conn.stmt.capturedSqlHistory.size, 2)
+        let batch = conn.stmt.capturedSqlHistory[1]
+        @Expect(batch.contains("\"related_authors\""), true)
+        @Expect(batch.contains("\"snake_post_id\""), true)
+        @Expect(batch.contains("\"snake_author_id\""), true)
+        @Expect(batch.contains("\"snake_author\""), true)
+        @Expect(batch.contains("relatedAuthors"), false)
+        @Expect(batch.contains("snakeAuthor"), false)
+        @Expect(entities.size, 1)
+        @Expect(entities[0].relatedAuthors.size, 1)
+        @Expect(entities[0].relatedAuthors[0].id, 99)
+        @Expect(entities[0].relatedAuthors[0].displayName, "Alice")
     }
 }
 

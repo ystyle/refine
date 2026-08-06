@@ -62,7 +62,7 @@ rf.transaction { tx: Tx =>
 
 ## 自定义表名
 
-默认表名是类名的驼峰转小写（`User` → `user`, `BlogPost` → `blogpost`）。使用 `@Table` 覆盖：
+默认表名是类名首字母小写（`User` → `user`, `BlogPost` → `blogPost`）。使用 `@Table` 覆盖：
 
 ```cangjie
 @Refine
@@ -80,7 +80,7 @@ class User {
 
 ## 命名约定（@Refine[naming]）
 
-实体默认表名 = 类名首字母小写（`BlogPost` → `blogpost`），列名 = 字段名（`userName` 即列名，无转换）。通过 `@Refine[naming: "snake"]` 可将表名/列名统一转换为 snake_case：
+实体默认表名 = 类名首字母小写（`BlogPost` → `blogPost`），列名 = 字段名（`userName` 即列名，无转换）。通过 `@Refine[naming: "snake"]` 可将表名/列名统一转换为 snake_case：
 
 ```cangjie
 @Refine[naming: "snake"]
@@ -111,7 +111,7 @@ class BlogPost {
 
 ### 优先级：注解显式指定 > 全局策略 > 默认
 
-- **`@Table` 显式表名 > snake**：`@Table["custom_table"]` 的表名原样使用（不转 snake），列名仍随策略转换（`userName` → `user_name`）
+- **`@Table` 显式表名 > snake**：`@Table["CustomTable"]` 的表名原样使用（不转 snake，即仍是 `CustomTable` 而非 `custom_table`），列名仍随策略转换（`userName` → `user_name`）
 - **`@Field` 覆盖 storageType**：`@Field` 目前只覆盖字段存储类型、不做列名——本迭代字段列名的显式指定**未实现**（记档后续功能）。snake 下字段列名仍按策略转换（`displayName` → `display_name`），存储类型覆盖正常生效（如 `@Field[Text]` → `Text` 列）
 - **显式 `"none"` = 默认行为**：`@Refine[naming: "none"]` 与裸 `@Refine` 完全一致
 

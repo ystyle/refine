@@ -148,73 +148,13 @@ public class MariaDBIntegrationTest {
     }
 
     // ─── Task 6: snake 命名策略真实 DB roundtrip（真实 MariaDB） ───────────────────
-    // SnakePost/SnakeAuthor/SnakeComment 端到端：autoMigrate 建 snake 表 →
-    // save（snake 列名 INSERT）→ query 读回（rowMapper snake 键）→ include 关系
-    // 装配（r.by author_id/post_id）→ ref_many junction 写读（related_authors）。
+    // 端到端实现收敛到共享 helper runSnakeNamingRoundtrip（M4 审查去重），
+    // 本文件只负责取连接、执行、关闭。
     @TestCase
     public func testSnakeNamingRoundtrip(): Unit {
         match (tryMariaDB()) {
             case Some(rf) =>
-                rf.transaction { tx: Tx =>
-                    tx.execute("DROP TABLE IF EXISTS `related_authors`", [])
-                    tx.execute("DROP TABLE IF EXISTS `snake_comment`", [])
-                    tx.execute("DROP TABLE IF EXISTS `snake_author`", [])
-                    tx.execute("DROP TABLE IF EXISTS `snake_post`", [])
-                }
-                let m = rf.migrator()
-                m.autoMigrate([SnakePostSchema(), SnakeAuthorSchema(), SnakeCommentSchema(), SnakePost_RelatedAuthorsJunctionSchema()])
-                @Expect(m.hasTable("snake_post"), true)
-                @Expect(m.hasTable("related_authors"), true)
-
-                // save：snake 列名 INSERT（display_name / author_id / post_id）
-                let a = SnakeAuthor()
-                a.displayName = "Alice"
-                rf.transaction { tx: Tx => tx.save(a) }
-                @Expect(a.id > 0, true)
-                let p = SnakePost()
-                p.title = "snake-title"
-                p.authorId = a.id
-                rf.transaction { tx: Tx => tx.save(p) }
-                @Expect(p.id > 0, true)
-                let c = SnakeComment()
-                c.body = "snake-comment"
-                c.postId = p.id
-                rf.transaction { tx: Tx => tx.save(c) }
-                @Expect(c.id > 0, true)
-
-                // query 读回：rowMapper 用 snake 键映射回实体字段
-                let found = SnakePost.query().using(rf).filter(SnakePost.col().title == "snake-title").one()
-                @Expect(found.isSome(), true)
-                @Expect(found.getOrThrow().title, "snake-title")
-                @Expect(found.getOrThrow().authorId, a.id)
-
-                // include 关系装配：r.by snake 列（author_id / post_id）
-                let withRel = SnakePost.query()
-                    .include(SnakePostRel.author)
-                    .include(SnakePostRel.comments)
-                    .using(rf)
-                    .filter(SnakePost.col().title == "snake-title")
-                    .one()
-                @Expect(withRel.isSome(), true)
-                let fp = withRel.getOrThrow()
-                match (fp.author) {
-                    case Some(auth) =>
-                        @Expect(auth.id, a.id)
-                        @Expect(auth.displayName, "Alice")
-                    case None => @Expect(true, false)
-                }
-                @Expect(fp.comments.size, 1)
-                @Expect(fp.comments[0].body, "snake-comment")
-                @Expect(fp.comments[0].postId, p.id)
-
-                // ref_many junction snake 写读：appendRelatedAuthors → loadRelatedAuthors
-                rf.transaction { tx: Tx => fp.appendRelatedAuthors(tx, a) }
-                rf.transaction { tx: Tx => @Expect(fp.countRelatedAuthors(tx), 1) }
-                let loaded = rf.transaction { tx: Tx => fp.loadRelatedAuthors(tx) }
-                @Expect(loaded.size, 1)
-                @Expect(loaded[0].id, a.id)
-                @Expect(loaded[0].displayName, "Alice")
-
+                runSnakeNamingRoundtrip(rf)
                 rf.close()
             case None => @Expect(true, true)
         }
