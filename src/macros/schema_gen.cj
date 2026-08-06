@@ -4,8 +4,9 @@ import std.ast.*
 import std.collection.ArrayList
 import refine.naming.*
 
-func buildColumnNamesFunc(className: String, cd: ClassDecl, internalNames: ArrayList<String>): Tokens {
+func buildColumnNamesFunc(className: String, cd: ClassDecl, internalNames: ArrayList<String>, mergedFields: ArrayList<FieldInfo>): Tokens {
     let funcName = Token(TokenKind.IDENTIFIER, className + "ColumnNames")
+    let colLookup = buildNameToColumnLookup(mergedFields)
     var columns = Tokens()
     columns = columns + Token(TokenKind.LSQUARE)
     var first = true
@@ -16,7 +17,7 @@ func buildColumnNamesFunc(className: String, cd: ClassDecl, internalNames: Array
                 if (isRelationField(fieldTypeStr)) { continue }
                 if (isGeneratedInternalField(vd.identifier.value, internalNames)) { continue }
                 if (!first) { columns = columns + Token(TokenKind.COMMA) }
-                let nameLit = Token(TokenKind.STRING_LITERAL, vd.identifier.value)
+                let nameLit = Token(TokenKind.STRING_LITERAL, lookupColumnName(colLookup, vd.identifier.value))
                 columns = columns + quote(Col<Any>($(nameLit)))
                 first = false
             case _ => ()
@@ -37,7 +38,7 @@ func buildSchemaClass(className: String, fields: ArrayList<FieldInfo>, tableName
         let f = fields[i]
         if (isRelationField(f.typeName)) { continue }
         if (!first) { colDefs = colDefs + Token(TokenKind.COMMA) + Token(TokenKind.NL) }
-        let nameLit = Token(TokenKind.STRING_LITERAL, f.name)
+        let nameLit = Token(TokenKind.STRING_LITERAL, f.columnName)
         let st = if (f.storageOverride != "") { "StorageType." + f.storageOverride } else { typeNameToStorageType(f.typeName) }
         let isPk = if (f.isPk) { "true" } else { "false" }
         let isAutoInc = if (f.autoInc) { "true" } else { "false" }

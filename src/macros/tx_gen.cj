@@ -116,7 +116,7 @@ func buildTxUpsertExtend(className: String, fields: ArrayList<FieldInfo>, tableN
     var colNames = ArrayList<String>()
     for (f in fields) {
         if (isRelationField(f.typeName)) { continue }
-        colNames.add(f.name)
+        colNames.add(f.columnName)
     }
     var colsArr = Tokens()
     colsArr = colsArr + Token(TokenKind.LSQUARE)
@@ -130,7 +130,7 @@ func buildTxUpsertExtend(className: String, fields: ArrayList<FieldInfo>, tableN
 
     // 冲突列：主键
     var pkNames = ArrayList<String>()
-    for (pk in pkFields) { pkNames.add(pk.name) }
+    for (pk in pkFields) { pkNames.add(pk.columnName) }
     var pksArr = Tokens()
     pksArr = pksArr + Token(TokenKind.LSQUARE)
     first = true
@@ -149,14 +149,14 @@ func buildTxUpsertExtend(className: String, fields: ArrayList<FieldInfo>, tableN
     auditCreateArr = auditCreateArr + Token(TokenKind.RSQUARE)
 
     let versionName = findVersionField(fields)
-    let versionLit = Token(TokenKind.STRING_LITERAL, versionName)
+    let versionLit = Token(TokenKind.STRING_LITERAL, findVersionColumnName(fields))
 
     // 审计更新列（如 updated_at）：按 columns 顺序收集，保证追加的参数顺序与
     // 方言 upsertSQL 中 `col = ?` 的生成顺序一致（两者都按 columns 遍历）
     var auditUpdateCols = ArrayList<String>()
     for (f in fields) {
         if (isRelationField(f.typeName)) { continue }
-        if (f.name == "updated_at" && hasUpdatedAt) { auditUpdateCols.add(f.name) }
+        if (f.name == "updated_at" && hasUpdatedAt) { auditUpdateCols.add(f.columnName) }
     }
     var auditUpdateArr = Tokens()
     auditUpdateArr = auditUpdateArr + Token(TokenKind.LSQUARE)

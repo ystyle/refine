@@ -26,7 +26,7 @@ func genStringArrayTokens(names: ArrayList<String>): Tokens {
 // 前置条件：作用域内存在变量 dialect（Dialect 类型）。
 func buildQuotedPkWhereTokens(pkFields: ArrayList<FieldInfo>): Tokens {
     let pkNames = ArrayList<String>()
-    for (pk in pkFields) { pkNames.add(pk.name) }
+    for (pk in pkFields) { pkNames.add(pk.columnName) }
     let pkNamesArr = genStringArrayTokens(pkNames)
     quote(
         let pkNameArr: Array<String> = $(pkNamesArr)
@@ -44,7 +44,7 @@ func buildInsertSQLFunc(className: String, fields: ArrayList<FieldInfo>, tableNa
     var colNames = ArrayList<String>()
     for (f in fields) {
         if (shouldSkipInInsert(f)) { continue }
-        colNames.add(f.name)
+        colNames.add(f.columnName)
     }
     let colArr = genStringArrayTokens(colNames)
     var placeholders = ArrayList<String>()
@@ -72,7 +72,7 @@ func buildBatchInsertSQLFunc(className: String, fields: ArrayList<FieldInfo>, ta
     var paramCount = 0
     for (f in fields) {
         if (shouldSkipInInsert(f)) { continue }
-        colNames.add(f.name)
+        colNames.add(f.columnName)
         paramCount++
     }
     let colArr = genStringArrayTokens(colNames)
@@ -119,15 +119,19 @@ func buildBatchUpdateSQLFunc(className: String, fields: ArrayList<FieldInfo>, ta
 
     // SET 列：非主键、非关系、非 version、非审计 updated_at 字段（version/updated_at 单独生成 CASE 子句）
     var setCols = ArrayList<String>()
+    // Task 4: setCols 存列名（columnName）供 SQL SET 烘焙；实体字段访问需字段名，
+    // 参数收集循环用 setFieldNames 一一对应（setFieldNames[i] 是 setCols[i] 的字段名）。
+    var setFieldNames = ArrayList<String>()
     var colCastTypes = ArrayList<String>()
     for (f in fields) {
         if (f.isPk || isRelationField(f.typeName) || f.isVersion) { continue }
         if (f.name == "updated_at" && f.typeName == "DateTime") { continue }
-        setCols.add(f.name)
+        setCols.add(f.columnName)
+        setFieldNames.add(f.name)
         colCastTypes.add(pgCastTypeOf(f.typeName))
     }
     var pkNames = ArrayList<String>()
-    for (pk in pkFields) { pkNames.add(pk.name) }
+    for (pk in pkFields) { pkNames.add(pk.columnName) }
     // pk 名称数组字面量（运行时经 quoteIdentifier 逐一包裹后，再拼 CASE / WHEN / WHERE IN）
     let pkNamesArrTok = genStringArrayTokens(pkNames)
 
@@ -155,8 +159,8 @@ func buildBatchUpdateSQLFunc(className: String, fields: ArrayList<FieldInfo>, ta
     // 参数收集：常规列每实体 (pk 值..., 新值)，然后 version 每实体 (pk..., version+1)，
     // 然后 updated_at 每实体 (pk..., updated_at)，最后 IN 列表 (pk 值...)
     var addParams = Tokens()
-    for (c in setCols) {
-        let colIdent = Token(TokenKind.IDENTIFIER, c)
+    for (i in 0..setFieldNames.size) {
+        let colIdent = Token(TokenKind.IDENTIFIER, setFieldNames[i])
         addParams = addParams + quote(
             for (_bi_ in 0..entities.size) {
                 $(genPkValueParamsTokens(pkFields, "entities[_bi_]"))
@@ -193,7 +197,7 @@ func buildBatchUpdateSQLFunc(className: String, fields: ArrayList<FieldInfo>, ta
     // 局部变量（由上方 pkQuoted 推导），列名经 quoteIdentifier 包裹
     var extraSetParts = Tokens()
     if (versionName != "") {
-        let vNameLit = Token(TokenKind.STRING_LITERAL, versionName)
+        let vNameLit = Token(TokenKind.STRING_LITERAL, findVersionColumnName(fields))
         let vCastLit = Token(TokenKind.STRING_LITERAL, "::" + pgCastTypeOf("Int64"))
         extraSetParts = extraSetParts + quote(
             var vCaseParts = ArrayList<String>()
@@ -277,10 +281,10 @@ func buildUpdateSQLFunc(className: String, fields: ArrayList<FieldInfo>, tableNa
     var setCols = ArrayList<String>()
     for (f in fields) {
         if (f.isPk || isRelationField(f.typeName) || f.isVersion) { continue }
-        setCols.add(f.name)
+        setCols.add(f.columnName)
     }
     let setColArr = genStringArrayTokens(setCols)
-    let versionLit = Token(TokenKind.STRING_LITERAL, versionName)
+    let versionLit = Token(TokenKind.STRING_LITERAL, findVersionColumnName(fields))
     let hasVersion = (versionName != "")
     let hasVersionLit = Token(TokenKind.IDENTIFIER, if (hasVersion) { "true" } else { "false" })
     let pkWhereTok = buildQuotedPkWhereTokens(pkFields)
@@ -339,7 +343,7 @@ func buildSelectColumnTokens(fields: ArrayList<FieldInfo>): Tokens {
     for (f in fields) {
         if (isRelationField(f.typeName)) { continue }
         if (!first) { arr = arr + Token(TokenKind.COMMA) }
-        let colNameLit = Token(TokenKind.STRING_LITERAL, f.name)
+        let colNameLit = Token(TokenKind.STRING_LITERAL, f.columnName)
         arr = arr + quote(Expr.Column($(colNameLit)))
         first = false
     }
@@ -351,7 +355,7 @@ func buildSelectColumnTokens(fields: ArrayList<FieldInfo>): Tokens {
 // extend Tx 作用域（this 即 Tx，getDialect() 可用），声明局部变量 returningCols。
 func buildAutoPkReturningCols(pkFields: ArrayList<FieldInfo>): Tokens {
     var names = ArrayList<String>()
-    for (pk in pkFields) { if (pk.autoInc) { names.add(pk.name) } }
+    for (pk in pkFields) { if (pk.autoInc) { names.add(pk.columnName) } }
     let nameArr = genStringArrayTokens(names)
     quote(
         let returningNameArr: Array<String> = $(nameArr)

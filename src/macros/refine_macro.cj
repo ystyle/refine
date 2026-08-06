@@ -241,7 +241,7 @@ func expandRefine(input: Tokens, strategy: String): Tokens {
     let schemasTokens = buildSchemasFunc(className, junctionRelNames)
     classDecl.body.decls.add(FuncDecl(schemasTokens))
 
-    let colsStruct = buildColsStruct(className, classDecl, internalNames)
+    let colsStruct = buildColsStruct(className, classDecl, internalNames, mergedFields)
     let relClass = buildRelClass(className, mergedRels)
     let insertSQLFunc = buildInsertSQLFunc(className, mergedFields, tableName)
     let txSaveExtend = buildTxSaveExtend(className, pkFields, hasClientPk, hasAutoPk, mergedFields)
@@ -252,11 +252,11 @@ func expandRefine(input: Tokens, strategy: String): Tokens {
     let updateSQLFunc = buildUpdateSQLFunc(className, mergedFields, tableName, pkFields)
     let txUpdateExtend = buildTxUpdateExtend(className, mergedFields, tableName, pkFields)
     let txUpsertExtend = buildTxUpsertExtend(className, mergedFields, tableName, pkFields)
-    let rowMapper = buildRowMapper(className, classDecl, mergedRels, internalNames)
+    let rowMapper = buildRowMapper(className, classDecl, mergedRels, internalNames, mergedFields)
     buildRelationMethods(className, mergedRels, classDecl)
     buildCascadeMethods(className, mergedRels, mergedFields, pkFields, classDecl)
     let schemaClass = buildSchemaClass(className, mergedFields, tableName)
-    let columnNamesFunc = buildColumnNamesFunc(className, classDecl, internalNames)
+    let columnNamesFunc = buildColumnNamesFunc(className, classDecl, internalNames, mergedFields)
     var deleteSQLFunc = buildDeleteSQLFunc(className, tableName, pkFields)
     var txDeleteExtend: Tokens
     if (isSoftDelete) {

@@ -4,8 +4,9 @@ import std.ast.*
 import std.collection.ArrayList
 import refine.naming.*
 
-func buildColsStruct(className: String, cd: ClassDecl, internalNames: ArrayList<String>): Tokens {
+func buildColsStruct(className: String, cd: ClassDecl, internalNames: ArrayList<String>, mergedFields: ArrayList<FieldInfo>): Tokens {
     let colsName = Token(TokenKind.IDENTIFIER, className + "Cols")
+    let colLookup = buildNameToColumnLookup(mergedFields)
     var colsFields = Tokens()
     var first = true
     for (i in 0..cd.body.decls.size) {
@@ -15,7 +16,7 @@ func buildColsStruct(className: String, cd: ClassDecl, internalNames: ArrayList<
                 if (isGeneratedInternalField(fn, internalNames)) { continue }
                 if (!first) { colsFields = colsFields + Token(TokenKind.NL) }
                 colsFields = colsFields + quote(
-                    public let $(vd.identifier): Col<$(vd.declType)> = Col<$(vd.declType)>($(Token(TokenKind.STRING_LITERAL, fn)))
+                    public let $(vd.identifier): Col<$(vd.declType)> = Col<$(vd.declType)>($(Token(TokenKind.STRING_LITERAL, lookupColumnName(colLookup, fn))))
                 )
                 first = false
             case _ => ()
@@ -183,9 +184,12 @@ func buildRelClass(className: String, rels: ArrayList<RelInfo>): Tokens {
     quote(public class $(relClassName) { $(body) })
 }
 
-func buildRowMapper(className: String, cd: ClassDecl, rels: ArrayList<RelInfo>, internalNames: ArrayList<String>): Tokens {
+func buildRowMapper(className: String, cd: ClassDecl, rels: ArrayList<RelInfo>, internalNames: ArrayList<String>, mergedFields: ArrayList<FieldInfo>): Tokens {
     let cn = Token(TokenKind.IDENTIFIER, className)
     let funcName = Token(TokenKind.IDENTIFIER, className + "RowMapper")
+    // Task 4 一致性铁律：rowMapper 的 columnMap 键必须与 buildSelectColumnTokens（SELECT 列）
+    // 用同一 lookup/columnName 源，否则 columnMap.contains 恒 false 静默丢字段。
+    let colLookup = buildNameToColumnLookup(mergedFields)
     var assignments = Tokens()
     assignments = assignments + Token(TokenKind.LET)
     assignments = assignments + Token(TokenKind.IDENTIFIER, "entity")
@@ -202,7 +206,7 @@ func buildRowMapper(className: String, cd: ClassDecl, rels: ArrayList<RelInfo>, 
                 if (isRelationField(fieldTypeStr)) { continue }
                 if (isGeneratedInternalField(vd.identifier.value, internalNames)) { continue }
                 if (!first) { assignments = assignments + Token(TokenKind.NL) }
-                let fieldNameLit = Token(TokenKind.STRING_LITERAL, vd.identifier.value)
+                let fieldNameLit = Token(TokenKind.STRING_LITERAL, lookupColumnName(colLookup, vd.identifier.value))
                 // F4: Option<DateTime> 可空标量用 getOrNull<内部类型> 读取（NULL → None，
                 // 有值 → Some<DateTime>），普通字段保持 result.get<T>。修复前该字段被
                 // isRelationField 跳过，RowMapper 不赋值（读回恒 None，数据不可达）。
@@ -288,8 +292,8 @@ func buildRawIdExtractor(className: String, pkFields: ArrayList<FieldInfo>): Tok
         )
     } else if (pkSize == 1) {
         let pk = pkFields.get(0).getOrThrow()
-        let pkNameLit = Token(TokenKind.STRING_LITERAL, pk.name)
-        let guardMsg = "主查询 SELECT 必须包含主键列 '" + pk.name + "' 以支持集合 include（批量装配需要主键）"
+        let pkNameLit = Token(TokenKind.STRING_LITERAL, pk.columnName)
+        let guardMsg = "主查询 SELECT 必须包含主键列 '" + pk.columnName + "' 以支持集合 include（批量装配需要主键）"
         let guardMsgLit = Token(TokenKind.STRING_LITERAL, guardMsg)
         if (pk.typeName == "String") {
             return quote(

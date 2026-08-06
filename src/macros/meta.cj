@@ -2,6 +2,7 @@ macro package refine.macros
 
 import std.ast.*
 import std.collection.ArrayList
+import std.collection.HashMap
 import refine.naming.*
 // Task 3: 命名策略驱动列名——mergeFieldOverrides/applyIdAnnotations/applyAuditVersion
 // 确定的最终字段列表由 applyColumnNames 重建填 columnName（applyColumnNameStrategy）。
@@ -168,6 +169,23 @@ func applyColumnNames(fields: ArrayList<FieldInfo>, strategy: String): ArrayList
     result
 }
 
+// Task 4: name → columnName 查找表。buildColsStruct/buildColumnNamesFunc/buildRowMapper
+// 三个从 ClassDecl 遍历 VarDecl 的烘焙点无 FieldInfo 引用，需此 lookup 把字段名映射到
+// 转换后的列名。lookupColumnName 未命中（过滤条件不一致导致的字段遗漏）回退字段名，
+// 保持 Task 4 前行为——防漏列静默丢失。
+func buildNameToColumnLookup(fields: ArrayList<FieldInfo>): HashMap<String, String> {
+    let lookup = HashMap<String, String>()
+    for (f in fields) { lookup.add(f.name, f.columnName) }
+    lookup
+}
+
+func lookupColumnName(lookup: HashMap<String, String>, name: String): String {
+    match (lookup.get(name)) {
+        case Some(c) => c
+        case None => name
+    }
+}
+
 func findAuditFields(fields: ArrayList<FieldInfo>): (Bool, Bool) {
     var hasCreatedAt = false
     var hasUpdatedAt = false
@@ -180,6 +198,14 @@ func findAuditFields(fields: ArrayList<FieldInfo>): (Bool, Bool) {
 
 func findVersionField(fields: ArrayList<FieldInfo>): String {
     for (f in fields) { if (f.isVersion) { return f.name } }
+    ""
+}
+
+// Task 4: @Version 字段的列名（columnName）。与 findVersionField 配对：字段访问用
+// findVersionField（字段名），SQL 标识符/列名烘焙点用本函数（columnName）。无 version
+// 字段返回 ""，调用方已用 findVersionField 判空，二者一致。
+func findVersionColumnName(fields: ArrayList<FieldInfo>): String {
+    for (f in fields) { if (f.isVersion) { return f.columnName } }
     ""
 }
 

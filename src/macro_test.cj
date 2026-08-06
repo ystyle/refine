@@ -11,9 +11,7 @@ import std.math.numeric.Decimal
 import std.unittest.*
 import std.unittest.testmacro.*
 
-// Task 1: @Refine[naming: "snake"] 属性宏参数解析——本 Task 仅验证双参重载能被解析
-// 并展开不报错；表名/列名仍走默认逻辑（lowerTableName → snakeBlogPost），
-// Task 3 将转为 snake_blog_post（届时升级本断言）。
+// Task 1: @Refine[naming: "snake"] 属性宏参数解析——双参重载解析命名策略并展开。
 // 命名策略白名单 {"none", "snake"} 之外的值（如 "kebab"/"SNAKE"）与 `naming:` 缺值
 // 均在宏展开期抛编译错误（refine_macro.cj 双参宏校验），故本文件不放非法值 fixture
 //（放进来整个测试工程编译失败）；合法值行为由下面三组 fixture 覆盖：
@@ -5540,10 +5538,9 @@ public class DocSyncSyntaxTest {
     }
 }
 
-// Task 3: 表名转换已生效——snake 策略下表名走 applyTableNameStrategy → snake_blog_post
-//（Task 1 阶段只解析不转换，此断言曾为 "snakeBlogPost"）。列名烘焙点仍走 f.name
-//（ColumnDef 名），故 columns()[1].name 暂保持 "userName"，Task 4 升级为 "user_name"
-// 并切换烘焙点到 f.columnName。
+// Task 3: 表名转换已生效——snake 策略下表名走 applyTableNameStrategy → snake_blog_post。
+// Task 4: 列名烘焙点统一切到 f.columnName——ColumnDef/ColumnNames/Col DSL 均输出
+// snake_case 列名（"user_name"），且三处必须一致（rowMapper 键与 SELECT 列同源）。
 // 非法 strategy（"kebab"/"SNAKE"）与 `naming:` 缺值在宏展开期抛编译错误，
 // 无法在 unittest 运行时断言（见宏文件注释），由合法值覆盖：
 //   - SnakeBlogPostSchema：显式 snake（Task 3 阶段表名已转 snake_case）
@@ -5557,7 +5554,9 @@ public class SnakeNamingTest {
         @Expect(schema.tableName(), "snake_blog_post")
         let cols = schema.columns()
         @Expect(cols[0].name, "id")
-        @Expect(cols[1].name, "userName")
+        @Expect(cols[1].name, "user_name")
+        @Expect(SnakeBlogPostColumnNames()[1].name, "user_name")
+        @Expect(SnakeBlogPostCols().userName.name, "user_name")
     }
 
     @TestCase
