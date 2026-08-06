@@ -73,7 +73,7 @@ func applyColumnNameStrategy(name: String, strategy: String): String
 ### 派生列名
 
 - junction 源列 = `sourceTable + "_id"`：随表名转换自动正确（sourceTable 已是转换后值）
-- junction 目标列 = `applyColumnNameStrategy(lowerTableName(target), strategy) + "_id"`：三处（schema_gen.cj:81 / method_gen.cj:148 / relation_gen.cj:47）**必须同步**，否则 load/insert 报列不存在
+- junction 目标列 = `applyTableNameStrategy(target, strategy) + "_id"`（none → `lowerTableName(target) + "_id"`；snake → `camelToSnake(target) + "_id"`）：三处（schema_gen.cj:81 / method_gen.cj:148 / relation_gen.cj:47）**必须同步**，否则 load/insert 报列不存在。以目标类名直接套表名策略（不再二次 `applyColumnNameStrategy(lowerTableName(...))`，二者对前导 ≥2 连续大写类名不等价）
 
 ### 审计/软删/version 字段
 

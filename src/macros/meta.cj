@@ -39,6 +39,14 @@ func detectRelations(fields: ArrayList<FieldInfo>, strategy: String): ArrayList<
             let start = tn.indexOf("Option<").getOrThrow() + 7
             let end = tn.lastIndexOf(">").getOrThrow()
             let targetType = tn[start..end]
+            // I1 审查：裸 Option<标量>（Option<Int64>/Option<String>/Option<Bool>）不是
+            // ref_to 关系。meta.cj:34 归一化修复前 contains("Option<") 恒不命中，此类字段
+            // 从不触发本分支；归一化后首次命中 → targetType="Int64" → RefTo<Int64> +
+            // Int64RowMapper 引用不存在 → 实体编译失败（回归）。修复：X 属标量存储类型
+            // （typeNameToStorageType(X) 非 Json）即跳过，仅 Option<未知 struct> 才自动
+            // 检测为 ref_to。与 isNullableScalarType 意图一致（它只认 DateTime/Decimal
+            // 两个可空标量，其余 Option<标量> 仍被 isRelationField 跳过，记档）。
+            if (typeNameToStorageType(targetType) != "StorageType.Json") { continue }
             let byCol = f.name + "_id"
             let relFields = ArrayList<String>()
             relFields.add("id")
@@ -188,9 +196,11 @@ func buildNameToColumnLookup(fields: ArrayList<FieldInfo>): HashMap<String, Stri
 // Task 5: junction 中间表目标列名 = 目标类名经表名策略转换 + "_id"（SnakeTag →
 // snake_tag_id）。schema_gen.cj buildJunctionSchema / method_gen.cj buildRelClass /
 // relation_gen.cj buildRelationMethods 三处必须输出相同字符串，否则 load/append 报列不存在。
-// 用 applyTableNameStrategy（none → lowerTableName(target)，snake → camelToSnake(target)）：
-// 输出与设计稿 applyColumnNameStrategy(lowerTableName(target)) + "_id" 完全一致
-//（camelToSnake 对首字符大小写不敏感，lowerTableName 后仍同串），单一函数防三处漂移。
+// 实现 = applyTableNameStrategy(target, strategy) + "_id"（none → lowerTableName(target)，
+// snake → camelToSnake(target)）——单一函数防三处漂移。注意与
+// applyColumnNameStrategy(lowerTableName(target)) + "_id" 并非恒等：对前导 ≥2 连续大写
+// 类名（HTMLParser）camelToSnake("HTMLParser")="html_parser" 而
+// camelToSnake("hTMLParser")="h_tml_parser"，本实现以 applyTableNameStrategy 为准。
 func junctionTargetColumnName(target: String, strategy: String): String {
     applyTableNameStrategy(target, strategy) + "_id"
 }

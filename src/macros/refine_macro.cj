@@ -56,7 +56,13 @@ public macro Refine(attr: Tokens, input: Tokens): Tokens {
     var strategy = "none"
     for (i in 0..attr.size) {
         if (attr[i].kind == TokenKind.IDENTIFIER && attr[i].value == "naming") {
-            if (i + 2 >= attr.size) {
+            // M2 审查：命名键必须严格为 `naming : "snake"` 三元结构——attr[i+1] 是冒号、
+            // attr[i+2] 是字符串字面量。此前只校验 i+2 越界，`@Refine[naming: snake]`
+            //（无引号）、`@Refine[naming = "snake"]`（用 =）会静默通过、strategy 读到
+            // 非字面量 token 的 value 而失效。一律编译期抛错（fail-fast，同白名单校验）。
+            if (i + 2 >= attr.size ||
+                attr[i + 1].kind != TokenKind.COLON ||
+                attr[i + 2].kind != TokenKind.STRING_LITERAL) {
                 throw Exception("attribute 'naming' requires a string value, e.g. @Refine[naming: \"snake\"]")
             }
             strategy = attr[i + 2].value

@@ -659,7 +659,7 @@ extend<T> Query<T> {
     // 中间表列名与 buildJunctionSchema / relation_gen.cj 一致：
     //   源列 = <源表名>_id（sourceTable 由 assembleRecursive 传入：顶层为主查询 FROM 表，
     //     嵌套层为当前层级实体所在表 = 父关系 targetTable，见 assembleRecursive 注释），
-    //   目标列 = lowerTableName(目标类) + "_id"（由宏层随 RefMany 构造传入，
+    //   目标列 = applyTableNameStrategy(目标类, 策略) + "_id"（由宏层随 RefMany 构造传入，
     //           @Table 覆盖目标表名时目标列名仍基于类名，见 getJunctionTargetCol）。
     // SQL 手写（quoteIdentifier + 占位符，对齐 relation_gen.cj 的 ref_many 单行查询风格）：
     // junction JOIN 语义必须是 INNER JOIN（孤儿行跳过），而 Statement/方言渲染只支持

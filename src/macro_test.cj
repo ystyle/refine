@@ -105,6 +105,21 @@ public class SnakeAutoPost {
     var author: Option<SnakeAutoAuthor> = None
 }
 
+// I1 审查回归：裸 Option<标量>（Option<Int64>/Option<String>/Option<Bool>）不是 ref_to 关系。
+// meta.cj:34 归一化（replace(" ", "")）修复前 Option<Int64> 因 toTokens 渲染带空格、
+// contains("Option<") 恒不命中，从不生成 ref_to（可编译，字段静默不可达是记档缺陷）；
+// 归一化后首次命中 → targetType="Int64" → RefTo<Int64> + Int64RowMapper 引用不存在 →
+// 实体编译失败。修复：detectRelations 的 Option 分支对 targetType 属标量存储类型
+// （typeNameToStorageType(X) 非 StorageType.Json）continue，不生成 ref_to。
+@Refine[naming: "snake"]
+public class SnakeScalarOptionPost {
+    var id: Int64 = 0
+    var title: String = ""
+    var score: Option<Int64> = None
+    var nickname: Option<String> = None
+    var active: Option<Bool> = None
+}
+
 // I2 审查回归：has_one snake 路径独立转换点（RelClass fkLit / loadSQL / removeSQL /
 // setSQL 回填 fk）零测试。by 是目标实体字段名 authorId（camel），SQL 列名侧转
 // author_id（与目标实体 SnakeBio 自身 columnName 同源一致）。
@@ -6004,6 +6019,19 @@ public class SnakeRelationNamingTest {
         p.setBio(tx, b)
         @Expect(conn.stmt.capturedSql, "INSERT INTO \"snake_bio\" (\"content\", \"author_id\") VALUES (?, ?)")
         @Expect(b.authorId, 1)
+    }
+
+    // I1 审查：裸 Option<标量> 不生成 ref_to——实体可编译即证明（修复前 RefTo<Int64> +
+    // Int64RowMapper 引用不存在，整个测试文件编译失败）。字段被 isRelationField 跳过，
+    // 不进 schema 列（score/nickname/active 静默不可达，记档）。
+    @TestCase
+    public func testSnakeScalarOptionNoRefToSchema(): Unit {
+        let schema = SnakeScalarOptionPostSchema()
+        let cols = schema.columns()
+        @Expect(cols.size, 2)
+        @Expect(cols[0].name, "id")
+        @Expect(cols[1].name, "title")
+        @Expect(schema.tableName(), "snake_scalar_option_post")
     }
 
     // ─── M3 审查：snake include 批量装配单元测试（CaptureConnection mock） ─────────
