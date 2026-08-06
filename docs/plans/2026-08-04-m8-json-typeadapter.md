@@ -1,13 +1,24 @@
 # M8-Json 设计：struct → Json 字段端到端读写（stdx.encoding.json.stream 版）
 
-> 日期：2026-08-04
-> 目标：让含未知 struct 字段的实体端到端可用。方案采用 **stdx.encoding.json.stream**（用户指定：对象↔JSON 流互转的推荐库），要求 struct 类实现其接口（编译期强制），无需运行时注册表。
+> 日期：2026-08-04（更新：2026-08-05 已验证 stdx 用法）
+> 目标：让含未知 struct 字段的实体端到端可用。方案采用 **stdx.encoding.json.stream**（对象↔JSON 流互转的推荐库），要求 struct 类实现其接口（编译期强制），无需运行时注册表。
 
 ## 背景
 
 - `StorageType.Json` 已存在（storage.cj），schema 推断未知 struct → Json（M8 已修，三方言 DDL 就绪：SQLite TEXT / MySQL JSON / PG JSONB）
 - **未接线**：写路径 dispatchSet 收到 struct 实例落 `case _` 抛错；读路径 `result.get<StructType>` 抛错；M22 只发编译期 WARNING
 - 旧的 `TypeAdapter<T>` 接口（storage.cj:23）保留但**不再扩展**——本方案用 stdx 标准接口替代
+
+## stdx 依赖（已验证，2026-08-05）
+
+- **stdx 不走中心仓**（中心仓 stdx-1.1.0 整包编译因 openssl -Werror 失败）。走 **cjvs 本地预编译库 + path-option**：
+  ```toml
+  [target.x86_64-unknown-linux-gnu.bin-dependencies]
+    path-option = ["${CANGJIE_STDX_PATH}"]
+  ```
+  cjpm.toml 已有此配置（Decimal 时添加）。`${CANGJIE_STDX_PATH}` 经 `eval $(cjvs stdx env zsh)` 注入。
+- **记忆 id 355 确认**：`stdx.encoding.json.stream` 的 `writeValue<T>`/`readValue<T>` 支持 Int64/Float64/Bool/String/Array/ArrayList/HashMap/Option<T>（内置实现），自定义 JsonDeserializable 类也可 readValue。
+- **探针已验证（2026-08-05）**：泛型约束函数（`T <: JsonSerializable` / `T <: JsonDeserializable<T>`）在 refine 包可编译可运行，struct roundtrip 完整（Profile {name, age} → JSON 文本 → 读回）。**注意：必须用泛型约束，不能 `Any`**（Any 在 JsonReader/Writer 上不支持，记忆 id 355 亦用泛型）。
 
 ## stdx.encoding.json.stream（推荐版）
 
@@ -40,19 +51,27 @@ DB 列（StorageType.Json）存 **String**（JSON 文本）：
 ### 判定：Json 兜底字段（typeNameToStorageType 返回 Json 的 struct 类型）
 `isJsonFallbackType(typeName)`（meta.cj）已有此判定（非标量、非 Array<UInt8>、非 DateTime 的未知类型）。
 
-### 写路径（sql_gen/token_gen/tx_gen 参数生成处）
-对 Json 兜底字段，生成序列化代码（替代裸 `entity.f` 入 Array<Any>）：
+### 包级 helper（运行时 refine 包，可单测）
 
 ```cangjie
-// 运行时每个 struct 字段：序列化到流
-let wbuf = std.io.ByteBuffer()
-let writer = JsonWriter(wbuf)
-writer.writeValue(entity.profile)   // T <: JsonSerializable 编译期强制
-writer.flush()
-allParams.add(std.io.readToEnd(wbuf).toString())  // 字节流 → String
+// src/json_util.cj（package refine，宏生成代码可调用——用户实体文件已 import refine）
+public func jsonToString<T>(v: T): String where T <: JsonSerializable {
+    let buf = std.io.ByteBuffer()
+    let w = JsonWriter(buf)
+    w.writeValue(v)
+    w.flush()
+    String.fromUtf8(std.io.readToEnd(buf))
+}
+public func stringToJson<T>(s: String): T where T <: JsonDeserializable<T> {
+    let buf = std.io.ByteBuffer()
+    unsafe { buf.write(s.rawData()) }
+    let r = JsonReader(buf)
+    T.fromJson(r)
+}
 ```
 
-或封装一个包级 helper（如 `func jsonToString<T>(v: T): String where T <: JsonSerializable`），宏生成 `jsonToString(entity.profile)`——**更简洁**。读路径同理封装 `func stringToJson<T>(s: String): T where T <: JsonDeserializable<T>`。
+### 写路径（sql_gen/token_gen/tx_gen 参数生成处）
+对 Json 兜底字段，宏生成 `allParams.add(jsonToString(entity.profile))`（替代裸 `entity.f`）。序列化后是 String，dispatchSet `case v: String` 绑定。
 
 ### 读路径（method_gen buildRowMapper）
 对 Json 兜底字段，生成：
@@ -67,14 +86,14 @@ if (columnMap.contains("profile")) {
 - 保留（编译期提示 struct 需实现接口），措辞改为 "implement stdx.encoding.json.stream JsonSerializable + JsonDeserializable<X>"（不再提 TypeAdapter）
 - 未实现时生成代码编译失败（writeValue/fromJson 类型约束）——**比 warning 更强的保障**，warning 变可选提示
 
-## 依赖
-
-- cjpm.toml 加 `stdx = "1.1.0"`（中心仓已有索引）
-- 宏生成代码 import `stdx.encoding.json.stream.*` + `std.io.*`——但宏展开代码的 import 受约束（宏展开后不允许包声明与 import）。**需验证**：宏生成的代码如何访问 stdx 包？看现有宏生成代码如何处理 import（如 DateTime 的 import）——很可能生成的代码不写 import，依赖用户实体文件已有 import，或宏生成全限定路径引用。
+### 用户 import 要求
+宏生成代码调用 `jsonToString`/`stringToJson`（refine 包）+ 实体字段类型 struct 需 `JsonSerializable`（用户实现时必然 import stdx）。**宏生成代码不写 import**（既有约束），但：
+- `jsonToString`/`stringToJson` 在 refine 包——用户实体文件已 `import refine.*`，可用
+- struct 实现 `JsonSerializable`/`JsonDeserializable` 时用户必然 `import stdx.encoding.json.stream.*`——生成代码里的 `T.fromJson`/`writeValue` 经 helper 间接调用，**不直接出现在实体文件**，无需用户额外 import stdx（helper 在 refine 包内 import 了）
 
 ## 测试计划（TDD）
 
-1. **helper 单测**（json_util_test.cj）：`jsonToString`/`stringToJson` roundtrip（struct 实现接口）
+1. **helper 单测**（json_util_test.cj）：`jsonToString`/`stringToJson` roundtrip（struct 实现接口，含嵌套 Option/集合）
 2. **宏测试**：含 struct 字段（Profile 实现 JsonSerializable + JsonDeserializable）实体：
    - 写路径：INSERT/UPDATE 绑定值为 JSON 文本（mock 断言 capturedSetValues 含序列化后 String，非 struct 实例）
    - 读路径：rowMapper 读回 struct（mock 断言字段被反序列化）
@@ -83,8 +102,9 @@ if (columnMap.contains("profile")) {
 4. **回归**：现有 @Field[Text] 覆盖不受影响；无 struct 字段实体零开销
 
 ## 完成定义
-- [ ] cjpm.toml 加 stdx 依赖，验证 json.stream 可用
-- [ ] 宏层写路径用 JsonSerializable 序列化、读路径用 JsonDeserializable 反序列化
+- [ ] stdx path-option 已验证可用（cjpm.toml 已有）
+- [ ] json_util.cj helper（jsonToString/stringToJson 泛型约束）
+- [ ] 宏层写路径用 jsonToString 序列化、读路径用 stringToJson 反序列化
 - [ ] 未实现接口编译期失败（编译约束保障）
 - [ ] 真实 DB roundtrip
 - [ ] 全量测试通过
