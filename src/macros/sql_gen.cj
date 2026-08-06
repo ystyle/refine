@@ -118,13 +118,18 @@ func buildBatchUpdateSQLFunc(className: String, fields: ArrayList<FieldInfo>, ta
     let (_, hasUpdatedAt) = findAuditFields(fields)
 
     // SET 列：非主键、非关系、非 version、非审计 updated_at 字段（version/updated_at 单独生成 CASE 子句）
+    // M8-Json Task 3 审查（I1）：cast 类型跟随**有效存储类型**而非仓颉类型名。@Field[Json]
+    // 覆盖 String 字段（schema 建 JSONB 列）时 pgCastTypeOf("String") 落 TEXT → `?::TEXT` 与
+    // JSONB 目标列不匹配（SQLSTATE 42804）。eff 取 storageOverride（若显式覆盖）或
+    // typeNameToStorageType 的 Json 兜底名，命中 Json → JSONB；其余仍走类型名映射。
     var setCols = ArrayList<String>()
     var colCastTypes = ArrayList<String>()
     for (f in fields) {
         if (f.isPk || isRelationField(f.typeName) || f.isVersion) { continue }
         if (f.name == "updated_at" && f.typeName == "DateTime") { continue }
         setCols.add(f.columnName)
-        colCastTypes.add(pgCastTypeOf(f.typeName))
+        let eff = if (f.storageOverride != "") { f.storageOverride } else { typeNameToStorageType(f.typeName).removePrefix("StorageType.") }
+        colCastTypes.add(if (eff == "Json") { "JSONB" } else { pgCastTypeOf(f.typeName) })
     }
     var pkNames = ArrayList<String>()
     for (pk in pkFields) { pkNames.add(pk.columnName) }
@@ -380,11 +385,11 @@ func pgCastTypeOf(typeName: String): String {
         case "Array<UInt8>" => "BYTEA"
         case "DateTime" => "TIMESTAMP"
         case "Decimal" => "NUMERIC"
-        // M8-Json Task 3: Json 兜底 struct 字段 → JSONB。修复前落 `_ => "TEXT"`：PG 对
-        // batchUpdate 的 CASE 表达式（WHEN ... THEN ?::TEXT）内参数无法从 jsonb 目标列
-        // 反向推断类型，`$n` 默认 text，text→jsonb 无隐式转换 → SQLSTATE 42804
-        // "column is of type jsonb but expression is of type text"。INSERT VALUES 与
-        // 单条 UPDATE（profile = $n 直接赋值位）可推断，无需 cast；CASE 分支必须显式。
-        case _ => if (isJsonFallbackType(tn)) { "JSONB" } else { "TEXT" }
+        // M8-Json Task 3 审查（I1）：Json 兜底的 cast 判定已上移到 batchUpdate 调用点
+        //（有效存储类型 eff == "Json" → JSONB），此处不再用 isJsonFallbackType 启发式——
+        // 该启发式按仓颉类型名判定，@Field[Json] 覆盖 String（JSONB 列）时类型名是 String
+        // 而列是 JSONB（漏判 42804）；@Field[Text] 兜底 struct（TEXT 列）时类型名落入 Json
+        // 兜底却误给 JSONB。未知类型一律 TEXT 兜底。
+        case _ => "TEXT"
     }
 }

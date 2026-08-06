@@ -1917,6 +1917,19 @@ public class SnakeJsonUser {
     var userProfile: JsonProfile = JsonProfile()
 }
 
+// M8-Json Task 3 审查（I1）：@Field[Json] 覆盖 String 字段 → schema 建 JSONB 列
+//（schema_gen 取 storageOverride=Json → StorageType.Json），写路径绑原始文本
+//（genJsonAwareFieldAccess 对 String 非 Json 兜底类型不做 jsonToString）。但 batchUpdate
+// 的 colCastTypes 以仓颉类型名判定 pgCastTypeOf("String") → TEXT → `?::TEXT`，PG CASE
+// 值类型与 JSONB 目标列不匹配（SQLSTATE 42804，真实复现）。cast 必须跟随有效存储类型。
+@Refine
+public class JsonFieldStringUser {
+    var id: Int64 = 0
+    var name: String = ""
+    @Field[Json]
+    var payload: String = ""
+}
+
 @Test
 public class JsonStructFieldTest {
     @TestCase
@@ -2018,6 +2031,43 @@ public class JsonStructFieldTest {
             }
         }
         @Expect(rawNameCount, 2)
+    }
+
+    // I1 审查 RED 用例：@Field[Json] 覆盖 String 字段（JSONB 列）PG batchUpdate 必须
+    // ::JSONB——cast 跟随有效存储类型而非仓颉类型名（修复前落 ::TEXT → 42804）。
+    @TestCase
+    public func testBatchUpdatePostgresCastJsonbForFieldOverrideString(): Unit {
+        let (conn, tx) = makeTestTx(PostgreSQLDialect())
+        let u1 = JsonFieldStringUser()
+        u1.id = 1
+        u1.name = "a"
+        u1.payload = "{\"a\":1}"
+        let u2 = JsonFieldStringUser()
+        u2.id = 2
+        u2.name = "b"
+        u2.payload = "{\"b\":2}"
+        tx.batchUpdate([u1, u2])
+        @Expect(conn.stmt.capturedSql.contains("\"payload\" = CASE \"id\" WHEN ? THEN ?::JSONB WHEN ? THEN ?::JSONB END"), true)
+        // name 列仍是 ::TEXT（String 正常映射，未受 Json override 影响）
+        @Expect(conn.stmt.capturedSql.contains("\"name\" = CASE \"id\" WHEN ? THEN ?::TEXT WHEN ? THEN ?::TEXT END"), true)
+    }
+
+    // M8-Json Task 3 审查（I2）：Json 兜底 struct 列 PG batchUpdate ::JSONB mock 级
+    // 回归断言（真实 PG 集成测试环境门控，无法在无 DB 环境回归）。仿 F4 TIMESTAMP 先例。
+    @TestCase
+    public func testBatchUpdatePostgresCastJsonbForProfile(): Unit {
+        let (conn, tx) = makeTestTx(PostgreSQLDialect())
+        let u1 = JsonUser()
+        u1.id = 1
+        u1.name = "a"
+        u1.profile = JsonProfile("A", 1, ArrayList<String>(), None, HashMap<String, String>())
+        let u2 = JsonUser()
+        u2.id = 2
+        u2.name = "b"
+        u2.profile = JsonProfile("B", 2, ArrayList<String>(), None, HashMap<String, String>())
+        tx.batchUpdate([u1, u2])
+        @Expect(conn.stmt.capturedSql.contains("\"profile\" = CASE \"id\" WHEN ? THEN ?::JSONB WHEN ? THEN ?::JSONB END"), true)
+        @Expect(conn.stmt.capturedSql.contains("\"name\" = CASE \"id\" WHEN ? THEN ?::TEXT WHEN ? THEN ?::TEXT END"), true)
     }
 
     @TestCase
