@@ -25,10 +25,13 @@ func extractFields(cd: ClassDecl): ArrayList<FieldInfo> {
     list
 }
 
-func detectRelations(fields: ArrayList<FieldInfo>): ArrayList<RelInfo> {
+func detectRelations(fields: ArrayList<FieldInfo>, strategy: String): ArrayList<RelInfo> {
     let result = ArrayList<RelInfo>()
     for (f in fields) {
-        let tn = f.typeName
+        // R-I8 泛型渲染带空格（实测 "Option < X >"、"ArrayList < X >"、"Array < X >"），
+        // 先归一化再去匹配（同 isBytesArrayType 的处理），否则 contains("Option<") 等
+        // 恒不命中，自动检测（含默认 via）从不触发——现有 fixture 全走显式注解掩盖了此缺陷。
+        let tn = f.typeName.replace(" ", "")
         // F4: Option<DateTime> 可空标量防御性排除（isRelationField 已放行；此处防
         // detectRelations 的 Option 分支把它误判成 ref_to 关系）。
         if (isNullableScalarType(tn)) { continue }
@@ -46,7 +49,9 @@ func detectRelations(fields: ArrayList<FieldInfo>): ArrayList<RelInfo> {
             let targetType = tn[start..end]
             let relFields = ArrayList<String>()
             relFields.add("id")
-            result.add(RelInfo(f.name, "ref_many", targetType, "", relFields, f.name))
+            // Task 5: 默认 via = 关系字段名，随表名策略转换（snake：relatedPosts →
+            // related_posts）。显式 via（@Ref/@Rel 注解）不转，在 mergeAnnotationRels 合并。
+            result.add(RelInfo(f.name, "ref_many", targetType, "", relFields, applyTableNameStrategy(f.name, strategy)))
         } else if (tn.contains("Array<")) {
             // R-I8: Array<UInt8> 是一等存储类型 Bytes（typeNameToStorageType → StorageType.Bytes），
             // 不是 ref_many 集合。修复前被当作 ref_many → 生成 RefMany<UInt8> 引用
@@ -58,7 +63,7 @@ func detectRelations(fields: ArrayList<FieldInfo>): ArrayList<RelInfo> {
             let targetType = tn[start..end]
             let relFields = ArrayList<String>()
             relFields.add("id")
-            result.add(RelInfo(f.name, "ref_many", targetType, "", relFields, f.name))
+            result.add(RelInfo(f.name, "ref_many", targetType, "", relFields, applyTableNameStrategy(f.name, strategy)))
         }
     }
     result
@@ -178,6 +183,16 @@ func buildNameToColumnLookup(fields: ArrayList<FieldInfo>): HashMap<String, Stri
     let lookup = HashMap<String, String>()
     for (f in fields) { lookup.add(f.name, f.columnName) }
     lookup
+}
+
+// Task 5: junction 中间表目标列名 = 目标类名经表名策略转换 + "_id"（SnakeTag →
+// snake_tag_id）。schema_gen.cj buildJunctionSchema / method_gen.cj buildRelClass /
+// relation_gen.cj buildRelationMethods 三处必须输出相同字符串，否则 load/append 报列不存在。
+// 用 applyTableNameStrategy（none → lowerTableName(target)，snake → camelToSnake(target)）：
+// 输出与设计稿 applyColumnNameStrategy(lowerTableName(target)) + "_id" 完全一致
+//（camelToSnake 对首字符大小写不敏感，lowerTableName 后仍同串），单一函数防三处漂移。
+func junctionTargetColumnName(target: String, strategy: String): String {
+    applyTableNameStrategy(target, strategy) + "_id"
 }
 
 func lookupColumnName(lookup: HashMap<String, String>, name: String): String {

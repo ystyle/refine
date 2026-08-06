@@ -28,7 +28,7 @@ func buildColsStruct(className: String, cd: ClassDecl, internalNames: ArrayList<
 }
 
 
-func buildRelClass(className: String, rels: ArrayList<RelInfo>): Tokens {
+func buildRelClass(className: String, rels: ArrayList<RelInfo>, strategy: String): Tokens {
     let relClassName = Token(TokenKind.IDENTIFIER, className + "Rel")
     var body = Tokens()
     var first = true
@@ -101,7 +101,12 @@ func buildRelClass(className: String, rels: ArrayList<RelInfo>): Tokens {
         let hasCustomFields = r.fields.size > 1 || (r.fields.size == 1 && r.fields[0] != "id")
         var fieldsTok: Tokens
         if (hasCustomFields) {
-            fieldsTok = genFieldCols(r.fields)
+            // Task 5: @Ref/@Rel fields 是目标表列名列表，随命名策略转换（与目标实体自身
+            // columnName 同源一致；用户已给 snake 列名则 camelToSnake 幂等）。默认路径
+            // 走 <Target>ColumnNames()（目标实体真实列名，无需宏层转换）。
+            var convertedFields = ArrayList<String>()
+            for (name in r.fields) { convertedFields.add(applyColumnNameStrategy(name, strategy)) }
+            fieldsTok = genFieldCols(convertedFields)
         } else {
             fieldsTok = Tokens()
             fieldsTok = fieldsTok + colNamesFunc
@@ -113,7 +118,9 @@ func buildRelClass(className: String, rels: ArrayList<RelInfo>): Tokens {
         body = body + resolverLet
         body = body + Token(TokenKind.NL)
         if (r.kind == "ref_to") {
-            let fkLit = Token(TokenKind.STRING_LITERAL, r.by)
+            // Task 5: r.by 双身份——fkLit（Col<Any> 列名 = SQL 列名）随策略转 snake
+            //（authorId → author_id），fkField（e.authorId 字段访问）保持字段名。
+            let fkLit = Token(TokenKind.STRING_LITERAL, applyColumnNameStrategy(r.by, strategy))
             let extractorIdent = Token(TokenKind.IDENTIFIER, r.fieldName + "FkExtractor")
             let fkField = Token(TokenKind.IDENTIFIER, r.by)
             // Task 3: ref_to 批量装配需要从主实体读取外键值。ref_to 的 fk 是主实体的普通字段
@@ -133,21 +140,21 @@ func buildRelClass(className: String, rels: ArrayList<RelInfo>): Tokens {
                 public static let $(fieldIdent) = attachTargetRelResolver(RefTo<$(targetType)>($(nameLit), Col<Any>($(fkLit)), $(fieldsTok), $(targetTableExpr), $(mapperIdent), $(setterIdent), $(extractorIdent), $(targetIdExtractorIdent)), $(resolverIdent))
             )
         } else if (r.kind == "has_one") {
-            let fkLit = Token(TokenKind.STRING_LITERAL, r.by)
+            let fkLit = Token(TokenKind.STRING_LITERAL, applyColumnNameStrategy(r.by, strategy))
             body = body + quote(
                 public static let $(fieldIdent) = attachTargetRelResolver(HasOne<$(targetType)>($(nameLit), $(fkLit), $(fieldsTok), $(targetTableExpr), $(mapperIdent), $(setterIdent), $(targetIdExtractorIdent)), $(resolverIdent))
             )
         } else if (r.kind == "has_many") {
-            let fkLit = Token(TokenKind.STRING_LITERAL, r.by)
+            let fkLit = Token(TokenKind.STRING_LITERAL, applyColumnNameStrategy(r.by, strategy))
             body = body + quote(
                 public static let $(fieldIdent) = attachTargetRelResolver(HasMany<$(targetType)>($(nameLit), $(fkLit), $(fieldsTok), $(targetTableExpr), $(mapperIdent), $(setterIdent), $(targetIdExtractorIdent)), $(resolverIdent))
             )
         } else {
             let viaLit = Token(TokenKind.STRING_LITERAL, r.via)
-            // Task 5: 中间表目标列名固定用 lowerTableName(目标类) + "_id"（与 buildJunctionSchema
-            // 和 relation_gen.cj 的 INSERT/LOAD SQL 一致，不能用 targetTable + "_id"，
+            // Task 5: 中间表目标列名随命名策略转换（junctionTargetColumnName，与 buildJunctionSchema
+            // 和 relation_gen.cj 的管理方法 SQL 三处同源；不能用 targetTable + "_id"，
             // 否则 @Table 覆盖目标表名时列名不一致）。宏层在编译期计算并传入 RefMany。
-            let junctionTargetColLit = Token(TokenKind.STRING_LITERAL, lowerTableName(r.target) + "_id")
+            let junctionTargetColLit = Token(TokenKind.STRING_LITERAL, junctionTargetColumnName(r.target, strategy))
             body = body + quote(
                 public static let $(fieldIdent) = attachTargetRelResolver(RefMany<$(targetType)>($(nameLit), $(viaLit), $(fieldsTok), $(targetTableExpr), $(mapperIdent), $(setterIdent), $(junctionTargetColLit), $(targetIdExtractorIdent)), $(resolverIdent))
             )

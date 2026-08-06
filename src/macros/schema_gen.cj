@@ -76,11 +76,13 @@ func buildSchemaClass(className: String, fields: ArrayList<FieldInfo>, tableName
 // 找不到主键列回退 Integer（防御）。目标主键 @Field storageOverride 自动生效
 //（读的是 ColumnDef.storageType 最终值）。目标实体未 @Refine 时 $(target)Schema 不存在
 // → 编译期失败（比 R-I9 的运行时预检更早暴露，语义也正确）。
-func buildJunctionSchema(className: String, rel: RelInfo, tableName: String, sourcePkStorage: String): Tokens {
+func buildJunctionSchema(className: String, rel: RelInfo, tableName: String, sourcePkStorage: String, strategy: String): Tokens {
     let sourceTable = tableName
     let viaLit = Token(TokenKind.STRING_LITERAL, rel.via)
     let srcColLit = Token(TokenKind.STRING_LITERAL, sourceTable + "_id")
-    let tgtColLit = Token(TokenKind.STRING_LITERAL, lowerTableName(rel.target) + "_id")
+    // Task 5: 目标列名随命名策略转换（junctionTargetColumnName：目标类名表名策略 + "_id"），
+    // 与 buildRelClass（RefMany.junctionTargetCol）和 relation_gen.cj（管理方法 SQL）三处同源。
+    let tgtColLit = Token(TokenKind.STRING_LITERAL, junctionTargetColumnName(rel.target, strategy))
     let schemaName = Token(TokenKind.IDENTIFIER, className + "_" + upperFirstLetter(rel.fieldName) + "JunctionSchema")
     let srcStParts = sourcePkStorage.split(".")
     let srcStorageTypeTok = Token(TokenKind.IDENTIFIER, srcStParts[0])

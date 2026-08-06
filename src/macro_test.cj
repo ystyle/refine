@@ -47,6 +47,44 @@ public class EmptyAttrPost {
     var title: String = ""
 }
 
+// Task 5: snake 关系路径 fixture。r.by 双身份：SQL 列名侧（Col/quoteIdentifier/foreignKey）
+// 随策略转 snake（authorId → author_id），字段访问侧保持字段名（entity.authorId 编译可过）。
+@Refine[naming: "snake"]
+public class SnakeAuthor {
+    var id: Int64 = 0
+    var displayName: String = ""
+}
+
+@Refine[naming: "snake"]
+public class SnakeComment {
+    var id: Int64 = 0
+    var body: String = ""
+    var postId: Int64 = 0
+}
+
+@Refine[naming: "snake"]
+public class SnakePost {
+    var id: Int64 = 0
+    var title: String = ""
+    var authorId: Int64 = 0
+
+    // ref_to：by 是当前实体字段名，SQL 列名侧转 snake（author_id）；fields 是目标表列名，
+    // displayName → display_name（与 SnakeAuthor 自身 columnName 同源一致）
+    @Ref[SnakeAuthor, by: "authorId", fields: ["displayName", "id"]]
+    var author: Option<SnakeAuthor> = None
+
+    // has_many：by 是目标实体字段名（postId），SQL 列名侧转 snake（post_id）
+    @Rel[has_many, SnakeComment, postId]
+    var comments: ArrayList<SnakeComment> = ArrayList<SnakeComment>()
+
+    // ref_many 默认 via = 字段名 relatedAuthors → snake 表名 related_authors
+    var relatedAuthors: ArrayList<SnakeAuthor> = ArrayList<SnakeAuthor>()
+
+    // ref_many 显式 via 不转（注解优先，用户给完整表名）
+    @Ref[SnakeAuthor, via: explicitJoinTable]
+    var favoriteAuthors: ArrayList<SnakeAuthor> = ArrayList<SnakeAuthor>()
+}
+
 @Refine
 public class Post {
     var id: Int64 = 0
@@ -5642,6 +5680,103 @@ public class SnakeNamingTest {
         let (sql, _) = SnakeBlogPostUpdateSQL(p, dialect)
         @Expect(sql.contains("user_name"), true)
         @Expect(sql.contains("userName"), false)
+    }
+}
+
+// Task 5: 关系路径列名转换。r.by 双身份（SQL 列名侧转 snake、字段访问侧保持字段名）、
+// junction 目标列三处同源（schema ColumnDef / RefMany.junctionTargetCol / 管理方法 SQL）、
+// via 默认转/显式不转、fields 随策略转换。
+@Test
+public class SnakeRelationNamingTest {
+    // ref_to：foreignKey 是 SQL 列名侧（Col<Any> 的列名），随策略转 snake
+    @TestCase
+    public func testSnakeRefToForeignKeyIsSnakeColumn(): Unit {
+        @Expect(SnakePostRel.author.foreignKey, "author_id")
+        @Expect(SnakePostRel.author.foreignKey.contains("authorId"), false)
+    }
+
+    // ref_to：@Ref fields 是目标表列名列表，随策略转 snake（与目标实体 columnName 同源一致）
+    @TestCase
+    public func testSnakeRefToFieldsConverted(): Unit {
+        @Expect(SnakePostRel.author.fields.size, 2)
+        @Expect(SnakePostRel.author.fields[0].name, "display_name")
+        @Expect(SnakePostRel.author.fields[1].name, "id")
+    }
+
+    // r.by 字段访问侧仍用 authorId：FkExtractor 生成的 e.authorId 能编译并读到值
+    @TestCase
+    public func testSnakeRefToFkExtractorKeepsFieldAccessName(): Unit {
+        let p = SnakePost()
+        p.id = 1
+        p.authorId = 99
+        let extractor = SnakePostRel.author.getForeignKeyExtractor()
+        match (extractor(p)) {
+            case v: Int64 => @Expect(v, 99)
+            case _ => @Fail("expected Int64 fk value")
+        }
+    }
+
+    // has_many：foreignKey 是目标表 fk 列名，随策略转 snake
+    @TestCase
+    public func testSnakeHasManyForeignKeyIsSnakeColumn(): Unit {
+        @Expect(SnakePostRel.comments.foreignKey, "post_id")
+    }
+
+    // has_many 管理 SQL（loadComments）用 snake 列名 post_id，字段名 postId 只出现在字段访问侧
+    @TestCase
+    public func testSnakeHasManyLoadSQLUsesSnakeColumn(): Unit {
+        let conn = CaptureConnection()
+        let tx = sqliteTx(conn)
+        tx.begin()
+        let p = SnakePost()
+        p.id = 42
+        p.loadComments(tx)
+        @Expect(conn.stmt.capturedSql.contains("\"post_id\""), true)
+        @Expect(conn.stmt.capturedSql.contains("postId"), false)
+    }
+
+    // ref_many 默认 via = 字段名 relatedAuthors → snake 表名 related_authors
+    @TestCase
+    public func testSnakeRefManyDefaultViaConvertedToSnakeTable(): Unit {
+        match (SnakePostRel.relatedAuthors.via) {
+            case Some(v) => @Expect(v, "related_authors")
+            case None => @Fail("expected Some via")
+        }
+    }
+
+    // ref_many 显式 via 不转（注解优先，用户给完整表名）
+    @TestCase
+    public func testSnakeRefManyExplicitViaKept(): Unit {
+        match (SnakePostRel.favoriteAuthors.via) {
+            case Some(v) => @Expect(v, "explicitJoinTable")
+            case None => @Fail("expected Some via")
+        }
+    }
+
+    // junction 三处同源一：junction schema ColumnDef 与 RefMany.junctionTargetCol 都输出 snake_author_id
+    @TestCase
+    public func testSnakeJunctionColumnsConverted(): Unit {
+        let js = SnakePost_RelatedAuthorsJunctionSchema()
+        @Expect(js.tableName(), "related_authors")
+        let cols = js.columns()
+        @Expect(cols.size, 2)
+        @Expect(cols[0].name, "snake_post_id")
+        @Expect(cols[1].name, "snake_author_id")
+        @Expect(SnakePostRel.relatedAuthors.getJunctionTargetCol(), "snake_author_id")
+    }
+
+    // junction 三处同源二：管理方法 SQL（relation_gen.cj）与 schema/RefMany 同一列名
+    @TestCase
+    public func testSnakeAppendRelatedAuthorsSQLUsesSnakeColumns(): Unit {
+        let conn = CaptureConnection()
+        let tx = sqliteTx(conn)
+        tx.begin()
+        let p = SnakePost()
+        p.id = 42
+        let a = SnakeAuthor()
+        a.id = 7
+        p.appendRelatedAuthors(tx, a)
+        @Expect(conn.stmt.capturedSql, "INSERT INTO \"related_authors\" (\"snake_post_id\", \"snake_author_id\") VALUES (?, ?)")
     }
 }
 

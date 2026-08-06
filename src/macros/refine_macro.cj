@@ -105,7 +105,9 @@ func expandRefine(input: Tokens, strategy: String): Tokens {
     }
     var hasAutoPk = false
     for (i in 0..pkFields.size) { if (pkFields.get(i).getOrThrow().autoInc) { hasAutoPk = true; break } }
-    let rels = detectRelations(fields)
+    // Task 5: strategy 下传关系路径烘焙点——默认 via 转换（detectRelations）、
+    // r.by SQL 列名/fields/junction 目标列（buildRelClass/buildRelationMethods/buildJunctionSchema）。
+    let rels = detectRelations(fields, strategy)
 
     let refMessages = getChildMessages("Ref")
     let relMessages = getChildMessages("Rel")
@@ -235,7 +237,7 @@ func expandRefine(input: Tokens, strategy: String): Tokens {
     for (rel in mergedRels) {
         if (rel.kind == "ref_many") {
             if (junctionRelNames.size > 0) { junctionTokens = junctionTokens + Token(TokenKind.NL) + Token(TokenKind.NL) }
-            junctionTokens = junctionTokens + buildJunctionSchema(className, rel, tableName, sourcePkStorage)
+            junctionTokens = junctionTokens + buildJunctionSchema(className, rel, tableName, sourcePkStorage, strategy)
             junctionRelNames.add(rel.fieldName)
         }
     }
@@ -243,7 +245,7 @@ func expandRefine(input: Tokens, strategy: String): Tokens {
     classDecl.body.decls.add(FuncDecl(schemasTokens))
 
     let colsStruct = buildColsStruct(className, classDecl, internalNames, mergedFields)
-    let relClass = buildRelClass(className, mergedRels)
+    let relClass = buildRelClass(className, mergedRels, strategy)
     let insertSQLFunc = buildInsertSQLFunc(className, mergedFields, tableName)
     let txSaveExtend = buildTxSaveExtend(className, pkFields, hasClientPk, hasAutoPk, mergedFields)
     let batchInsertSQLFunc = buildBatchInsertSQLFunc(className, mergedFields, tableName)
@@ -254,7 +256,7 @@ func expandRefine(input: Tokens, strategy: String): Tokens {
     let txUpdateExtend = buildTxUpdateExtend(className, mergedFields, tableName, pkFields)
     let txUpsertExtend = buildTxUpsertExtend(className, mergedFields, tableName, pkFields)
     let rowMapper = buildRowMapper(className, classDecl, mergedRels, internalNames, mergedFields)
-    buildRelationMethods(className, mergedRels, classDecl)
+    buildRelationMethods(className, mergedRels, classDecl, strategy)
     buildCascadeMethods(className, mergedRels, mergedFields, pkFields, classDecl)
     let schemaClass = buildSchemaClass(className, mergedFields, tableName)
     let columnNamesFunc = buildColumnNamesFunc(className, classDecl, internalNames, mergedFields)

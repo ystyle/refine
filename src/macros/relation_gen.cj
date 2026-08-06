@@ -5,7 +5,7 @@ import std.collection.ArrayList
 import refine.naming.*
 
 
-func buildRelationMethods(className: String, rels: ArrayList<RelInfo>, cd: ClassDecl): Unit {
+func buildRelationMethods(className: String, rels: ArrayList<RelInfo>, cd: ClassDecl, strategy: String): Unit {
     for (i in 0..rels.size) {
         let r = rels[i]
         let fieldIdent = Token(TokenKind.IDENTIFIER, r.fieldName)
@@ -19,10 +19,13 @@ func buildRelationMethods(className: String, rels: ArrayList<RelInfo>, cd: Class
         // 修复前裸标识符在 PG 下折叠小写，@Table["CamelCase"] 表名或驼峰 fk 无法命中。
         // 各方法均带 tx: Tx 参数（loadX/clearX/setX/removeX），故可在此取 tx.getDialect()。
         let refToSQL = quote("SELECT * FROM " + tx.getDialect().quoteIdentifier($(tableNameExpr)) + " WHERE " + tx.getDialect().quoteIdentifier("id") + " = ?")
-        let hasManyLoadSQL = quote("SELECT * FROM " + tx.getDialect().quoteIdentifier($(tableNameExpr)) + " WHERE " + tx.getDialect().quoteIdentifier($(Token(TokenKind.STRING_LITERAL, r.by))) + " = ?")
-        let hasManyClearSQL = quote("DELETE FROM " + tx.getDialect().quoteIdentifier($(tableNameExpr)) + " WHERE " + tx.getDialect().quoteIdentifier($(Token(TokenKind.STRING_LITERAL, r.by))) + " = ?")
-        let hasOneLoadSQL = quote("SELECT * FROM " + tx.getDialect().quoteIdentifier($(tableNameExpr)) + " WHERE " + tx.getDialect().quoteIdentifier($(Token(TokenKind.STRING_LITERAL, r.by))) + " = ?")
-        let hasOneRemoveSQL = quote("DELETE FROM " + tx.getDialect().quoteIdentifier($(tableNameExpr)) + " WHERE " + tx.getDialect().quoteIdentifier($(Token(TokenKind.STRING_LITERAL, r.by))) + " = ?")
+        // Task 5: r.by 双身份——SQL 列名侧随命名策略转换（authorId → author_id，has_many/
+        // has_one 的 fk 列在目标表，与目标实体自身 columnName 同策略一致）；字段访问侧
+        // （byField/byTok，见本文件 164/286/319/338 行）保持 r.by 字段名不变。
+        let hasManyLoadSQL = quote("SELECT * FROM " + tx.getDialect().quoteIdentifier($(tableNameExpr)) + " WHERE " + tx.getDialect().quoteIdentifier($(Token(TokenKind.STRING_LITERAL, applyColumnNameStrategy(r.by, strategy)))) + " = ?")
+        let hasManyClearSQL = quote("DELETE FROM " + tx.getDialect().quoteIdentifier($(tableNameExpr)) + " WHERE " + tx.getDialect().quoteIdentifier($(Token(TokenKind.STRING_LITERAL, applyColumnNameStrategy(r.by, strategy)))) + " = ?")
+        let hasOneLoadSQL = quote("SELECT * FROM " + tx.getDialect().quoteIdentifier($(tableNameExpr)) + " WHERE " + tx.getDialect().quoteIdentifier($(Token(TokenKind.STRING_LITERAL, applyColumnNameStrategy(r.by, strategy)))) + " = ?")
+        let hasOneRemoveSQL = quote("DELETE FROM " + tx.getDialect().quoteIdentifier($(tableNameExpr)) + " WHERE " + tx.getDialect().quoteIdentifier($(Token(TokenKind.STRING_LITERAL, applyColumnNameStrategy(r.by, strategy)))) + " = ?")
 
         if (r.kind == "ref_to") {
             let fkField = Token(TokenKind.IDENTIFIER, r.by)
@@ -43,9 +46,9 @@ func buildRelationMethods(className: String, rels: ArrayList<RelInfo>, cd: Class
         } else if (r.kind == "ref_many") {
             let sourceSchemaIdent = Token(TokenKind.IDENTIFIER, className + "Schema")
             let viaLit = Token(TokenKind.STRING_LITERAL, r.via)
-            // 中间表目标列名固定用 lowerTableName(target) + "_id"，与 buildJunctionSchema 一致
+            // 中间表目标列名固定用目标类名表名策略转换 + "_id"，与 buildJunctionSchema 一致
             // （不能用 targetSchema().tableName() + "_id"，否则 @Table 覆盖表名时列名不一致）
-            let targetColLit = Token(TokenKind.STRING_LITERAL, lowerTableName(r.target) + "_id")
+            let targetColLit = Token(TokenKind.STRING_LITERAL, junctionTargetColumnName(r.target, strategy))
             // I21：junction SQL 标识符全部经运行时 tx.getDialect().quoteIdentifier 引号化
             //（via 表名、源列 <源表>_id、目标列 <目标类>_id、目标表名、id），
             // 与批量装配读路径（assembleRefMany）对齐，PG 驼峰 via 表/列可命中。
