@@ -124,6 +124,24 @@ public class SnakeProfilePost {
     var bio: Option<SnakeBio> = None
 }
 
+// Task 6: 优先级测试——@Table 显式表名 > naming 策略。@Table 覆盖后表名原样
+//（custom_table 不转 snake），但列名仍随 snake 策略转换（user_name）。
+@Refine[naming: "snake"]
+@Table["custom_table"]
+public class SnakeCustomTablePost {
+    var id: Int64 = 0
+    var userName: String = ""
+}
+
+// Task 6: 优先级测试——@Field 只覆盖 storageType 不做列名（本迭代记档），
+// snake 下列名仍转（display_name）、类型被覆盖（StorageType.Text）。
+@Refine[naming: "snake"]
+public class SnakeFieldOverridePost {
+    var id: Int64 = 0
+    @Field[Text]
+    var displayName: String = ""
+}
+
 @Refine
 public class Post {
     var id: Int64 = 0
@@ -5719,6 +5737,55 @@ public class SnakeNamingTest {
         let (sql, _) = SnakeBlogPostUpdateSQL(p, dialect)
         @Expect(sql.contains("user_name"), true)
         @Expect(sql.contains("userName"), false)
+    }
+}
+
+// Task 6: 命名策略优先级——注解显式指定 > @Refine[naming] 全局策略 > 默认行为。
+// 显式 none = 默认（ExplicitNonePost/EmptyAttrPost）已由 SnakeNamingTest 覆盖。
+@Test
+public class SnakePriorityTest {
+    // @Table 显式表名覆盖 snake：表名原样（custom_table），列名仍随策略转 snake
+    @TestCase
+    public func testTableAnnotationOverridesSnakeTableName(): Unit {
+        let schema = SnakeCustomTablePostSchema()
+        @Expect(schema.tableName(), "custom_table")
+        let cols = schema.columns()
+        @Expect(cols[0].name, "id")
+        @Expect(cols[1].name, "user_name")
+    }
+
+    // @Table 覆盖 snake 后，写路径 SQL 的表名用显式表名、列名用转换后列名
+    @TestCase
+    public func testTableOverrideSnakeInsertSQLUsesTableAndConvertedColumn(): Unit {
+        let dialect = SQLiteDialect()
+        let p = SnakeCustomTablePost()
+        p.userName = "alice"
+        let (sql, _) = SnakeCustomTablePostInsertSQL(p, dialect)
+        @Expect(sql.contains("custom_table"), true)
+        @Expect(sql.contains("snake_custom_table_post"), false)
+        @Expect(sql.contains("user_name"), true)
+        @Expect(sql.contains("userName"), false)
+    }
+
+    // @Field 只覆盖 storageType：snake 下列名仍转（display_name）、类型被覆盖（Text）
+    @TestCase
+    public func testFieldStorageOverrideStillAppliesUnderSnake(): Unit {
+        let schema = SnakeFieldOverridePostSchema()
+        @Expect(schema.tableName(), "snake_field_override_post")
+        let cols = schema.columns()
+        @Expect(cols[1].name, "display_name")
+        @Expect(cols[1].storageType, StorageType.Text)
+    }
+
+    // @Field 覆盖 storageType 的字段，写路径 SQL 用转换后列名 display_name
+    @TestCase
+    public func testFieldOverrideSnakeInsertSQLUsesConvertedColumn(): Unit {
+        let dialect = SQLiteDialect()
+        let p = SnakeFieldOverridePost()
+        p.displayName = "hello"
+        let (sql, _) = SnakeFieldOverridePostInsertSQL(p, dialect)
+        @Expect(sql.contains("display_name"), true)
+        @Expect(sql.contains("displayName"), false)
     }
 }
 

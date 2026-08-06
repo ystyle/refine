@@ -90,12 +90,40 @@ class BlogPost {
 }
 ```
 
-行为说明：
+### 语法与内置策略
 
-- **表名**：`BlogPost` → `blog_post`；**列名**：`userName` → `user_name`（已 snake_case 的名称幂等不变）
-- **优先级**：`@Table` / `@Field` 显式指定 > `@Refine[naming]` 策略 > 默认行为
-- **支持策略**：`"none"`（默认，等价不转换）、`"snake"`；其他值编译期报错
-- **关联中间表名**：显式 `via` 不转换；默认 `via`（关系字段名）跟随策略转换（`relatedPosts` → `related_authors` 对应中间表 `related_posts`）
+- **语法**：`@Refine[naming: "snake"]` / `@Refine[naming: "none"]`；裸 `@Refine` 等价 `naming: "none"`
+- **内置策略**：`"snake"`（驼峰 → snake_case）、`"none"`（默认，不转换）；其他值在编译期报错
+
+### 转换规则（camelToSnake）
+
+除首字母外每个大写 ASCII 字母前插入 `_`，整串转小写；连续大写缩写按词边界拆分：
+
+| 字段/类名 | 转换结果 | 说明 |
+|---|---|---|
+| `userName` | `user_name` | 常规驼峰 |
+| `userID` | `user_id` | 结尾缩写不拆分 |
+| `HTMLParser` | `html_parser` | `Parser` 是新词边界 |
+| `user_name` | `user_name` | 已 snake_case 幂等不变 |
+| `id` | `id` | 单字母不变 |
+
+- **表名**：`BlogPost` → `blog_post`；**列名**：`userName` → `user_name`
+
+### 优先级：注解显式指定 > 全局策略 > 默认
+
+- **`@Table` 显式表名 > snake**：`@Table["custom_table"]` 的表名原样使用（不转 snake），列名仍随策略转换（`userName` → `user_name`）
+- **`@Field` 覆盖 storageType**：`@Field` 目前只覆盖字段存储类型、不做列名——本迭代字段列名的显式指定**未实现**（记档后续功能）。snake 下字段列名仍按策略转换（`displayName` → `display_name`），存储类型覆盖正常生效（如 `@Field[Text]` → `Text` 列）
+- **显式 `"none"` = 默认行为**：`@Refine[naming: "none"]` 与裸 `@Refine` 完全一致
+
+### 关联路径的命名转换
+
+- **r.by 目标字段名**：`@Ref` / `@Rel` 的 `by` 是目标实体上的字段名，SQL 列名侧随策略转换（`authorId` → `author_id`），字段访问侧保持字段名（`entity.authorId` 可编译可读值）
+- **junction 中间表列**：中间表源列 = 源表名 + `_id`，目标列 = 目标类名 + 策略转换 + `_id`（`SnakeAuthor` → `snake_author_id`）；schema 建表 / `RefMany` 描述符 / 管理方法 SQL 三处同源一致
+- **via 中间表名**：显式 `via` 不转换（用户给完整表名）；默认 `via`（关系字段名）跟随表名策略转换（`relatedAuthors` → 中间表 `related_authors`）
+
+### 审计 / 软删除字段
+
+`created_at` / `updated_at` / `deleted_at` 本身即 snake_case，策略转换幂等，保持字面列名不变。
 
 > **⚠ 关联实体应统一命名策略**：`has_one` / `has_many` 的 `by` 外键字段位于**目标实体**上，Refine 按**源实体**的策略计算该外键列名。若关联双方命名策略不一致（如源实体用 `snake`、目标实体默认 `none`），转换后的外键列名可能无法匹配目标实体实际的列名，导致关联查询/维护静默失效（不报错、查不到行）。同一关联链上的实体请统一使用相同的命名策略；`ref_to` 的外键在源实体自身，不受跨实体策略差异影响。
 
