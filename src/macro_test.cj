@@ -1998,6 +1998,16 @@ public class JsonStructFieldTest {
             }
         }
         @Expect(jsonCount, 2)
+        // I1 审查守卫：非 Json 字段（name）必须原始绑定——若被 jsonToString 错误包裹，
+        // 绑定值会变成 "\"a\"" / "\"b\""（带引号的字符串），rawNameCount 将为 0。
+        var rawNameCount = 0
+        for (v in conn.stmt.capturedSetValues) {
+            match (v) {
+                case s: String => if (s == "a" || s == "b") { rawNameCount++ }
+                case _ => ()
+            }
+        }
+        @Expect(rawNameCount, 2)
     }
 
     @TestCase

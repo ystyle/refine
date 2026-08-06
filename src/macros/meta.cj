@@ -372,7 +372,7 @@ func emitUnknownTypeWarnings(cd: ClassDecl, fields: ArrayList<FieldInfo>): Unit 
                 if (isJsonFallbackType(typeStr)) {
                     diagReport(DiagReportLevel.WARNING, vd.toTokens(),
                         "entity field '" + fn + "' of type '" + typeStr + "' maps to StorageType.Json",
-                        "struct fields are stored as JSON text — implement stdx.encoding.json.stream JsonSerializable + JsonDeserializable<" + typeStr + "> so generated code compiles, or override with @Field[...]")
+                        "struct fields are stored as JSON text — ensure the struct implements stdx.encoding.json.stream JsonSerializable + JsonDeserializable<" + typeStr + "> so generated code compiles, or override with @Field[...]")
                 }
             case _ => ()
         }

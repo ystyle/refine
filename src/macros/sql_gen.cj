@@ -119,15 +119,11 @@ func buildBatchUpdateSQLFunc(className: String, fields: ArrayList<FieldInfo>, ta
 
     // SET 列：非主键、非关系、非 version、非审计 updated_at 字段（version/updated_at 单独生成 CASE 子句）
     var setCols = ArrayList<String>()
-    // Task 4: setCols 存列名（columnName）供 SQL SET 烘焙；实体字段访问需字段名，
-    // 参数收集循环用 setFieldNames 一一对应（setFieldNames[i] 是 setCols[i] 的字段名）。
-    var setFieldNames = ArrayList<String>()
     var colCastTypes = ArrayList<String>()
     for (f in fields) {
         if (f.isPk || isRelationField(f.typeName) || f.isVersion) { continue }
         if (f.name == "updated_at" && f.typeName == "DateTime") { continue }
         setCols.add(f.columnName)
-        setFieldNames.add(f.name)
         colCastTypes.add(pgCastTypeOf(f.typeName))
     }
     var pkNames = ArrayList<String>()
@@ -158,16 +154,19 @@ func buildBatchUpdateSQLFunc(className: String, fields: ArrayList<FieldInfo>, ta
 
     // 参数收集：常规列每实体 (pk 值..., 新值)，然后 version 每实体 (pk..., version+1)，
     // 然后 updated_at 每实体 (pk..., updated_at)，最后 IN 列表 (pk 值...)
-    // M8-Json Task 2: Json 兜底字段用 genJsonAwareFieldAccess 包 jsonToString（字段访问
-    // 侧 setFieldNames[i] 是字段名，SQL 列名侧 setCols[i] 是转换后列名，分叉同 setCols）。
+    // M8-Json Task 2: Json 兜底字段用 genJsonAwareFieldAccess 包 jsonToString。
+    // I1 审查修复：参数收集直接遍历 fields（与 setCols 同一过滤：非 pk/关系/version/
+    // updated_at），取 f.typeName 传给 genJsonAwareFieldAccess——消除 getFieldTypeName
+    // 字符串查找（未命中返回 "" 会被 isJsonFallbackType("") 判为 Json → 全部字段被
+    // jsonToString 包裹的静默损坏点）。与 batchInsert 的 `for (f in fields)` 模式一致。
     var addParams = Tokens()
-    for (i in 0..setFieldNames.size) {
-        let fieldName = setFieldNames[i]
-        let fieldType = getFieldTypeName(fields, fieldName)
+    for (f in fields) {
+        if (f.isPk || isRelationField(f.typeName) || f.isVersion) { continue }
+        if (f.name == "updated_at" && f.typeName == "DateTime") { continue }
         addParams = addParams + quote(
             for (_bi_ in 0..entities.size) {
                 $(genPkValueParamsTokens(pkFields, "entities[_bi_]"))
-                allParams.add($(genJsonAwareFieldAccess("entities[_bi_]", fieldName, fieldType)));
+                allParams.add($(genJsonAwareFieldAccess("entities[_bi_]", f.name, f.typeName)));
             }
         )
     }

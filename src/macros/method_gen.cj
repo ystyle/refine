@@ -230,11 +230,10 @@ func buildRowMapper(className: String, cd: ClassDecl, rels: ArrayList<RelInfo>, 
                     // 先 get<String> 取出文本再 stringToJson<F> 反序列化回 struct 赋给字段。
                     // 字段类型 F 由 declType 推导（stringToJson<T> 约束 T <: JsonDeserializable<T>，
                     // struct 未实现接口 → 编译失败，比运行时更早暴露）。
-                    let fieldType = Token(TokenKind.IDENTIFIER, fieldTypeStr)
                     let fieldAssign = quote(
                         if (columnMap.contains($(fieldNameLit))) {
                             let s = result.get<String>(columnMap.get($(fieldNameLit)).getOrThrow())
-                            entity.$(vd.identifier) = stringToJson<$(fieldType)>(s)
+                            entity.$(vd.identifier) = stringToJson<$(vd.declType)>(s)
                         }
                     )
                     assignments = assignments + fieldAssign
