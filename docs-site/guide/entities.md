@@ -152,6 +152,56 @@ class Article {
 }
 ```
 
+## Json struct 字段
+
+实体字段类型是自定义 `struct` 时，默认映射为 `StorageType.Json`（SQLite `TEXT` / MySQL `JSON` / PG `JSONB`）。struct 需实现 `stdx.encoding.json.stream` 接口（编译期强制，未实现则编译失败）：
+
+```cangjie
+import stdx.encoding.json.stream.*
+import std.collection.ArrayList
+
+class Profile <: JsonSerializable & JsonDeserializable<Profile> {
+    var name: String = ""
+    var age: Int64 = 0
+    var tags: ArrayList<String> = ArrayList()
+
+    public func toJson(w: JsonWriter): Unit {
+        w.startObject()
+        w.writeName("name").writeValue(this.name)
+        w.writeName("age").writeValue(this.age)
+        w.writeName("tags").writeValue(this.tags)
+        w.endObject()
+    }
+
+    public static func fromJson(r: JsonReader): Profile {
+        var res = Profile()
+        r.startObject()
+        while (r.peek() != EndObject) {
+            match (r.readName()) {
+                case "name" => res.name = r.readValue<String>()
+                case "age" => res.age = r.readValue<Int64>()
+                case "tags" => res.tags = r.readValue<ArrayList<String>>()
+                case _ => r.skip()
+            }
+        }
+        r.endObject()
+        res
+    }
+}
+
+@Refine
+class JsonUser {
+    var id: Int64 = 0
+    var name: String = ""
+    var profile: Profile = Profile()   // Json 列，自动序列化/反序列化
+}
+```
+
+- 写路径自动 `jsonToString` 序列化，读路径自动 `stringToJson` 反序列化，无需手动处理
+- struct 未实现 `JsonSerializable` / `JsonDeserializable` 接口 → **编译失败**（比运行时注册表更强的保障）
+- 支持嵌套 struct（Option/集合/HashMap 字段），stdx 已内置标量与集合的序列化
+- `@Field[Text]` 可将 struct 存为 TEXT 列（仍 JSON 序列化）；`@Field[Json]` 覆盖 String 字段建 JSON 列（绑定原始文本，PG batchUpdate 自动 `::JSONB` cast）
+
 ## 关联字段
 
 四种关联：**`@Ref` = 引用，`@Rel` = 拥有**，各有一对一和一对多。

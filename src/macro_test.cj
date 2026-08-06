@@ -1930,6 +1930,18 @@ public class JsonFieldStringUser {
     var payload: String = ""
 }
 
+// M8-Json 最终审查（Important）：@Field[Text] 覆盖的 Json 兜底 struct——文档承诺
+// "TEXT 列 + 仍 JSON 序列化"，此路径无测试。genJsonAwareFieldAccess 按类型名判定
+// isJsonFallbackType（不依赖 override），写路径仍 jsonToString；PG batchUpdate cast
+// eff = "Text" → ::TEXT（非 ::JSONB）。本 fixture 锁定该行为。
+@Refine
+public class JsonFieldTextUser {
+    var id: Int64 = 0
+    var name: String = ""
+    @Field[Text]
+    var profile: JsonProfile = JsonProfile()
+}
+
 @Test
 public class JsonStructFieldTest {
     @TestCase
@@ -2068,6 +2080,33 @@ public class JsonStructFieldTest {
         tx.batchUpdate([u1, u2])
         @Expect(conn.stmt.capturedSql.contains("\"profile\" = CASE \"id\" WHEN ? THEN ?::JSONB WHEN ? THEN ?::JSONB END"), true)
         @Expect(conn.stmt.capturedSql.contains("\"name\" = CASE \"id\" WHEN ? THEN ?::TEXT WHEN ? THEN ?::TEXT END"), true)
+    }
+
+    // M8-Json 最终审查（Important）：@Field[Text] 覆盖的 Json 兜底 struct——文档承诺
+    // "TEXT 列 + 仍 JSON 序列化"。写路径绑 JSON 文本（genJsonAwareFieldAccess 按类型名
+    // 判定），PG batchUpdate cast 跟随有效存储类型 eff="Text" → ::TEXT（非 ::JSONB）。
+    @TestCase
+    public func testFieldTextStructBindsJsonTextAndPgCastText(): Unit {
+        let (conn, tx) = makeTestTx(PostgreSQLDialect())
+        let u1 = JsonFieldTextUser()
+        u1.id = 1
+        u1.name = "a"
+        u1.profile = JsonProfile("A", 1, ArrayList<String>(), None, HashMap<String, String>())
+        let u2 = JsonFieldTextUser()
+        u2.id = 2
+        u2.name = "b"
+        u2.profile = JsonProfile("B", 2, ArrayList<String>(), None, HashMap<String, String>())
+        tx.batchUpdate([u1, u2])
+        @Expect(conn.stmt.capturedSql.contains("\"profile\" = CASE \"id\" WHEN ? THEN ?::TEXT WHEN ? THEN ?::TEXT END"), true)
+        // 绑定值必须是 JSON 文本（String），非 struct 实例
+        var jsonBindCount = 0
+        for (v in conn.stmt.capturedSetValues) {
+            match (v) {
+                case s: String => if (s.contains("\"name\"")) { jsonBindCount++ }
+                case _ => ()
+            }
+        }
+        @Expect(jsonBindCount, 2)
     }
 
     @TestCase
