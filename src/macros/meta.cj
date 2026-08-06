@@ -171,8 +171,9 @@ func applyColumnNames(fields: ArrayList<FieldInfo>, strategy: String): ArrayList
 
 // Task 4: name → columnName 查找表。buildColsStruct/buildColumnNamesFunc/buildRowMapper
 // 三个从 ClassDecl 遍历 VarDecl 的烘焙点无 FieldInfo 引用，需此 lookup 把字段名映射到
-// 转换后的列名。lookupColumnName 未命中（过滤条件不一致导致的字段遗漏）回退字段名，
-// 保持 Task 4 前行为——防漏列静默丢失。
+// 转换后的列名。lookupColumnName 未命中仅在过滤条件与字段列表漂移时可达（正常流程
+// lookup 键与遍历字段一一对应，键全命中）；此时回退原字段名等价于 strategy=none
+// 的默认行为，不保证转换正确性——真出现漂移说明宏内过滤条件需同步，而非"防漏列"。
 func buildNameToColumnLookup(fields: ArrayList<FieldInfo>): HashMap<String, String> {
     let lookup = HashMap<String, String>()
     for (f in fields) { lookup.add(f.name, f.columnName) }

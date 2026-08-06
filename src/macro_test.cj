@@ -30,6 +30,17 @@ public class ExplicitNonePost {
     var title: String = ""
 }
 
+// I1 回归 fixture：snake 策略 + @Version 非幂等字段名（versionNum → version_num）。
+// 乐观锁失败重查 SELECT 的版本列必须用转换后列名 version_num；修复前 tx_gen.cj 用
+// findVersionField 的字段名 versionNum 烘焙，列名遗漏查错列，actual 永远读不到真实版本。
+@Refine[naming: "snake"]
+public class SnakeVersionedPost {
+    var id: Int64 = 0
+    var title: String = ""
+    @Version
+    var versionNum: Int64 = 0
+}
+
 @Refine[]
 public class EmptyAttrPost {
     var id: Int64 = 0
@@ -2560,6 +2571,28 @@ public class VersionedEntityTest {
         } catch (e: OptimisticLockException) {
             @Expect(e.actual, 5)
             @Expect(e.expected, 1)
+        }
+    }
+
+    // I1: snake + @Version 非幂等字段名（versionNum → version_num），乐观锁失败重查
+    // SELECT 必须用转换后列名 version_num（修复前误用字段名 versionNum 烘焙列名）
+    @TestCase
+    public func testTxUpdateSnakeVersionedPostConflictRetryUsesColumnName(): Unit {
+        let conn = CaptureConnection()
+        conn.stmt.mockRowCount = 0
+        let tx = sqliteTx(conn)
+        tx.begin()
+
+        let p = SnakeVersionedPost()
+        p.id = 1
+        p.title = "Updated"
+        p.versionNum = 1
+        try {
+            tx.update(p)
+            @Fail("expected OptimisticLockException")
+        } catch (e: OptimisticLockException) {
+            @Expect(conn.stmt.capturedSql, "SELECT \"version_num\" FROM \"snake_versioned_post\" WHERE \"id\" = ?")
+            @Expect(conn.stmt.capturedSql.contains("versionNum"), false)
         }
     }
 
@@ -5575,6 +5608,40 @@ public class SnakeNamingTest {
         let cols = schema.columns()
         @Expect(cols[0].name, "id")
         @Expect(cols[1].name, "title")
+    }
+
+    // M4: 写路径 SQL（Insert/BatchUpdate/Update）在 snake 下用转换后列名 user_name，
+    // 验证 SQL 侧 columnName / 字段访问侧 f.name 的 setFieldNames 分叉真实工作
+    @TestCase
+    public func testSnakeInsertSQLUsesSnakeColumn(): Unit {
+        let dialect = SQLiteDialect()
+        let p = SnakeBlogPost()
+        p.userName = "alice"
+        let (sql, _) = SnakeBlogPostInsertSQL(p, dialect)
+        @Expect(sql.contains("user_name"), true)
+        @Expect(sql.contains("userName"), false)
+    }
+
+    @TestCase
+    public func testSnakeBatchUpdateSQLUsesSnakeColumn(): Unit {
+        let dialect = SQLiteDialect()
+        let p = SnakeBlogPost()
+        p.id = 1
+        p.userName = "alice"
+        let (sql, _) = SnakeBlogPostBatchUpdateSQL([p], dialect)
+        @Expect(sql.contains("user_name"), true)
+        @Expect(sql.contains("userName"), false)
+    }
+
+    @TestCase
+    public func testSnakeUpdateSQLUsesSnakeColumn(): Unit {
+        let dialect = SQLiteDialect()
+        let p = SnakeBlogPost()
+        p.id = 1
+        p.userName = "alice"
+        let (sql, _) = SnakeBlogPostUpdateSQL(p, dialect)
+        @Expect(sql.contains("user_name"), true)
+        @Expect(sql.contains("userName"), false)
     }
 }
 

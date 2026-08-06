@@ -152,11 +152,19 @@ func buildTxUpsertExtend(className: String, fields: ArrayList<FieldInfo>, tableN
     let versionLit = Token(TokenKind.STRING_LITERAL, findVersionColumnName(fields))
 
     // 审计更新列（如 updated_at）：按 columns 顺序收集，保证追加的参数顺序与
-    // 方言 upsertSQL 中 `col = ?` 的生成顺序一致（两者都按 columns 遍历）
+    // 方言 upsertSQL 中 `col = ?` 的生成顺序一致（两者都按 columns 遍历）。
+    // M2: auditUpdateCols 存列名（SQL 侧烘焙）；并行 auditUpdateFieldNames 存字段名
+    //（实体字段访问 params.add(entity.f) 用）。version 跳过判断比字段名（versionName
+    // 即 findVersionField 的字段名），修复前误用列名做字段访问与字段名比较，
+    // 仅因列名恒等于字段名才未出错。
     var auditUpdateCols = ArrayList<String>()
+    var auditUpdateFieldNames = ArrayList<String>()
     for (f in fields) {
         if (isRelationField(f.typeName)) { continue }
-        if (f.name == "updated_at" && hasUpdatedAt) { auditUpdateCols.add(f.columnName) }
+        if (f.name == "updated_at" && hasUpdatedAt) {
+            auditUpdateCols.add(f.columnName)
+            auditUpdateFieldNames.add(f.name)
+        }
     }
     var auditUpdateArr = Tokens()
     auditUpdateArr = auditUpdateArr + Token(TokenKind.LSQUARE)
@@ -181,11 +189,11 @@ func buildTxUpsertExtend(className: String, fields: ArrayList<FieldInfo>, tableN
     // extraParamCount 决定，不再按方言名字符串特判；version 列冲突时自增不含参数。
     // 追加顺序与 columns 一致，与方言 `= ?` 的生成顺序对应。
     var auditUpdateParams = Tokens()
-    for (c in auditUpdateCols) {
-        if (c == versionName) { continue }
-        let cTok = Token(TokenKind.IDENTIFIER, c)
+    for (i in 0..auditUpdateFieldNames.size) {
+        if (auditUpdateFieldNames[i] == versionName) { continue }
+        let fNameTok = Token(TokenKind.IDENTIFIER, auditUpdateFieldNames[i])
         auditUpdateParams = auditUpdateParams + quote(
-            params.add(entity.$(cTok));
+            params.add(entity.$(fNameTok));
         )
     }
 
@@ -383,7 +391,9 @@ func buildTxUpdateExtend(className: String, fields: ArrayList<FieldInfo>, tableN
         )
     } else {
         let versionIdent = Token(TokenKind.IDENTIFIER, versionName)
-        let versionColLit = Token(TokenKind.STRING_LITERAL, versionName)
+        // I1: 乐观锁失败重查 SELECT 的版本列是 SQL 标识符——用 findVersionColumnName
+        // 取转换后列名（findVersionField 只供字段访问，二者同 sql_gen.cj:287 配对）。
+        let versionColLit = Token(TokenKind.STRING_LITERAL, findVersionColumnName(fields))
         let tableNameLit = Token(TokenKind.STRING_LITERAL, tableName)
         let pkWhereTok = buildQuotedPkWhereTokens(pkFields)
         let pkParams = buildDeleteEntityParamsToken(pkFields)

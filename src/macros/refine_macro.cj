@@ -91,8 +91,9 @@ func expandRefine(input: Tokens, strategy: String): Tokens {
     let versionMessages = getChildMessages("Version")
     mergedFields = applyAuditVersion(mergedFields, versionMessages)
     // Task 3: mergedFields 最终确定后填 columnName（applyColumnNameStrategy）。
-    // @Field 显式列名优先级属 Task 4；列名烘焙点（ColumnDef/INSERT/UPDATE 等）仍走
-    // f.name，Task 4 统一切换到 f.columnName。
+    // Task 4: 列名烘焙点（ColumnDef/INSERT/UPDATE/batchUpdate/upsert/乐观锁重查）统一
+    // 使用 f.columnName；实体字段访问（params.add(entity.f)）仍用 f.name（字段访问与
+    // SQL 标识符两侧各用各的，见 sql_gen.cj setFieldNames / tx_gen.cj auditUpdateFieldNames）。
     mergedFields = applyColumnNames(mergedFields, strategy)
     // M22 评审（Fix 3）: 未知 struct → Json 兜底字段发编译期 WARNING（无 TypeAdapter）
     emitUnknownTypeWarnings(classDecl, mergedFields)
