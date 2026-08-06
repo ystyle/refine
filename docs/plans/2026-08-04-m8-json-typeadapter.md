@@ -102,10 +102,22 @@ if (columnMap.contains("profile")) {
 4. **回归**：现有 @Field[Text] 覆盖不受影响；无 struct 字段实体零开销
 
 ## 完成定义
-- [ ] stdx path-option 已验证可用（cjpm.toml 已有）
-- [ ] json_util.cj helper（jsonToString/stringToJson 泛型约束）
-- [ ] 宏层写路径用 jsonToString 序列化、读路径用 stringToJson 反序列化
-- [ ] 未实现接口编译期失败（编译约束保障）
-- [ ] 真实 DB roundtrip
-- [ ] 全量测试通过
-- [ ] M8 审计标记已解决
+- [x] stdx path-option 已验证可用（cjpm.toml 已有）
+- [x] json_util.cj helper（jsonToString/stringToJson 泛型约束）
+- [x] 宏层写路径用 jsonToString 序列化、读路径用 stringToJson 反序列化
+- [x] 未实现接口编译期失败（编译约束保障）
+- [x] 真实 DB roundtrip
+- [x] 全量测试通过
+- [x] M8 审计标记已解决
+
+## Task 3 验证记录（2026-08-06）
+- 真实 DB roundtrip：json_roundtrip_test.cj 共享 helper `runJsonRoundtrip`（参考 snake_roundtrip 模式），
+  mysql/pgsql/mariadb 集成测试 thin wrapper + SQLite mock 链路 2 例。覆盖 save→query 读回（struct 完整）、
+  update、batchSave、batchUpdate、upsert。
+- **PG JSONB 修复**：batchUpdate 的 CASE 表达式内参数无法从 jsonb 目标列反向推断类型（42804）——
+  `pgCastTypeOf` 对 Json 兜底 struct 此前返回 TEXT，修复为 JSONB（`?::JSONB` cast）。
+  INSERT VALUES / 单条 UPDATE / upsert（excluded）可推断，无需 cast。
+- **编译失败验证**：临时 fixture（未实现接口的 NoJsonImpl struct + 实体）实编译验证——写路径
+  jsonToString 与读路径 stringToJson<X> 均报 `unable to infer generic argument ... constraint
+  'X <: Generics-T' cannot be solved`，验证后移除并文档化于 macro_test.cj JsonStructFieldTest 注释。
+  注：`cjpm build` 跳过 `*_test.cj`，需 `cjpm test`（编译测试文件）才能触发。

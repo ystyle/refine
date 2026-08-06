@@ -380,6 +380,11 @@ func pgCastTypeOf(typeName: String): String {
         case "Array<UInt8>" => "BYTEA"
         case "DateTime" => "TIMESTAMP"
         case "Decimal" => "NUMERIC"
-        case _ => "TEXT"
+        // M8-Json Task 3: Json 兜底 struct 字段 → JSONB。修复前落 `_ => "TEXT"`：PG 对
+        // batchUpdate 的 CASE 表达式（WHEN ... THEN ?::TEXT）内参数无法从 jsonb 目标列
+        // 反向推断类型，`$n` 默认 text，text→jsonb 无隐式转换 → SQLSTATE 42804
+        // "column is of type jsonb but expression is of type text"。INSERT VALUES 与
+        // 单条 UPDATE（profile = $n 直接赋值位）可推断，无需 cast；CASE 分支必须显式。
+        case _ => if (isJsonFallbackType(tn)) { "JSONB" } else { "TEXT" }
     }
 }

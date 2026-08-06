@@ -159,4 +159,20 @@ public class MariaDBIntegrationTest {
             case None => @Expect(true, true)
         }
     }
+
+    // ─── M8-Json Task 3: Json 兜底 struct 字段真实 DB roundtrip（真实 MariaDB） ───
+    // 端到端实现收敛到共享 helper runJsonRoundtrip（json_roundtrip_test.cj），
+    // 本文件只负责取连接、执行、关闭。MariaDB JSON 列绑定 JSON 文本 + 读回 struct。
+    // ─── M8-Json Task 3: Json 兜底 struct 字段真实 DB roundtrip（真实 MariaDB） ───
+    // 端到端实现收敛到共享 helper runJsonRoundtrip（json_roundtrip_test.cj），
+    // 本文件只负责取连接、执行、关闭。MariaDB JSON 列绑定 JSON 文本 + 读回 struct。
+    @TestCase
+    public func testJsonRoundtrip(): Unit {
+        match (tryMariaDB()) {
+            case Some(rf) =>
+                runJsonRoundtrip(rf)
+                rf.close()
+            case None => @Expect(true, true)
+        }
+    }
 }

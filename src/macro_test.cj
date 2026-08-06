@@ -1890,6 +1890,16 @@ public class UnknownTypeSchemaTest {
 // 写路径（save/update/batchSave/batchUpdate/upsert）必须绑定 JSON 文本（String 而非
 // struct 实例，dispatchSet 无 struct 分支会抛 RefineException）；读路径 rowMapper
 // 必须经 stringToJson 反序列化回 struct（result.get<JsonProfile> 对 String 值抛错）。
+// ─── M8-Json Task 3: 未实现接口的编译期强制（编译失败验证，无法运行时断言）────
+// 与命名策略非法值（本文件 5910 行注释）同类：编译期强制无法在 unittest 运行时断言，
+// 故不放未实现接口的 fixture，由合法值覆盖。宏生成代码调用 jsonToString(entity.profile)
+// 与 stringToJson<X>(s)，两者均带泛型约束（T <: JsonSerializable / T <: JsonDeserializable<T>，
+// 见 json_util.cj）——struct 未实现接口时编译器报 "unable to infer generic argument of this
+// function ... constraint 'X <: Generics-T' cannot be solved"，生成代码编译失败。
+// 已用临时 fixture（TempNoJsonEntity + 未实现接口的 NoJsonImpl struct）实编译验证：
+// 写路径（InsertSQL/UpdateSQL/batchInsert/batchUpdate/upsert 的 jsonToString 调用点）与
+// 读路径（rowMapper 的 stringToJson<NoJsonImpl> 调用点）均报上述约束错误，验证后移除
+// fixture，仅保留本说明（验证记录见 feature/m8-json 分支 Task 3 commit）。
 @Refine
 public class JsonUser {
     var id: Int64 = 0
