@@ -21,7 +21,7 @@ func buildRelationMethods(className: String, rels: ArrayList<RelInfo>, cd: Class
         let refToSQL = quote("SELECT * FROM " + tx.getDialect().quoteIdentifier($(tableNameExpr)) + " WHERE " + tx.getDialect().quoteIdentifier("id") + " = ?")
         // Task 5: r.by 双身份——SQL 列名侧随命名策略转换（authorId → author_id，has_many/
         // has_one 的 fk 列在目标表，与目标实体自身 columnName 同策略一致）；字段访问侧
-        // （byField/byTok，见本文件 164/286/319/338 行）保持 r.by 字段名不变。
+        // （has_many addX 的 byField / cascadePostSave 的 byTok）保持 r.by 字段名不变。
         let hasManyLoadSQL = quote("SELECT * FROM " + tx.getDialect().quoteIdentifier($(tableNameExpr)) + " WHERE " + tx.getDialect().quoteIdentifier($(Token(TokenKind.STRING_LITERAL, applyColumnNameStrategy(r.by, strategy)))) + " = ?")
         let hasManyClearSQL = quote("DELETE FROM " + tx.getDialect().quoteIdentifier($(tableNameExpr)) + " WHERE " + tx.getDialect().quoteIdentifier($(Token(TokenKind.STRING_LITERAL, applyColumnNameStrategy(r.by, strategy)))) + " = ?")
         let hasOneLoadSQL = quote("SELECT * FROM " + tx.getDialect().quoteIdentifier($(tableNameExpr)) + " WHERE " + tx.getDialect().quoteIdentifier($(Token(TokenKind.STRING_LITERAL, applyColumnNameStrategy(r.by, strategy)))) + " = ?")

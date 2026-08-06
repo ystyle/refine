@@ -85,6 +85,45 @@ public class SnakePost {
     var favoriteAuthors: ArrayList<SnakeAuthor> = ArrayList<SnakeAuthor>()
 }
 
+// I1 审查回归：auto-detect ref_to 路径（meta.cj detectRelations 的 Option 分支）。
+// 裸 `var author: Option<SnakeAutoAuthor>`（无 @Ref 注解）触发自动检测，byCol =
+// 字段名 + "_id" = "author_id"（meta.cj:42 合成列式名）。r.by 双身份在此路径也必须
+// 成立：SQL 列名侧（RelClass foreignKey / INSERT / loadAuthor）与字段访问侧
+// （FkExtractor e.author_id / cascadePreSave this.author_id）一致、可编译可运行。
+@Refine[naming: "snake"]
+public class SnakeAutoAuthor {
+    var id: Int64 = 0
+    var displayName: String = ""
+}
+
+@Refine[naming: "snake"]
+public class SnakeAutoPost {
+    var id: Int64 = 0
+    var title: String = ""
+    var author_id: Int64 = 0
+
+    var author: Option<SnakeAutoAuthor> = None
+}
+
+// I2 审查回归：has_one snake 路径独立转换点（RelClass fkLit / loadSQL / removeSQL /
+// setSQL 回填 fk）零测试。by 是目标实体字段名 authorId（camel），SQL 列名侧转
+// author_id（与目标实体 SnakeBio 自身 columnName 同源一致）。
+@Refine[naming: "snake"]
+public class SnakeBio {
+    var id: Int64 = 0
+    var content: String = ""
+    var authorId: Int64 = 0
+}
+
+@Refine[naming: "snake"]
+public class SnakeProfilePost {
+    var id: Int64 = 0
+    var title: String = ""
+
+    @Rel[has_one, SnakeBio, authorId]
+    var bio: Option<SnakeBio> = None
+}
+
 @Refine
 public class Post {
     var id: Int64 = 0
@@ -5777,6 +5816,117 @@ public class SnakeRelationNamingTest {
         a.id = 7
         p.appendRelatedAuthors(tx, a)
         @Expect(conn.stmt.capturedSql, "INSERT INTO \"related_authors\" (\"snake_post_id\", \"snake_author_id\") VALUES (?, ?)")
+    }
+
+    // M2 审查：junction load 侧（loadRelatedAuthors 的 JOIN SQL）未测。JOIN 用中间表
+    // 源/目标列（snake_post_id / snake_author_id）与目标表，必须与 schema/append 三处
+    // 同源一致，否则 load 查不到列。
+    @TestCase
+    public func testSnakeLoadRelatedAuthorsSQLUsesSnakeColumns(): Unit {
+        let conn = CaptureConnection()
+        let tx = sqliteTx(conn)
+        tx.begin()
+        let p = SnakePost()
+        p.id = 42
+        p.loadRelatedAuthors(tx)
+        let sql = conn.stmt.capturedSql
+        @Expect(sql.contains("\"related_authors\""), true)
+        @Expect(sql.contains("\"snake_author_id\""), true)
+        @Expect(sql.contains("\"snake_post_id\""), true)
+        @Expect(sql.contains("\"snake_author\""), true)
+        @Expect(sql.contains("relatedAuthors"), false)
+        @Expect(sql.contains("snakeAuthor"), false)
+    }
+
+    // I1 审查：auto-detect ref_to（裸 Option 字段无 @Ref 注解）的 r.by 双身份——
+    // SQL 列名侧 foreignKey = author_id，字段访问侧 FkExtractor 读 e.author_id，一致
+    @TestCase
+    public func testSnakeAutoDetectRefToForeignKeyIsSnakeColumn(): Unit {
+        @Expect(SnakeAutoPostRel.author.foreignKey, "author_id")
+        @Expect(SnakeAutoPostRel.author.foreignKey.contains("authorId"), false)
+    }
+
+    @TestCase
+    public func testSnakeAutoDetectRefToFkExtractorFieldAccess(): Unit {
+        let p = SnakeAutoPost()
+        p.id = 1
+        p.author_id = 99
+        let extractor = SnakeAutoPostRel.author.getForeignKeyExtractor()
+        match (extractor(p)) {
+            case v: Int64 => @Expect(v, 99)
+            case _ => @Fail("expected Int64 fk value")
+        }
+    }
+
+    // I1: SQL 侧 INSERT 用 author_id 列（字段名 = 列名，同源一致）
+    @TestCase
+    public func testSnakeAutoDetectRefToInsertSQLUsesSnakeColumn(): Unit {
+        let dialect = SQLiteDialect()
+        let p = SnakeAutoPost()
+        p.author_id = 99
+        let (sql, _) = SnakeAutoPostInsertSQL(p, dialect)
+        @Expect(sql.contains("\"author_id\""), true)
+        @Expect(sql.contains("authorId"), false)
+    }
+
+    // I1: loadAuthor 生成的方法编译可运行，且能按 fk 查目标表
+    @TestCase
+    public func testSnakeAutoDetectRefToLoadAuthorCompiles(): Unit {
+        let conn = CaptureConnection()
+        let tx = sqliteTx(conn)
+        tx.begin()
+        let p = SnakeAutoPost()
+        p.id = 42
+        p.author_id = 7
+        p.loadAuthor(tx)
+        @Expect(conn.stmt.capturedSql, "SELECT * FROM \"snake_auto_author\" WHERE \"id\" = ?")
+    }
+
+    // I2 审查：has_one snake 路径——RelClass fkLit（HasOne.foreignKey）转 snake
+    @TestCase
+    public func testSnakeHasOneForeignKeyIsSnakeColumn(): Unit {
+        @Expect(SnakeProfilePostRel.bio.foreignKey, "author_id")
+        @Expect(SnakeProfilePostRel.bio.foreignKey.contains("authorId"), false)
+    }
+
+    // I2: has_one loadSQL 用 snake 列名
+    @TestCase
+    public func testSnakeHasOneLoadSQLUsesSnakeColumn(): Unit {
+        let conn = CaptureConnection()
+        let tx = sqliteTx(conn)
+        tx.begin()
+        let p = SnakeProfilePost()
+        p.id = 42
+        p.loadBio(tx)
+        @Expect(conn.stmt.capturedSql, "SELECT * FROM \"snake_bio\" WHERE \"author_id\" = ?")
+        @Expect(conn.stmt.capturedSql.contains("authorId"), false)
+    }
+
+    // I2: has_one removeSQL 用 snake 列名
+    @TestCase
+    public func testSnakeHasOneRemoveSQLUsesSnakeColumn(): Unit {
+        let conn = CaptureConnection()
+        let tx = sqliteTx(conn)
+        tx.begin()
+        let p = SnakeProfilePost()
+        p.id = 42
+        p.removeBio(tx)
+        @Expect(conn.stmt.capturedSql, "DELETE FROM \"snake_bio\" WHERE \"author_id\" = ?")
+    }
+
+    // I2: has_one setX 字段访问侧回填 fk 用字段名 authorId，INSERT SQL 列名用 author_id
+    @TestCase
+    public func testSnakeHasOneSetSQLUsesSnakeColumn(): Unit {
+        let conn = CaptureConnection()
+        let tx = sqliteTx(conn)
+        tx.begin()
+        let p = SnakeProfilePost()
+        p.id = 1
+        let b = SnakeBio()
+        b.content = "hello"
+        p.setBio(tx, b)
+        @Expect(conn.stmt.capturedSql, "INSERT INTO \"snake_bio\" (\"content\", \"author_id\") VALUES (?, ?)")
+        @Expect(b.authorId, 1)
     }
 }
 

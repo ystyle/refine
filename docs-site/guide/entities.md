@@ -78,6 +78,27 @@ class User {
 > - 若类名映射的表名是 PostgreSQL 保留字（如 `User` → `user`、`Order` → `order`），必须用 `@Table` 指定其他表名，例如 `@Table["users"]`
 > - 关系（`@Ref`/`@Rel`）的目标表名会跟随目标实体的 `@Table` 覆盖
 
+## 命名约定（@Refine[naming]）
+
+实体默认表名 = 类名首字母小写（`BlogPost` → `blogpost`），列名 = 字段名（`userName` 即列名，无转换）。通过 `@Refine[naming: "snake"]` 可将表名/列名统一转换为 snake_case：
+
+```cangjie
+@Refine[naming: "snake"]
+class BlogPost {
+    var id: Int64 = 0
+    var userName: String = ""    // 列名 → user_name
+}
+```
+
+行为说明：
+
+- **表名**：`BlogPost` → `blog_post`；**列名**：`userName` → `user_name`（已 snake_case 的名称幂等不变）
+- **优先级**：`@Table` / `@Field` 显式指定 > `@Refine[naming]` 策略 > 默认行为
+- **支持策略**：`"none"`（默认，等价不转换）、`"snake"`；其他值编译期报错
+- **关联中间表名**：显式 `via` 不转换；默认 `via`（关系字段名）跟随策略转换（`relatedPosts` → `related_authors` 对应中间表 `related_posts`）
+
+> **⚠ 关联实体应统一命名策略**：`has_one` / `has_many` 的 `by` 外键字段位于**目标实体**上，Refine 按**源实体**的策略计算该外键列名。若关联双方命名策略不一致（如源实体用 `snake`、目标实体默认 `none`），转换后的外键列名可能无法匹配目标实体实际的列名，导致关联查询/维护静默失效（不报错、查不到行）。同一关联链上的实体请统一使用相同的命名策略；`ref_to` 的外键在源实体自身，不受跨实体策略差异影响。
+
 ## 字段类型映射
 
 | Cangjie 类型 | StorageType | SQLite | MySQL | PostgreSQL |
